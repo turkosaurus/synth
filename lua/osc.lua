@@ -10,6 +10,19 @@ local tuning = {
 	-- TODO: temperament
 }
 
+-- linear slope for signed values
+function slope.linear(initial, final, steps)
+	if steps <= 0 then
+		return {}
+	end
+	local step = (final - initial) / steps
+	local result = {}
+	for i = 1, steps do
+		result[i] = initial + step * (i - 1)
+	end
+	return result
+end
+
 function envelope.new(opts)
 	opts = opts or {}
 	return {
@@ -22,19 +35,6 @@ function envelope.new(opts)
 		releaseMS = opts.releaseMS or 0,
 		releaseFunc = opts.releaseFunc or slope.linear,
 	}
-end
-
--- linear slope for signed values
-function slope.linear(initial, final, steps)
-	if steps <= 0 then
-		return {}
-	end
-	local step = (final - initial) / steps
-	local result = {}
-	for i = 1, steps do
-		result[i] = initial + step * (i - 1)
-	end
-	return result
 end
 
 -- phase (0.0 to 1.0) to triangle wave (-1.0 to 1.0)

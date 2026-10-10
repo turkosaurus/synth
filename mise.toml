@@ -10,5 +10,17 @@ description = "run the test suite"
 run = "cargo test"
 
 [tasks.play]
-description = "test play"
-run = "cargo run -- play lua/example.lua"
+description = "play the example patch, then show the debug log"
+run = "cargo run -- play lua/example.lua; cat synth.log"
+
+[tasks.log]
+description = "follow the debug log; pair with a TUI in another pane"
+run = "touch synth.log; tail -F synth.log"
+
+[tasks.doctor]
+description = "report terminal capabilities and gating mode"
+run = "cargo run -- doctor"
+
+[tasks.check]
+description = "lint the example patch; nonzero exit on warnings"
+run = "cargo run -- check lua/example.lua"
