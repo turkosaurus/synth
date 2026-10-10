@@ -7,6 +7,7 @@ use crate::audio::Voice;
 const LUA_OSC: &str = include_str!("../lua/osc.lua");
 const LUA_VOICE: &str = include_str!("../lua/voice.lua");
 const LUA_SEQUENCE: &str = include_str!("../lua/sequence.lua");
+const LUA_KEYBOARD: &str = include_str!("../lua/keyboard.lua");
 
 // points per waveform cycle: enough that the lowest note still reads
 // most of them, small enough that 8 KB stays in L1
@@ -16,13 +17,14 @@ const TABLE_SIZE: usize = 2048;
 // require checks package.preload before any filesystem search, so the
 // embedded libraries resolve with no cwd dependency
 fn lua_register(lua: &mlua::Lua) -> anyhow::Result<()> {
-    let package: mlua::Table = lua.globals().get("package")?;
-    let preload: mlua::Table = package.get("preload")?;
+    let package: mlua::Table = lua.globals().get(field::PACKAGE)?;
+    let preload: mlua::Table = package.get(field::PRELOAD)?;
 
     for (name, src) in [
-        ("synth.osc", LUA_OSC),
-        ("synth.voice", LUA_VOICE),
-        ("synth.sequence", LUA_SEQUENCE),
+        (module::OSC, LUA_OSC),
+        (module::VOICE, LUA_VOICE),
+        (module::SEQUENCE, LUA_SEQUENCE),
+        (module::KEYBOARD, LUA_KEYBOARD),
     ] {
         let loader = lua.create_function(move |lua, _: mlua::Value| {
             lua.load(src).set_name(name).eval::<mlua::Value>()
@@ -118,9 +120,212 @@ pub fn check(path: &std::path::Path, sample_rate: u32) -> anyhow::Result<bool> {
 }
 
 
+// The Lua/Rust field contract, in one place. Lua constructors pass unknown
+// fields through rather than discarding them, so a misspelling arrives here
+// and gets named instead of silently taking a default.
+/// One resolved step. The struct is the schema: field names come from here,
+/// and `deny_unknown_fields` turns a misspelling in a patch into a named
+/// error rather than a silent rest.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Step {
+    #[serde(default)]
+    note: Option<u8>,
+    #[serde(default)]
+    off: bool,
+    voice: Option<String>,
+    duration: f64,
+}
+
+/// Names the embedded modules are registered under. Used both to register
+/// them and to require them, so the two cannot drift.
+mod module {
+    pub const OSC: &str = "synth.osc";
+    pub const VOICE: &str = "synth.voice";
+    pub const SEQUENCE: &str = "synth.sequence";
+    pub const KEYBOARD: &str = "synth.keyboard";
+}
+
+mod field {
+    pub const REQUIRE: &str = "require";
+    pub const NEW: &str = "new";
+
+    pub const WAVEFORM: &str = "waveform";
+    pub const ENVELOPE: &str = "envelope";
+    pub const KEYBOARD: &str = "keyboard";
+
+    pub const ATTACK_MS: &str = "attackMS";
+    pub const ATTACK_FUNC: &str = "attackFunc";
+    pub const DECAY_MS: &str = "decayMS";
+    pub const DECAY_FUNC: &str = "decayFunc";
+    pub const SUSTAIN_LEVEL: &str = "sustainLevel";
+    pub const RELEASE_MS: &str = "releaseMS";
+    pub const RELEASE_FUNC: &str = "releaseFunc";
+
+    pub const BPM: &str = "bpm";
+    pub const DIVISION: &str = "division";
+    pub const VOICES: &str = "voices";
+    pub const STEPS: &str = "steps";
+    pub const PATTERNS: &str = "patterns";
+    pub const CHAIN: &str = "chain";
+    pub const LOOP: &str = "loop";
+
+    pub const TUNING: &str = "tuning";
+    pub const FREQUENCY: &str = "frequency";
+
+    // Lua's own, not ours: these can never be renamed, but a typo breaks
+    // identically, and `PATH` is also written to
+    pub const PACKAGE: &str = "package";
+    pub const PRELOAD: &str = "preload";
+    pub const PATH: &str = "path";
+}
+
+// Built from the consts above, so each name is spelled exactly once. Lua
+// constructors pass unknown fields through rather than discarding them, so a
+// misspelling arrives here and gets named instead of taking a default.
+const VOICE_FIELDS: &[&str] = &[field::WAVEFORM, field::ENVELOPE, field::KEYBOARD];
+const ENVELOPE_FIELDS: &[&str] = &[
+    field::ATTACK_MS,
+    field::ATTACK_FUNC,
+    field::DECAY_MS,
+    field::DECAY_FUNC,
+    field::SUSTAIN_LEVEL,
+    field::RELEASE_MS,
+    field::RELEASE_FUNC,
+];
+
+fn reject_unknown(table: &mlua::Table, allowed: &[&str], what: &str) -> anyhow::Result<()> {
+    for pair in table.clone().pairs::<mlua::Value, mlua::Value>() {
+        let (key, _) = pair?;
+        // non-string keys are array indices, which these tables never use
+        if let Some(name) = key.as_str() {
+            anyhow::ensure!(
+                allowed.contains(&name),
+                "{what}: unknown field `{name}`; expected one of {}",
+                allowed.join(", ")
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The raw keyboard layout as written in Lua. Field names live here, and
+/// camelCase renaming keeps the Lua side idiomatic without string literals.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct KeyboardConfig {
+    anchor: Anchor,
+    offset: i32,
+    template: Template,
+    octave_up: Vec<String>,
+    octave_down: Vec<String>,
+    stop: Vec<String>,
+}
+
+/// The physical grid, kept nested because rows and their shifted forms are
+/// one unit: a template is a layout, not two parallel lists.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Template {
+    rows: Vec<String>,
+    shifted: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Anchor {
+    key: String,
+    note: i32,
+}
+
+fn keymap(
+    lua: &mlua::Lua,
+    table: &mlua::Table,
+) -> anyhow::Result<crate::input::keyboard::Keymap> {
+    let config: KeyboardConfig =
+        mlua::LuaSerdeExt::from_value(lua, mlua::Value::Table(table.clone()))
+            .context("keyboard layout")?;
+
+    anyhow::ensure!(
+        config.template.rows.len() == config.template.shifted.len(),
+        "a template's rows and shifted must have the same number of rows"
+    );
+    let anchor_char = config
+        .anchor
+        .key
+        .chars()
+        .next()
+        .context("keyboard.anchor.key is empty")?;
+
+    // the anchor fixes the grid, so changing `offset` keeps that key on pitch
+    let mut base = None;
+    for (r, row) in config.template.rows.iter().enumerate() {
+        if let Some(c) = row.chars().position(|ch| ch == anchor_char) {
+            base = Some(config.anchor.note - r as i32 * config.offset - c as i32);
+        }
+    }
+    let base = base.with_context(|| {
+        format!("keyboard.anchor.key '{anchor_char}' does not appear in the template")
+    })?;
+
+    let mut notes = std::collections::HashMap::new();
+    for (r, (row, up)) in config
+        .template
+        .rows
+        .iter()
+        .zip(&config.template.shifted)
+        .enumerate()
+    {
+        anyhow::ensure!(
+            row.chars().count() == up.chars().count(),
+            "template row {} and its shifted form differ in length",
+            r + 1
+        );
+        for (c, (plain, raised)) in row.chars().zip(up.chars()).enumerate() {
+            let note = base + r as i32 * config.offset + c as i32;
+            if (0..128).contains(&note) {
+                notes.insert(plain, note as u8);
+            }
+            // the shifted form of a key is the same position, one octave up
+            if (0..128).contains(&(note + 12)) {
+                notes.insert(raised, (note + 12) as u8);
+            }
+        }
+    }
+
+    // a binding is a character or a key name; an unrecognised name is an
+    // error rather than a silently dead key
+    let bindings = |list: Vec<String>, what: &str| -> anyhow::Result<Vec<_>> {
+        list.iter()
+            .map(|name| {
+                crate::input::keyboard::binding(name)
+                    .with_context(|| format!("keyboard.{what}: unknown key '{name}'"))
+            })
+            .collect()
+    };
+
+    let stop = bindings(config.stop, "stop")?;
+    // a live instrument with no way to silence a stuck note is a trap, and
+    // quitting is the only other recovery
+    anyhow::ensure!(
+        !stop.is_empty(),
+        "keyboard.stop must name at least one key to silence with"
+    );
+
+    Ok(crate::input::keyboard::Keymap {
+        notes,
+        octave_up: bindings(config.octave_up, "octaveUp")?,
+        octave_down: bindings(config.octave_down, "octaveDown")?,
+        stop,
+    })
+}
+
 /// A loaded file: a playable timeline plus one report per voice in it.
 pub struct Patch {
     pub timeline: crate::audio::Timeline,
+    /// hz for every midi note, baked from Lua so temperament stays there
+    pub freqs: Vec<f32>,
+    pub keymap: crate::input::keyboard::Keymap,
     pub bpm: f32,
     pub division: f32,
     pub step_ms: f32,
@@ -133,12 +338,15 @@ pub struct Patch {
 
 #[instrument(skip(spec))]
 fn bake_voice(spec: &mlua::Table, sample_rate: u32) -> anyhow::Result<(Voice, Report)> {
+    reject_unknown(spec, VOICE_FIELDS, "voice")?;
+
     let wave_fn: mlua::Function = spec
-        .get("waveform")
+        .get(field::WAVEFORM)
         .context("voice field `waveform` is missing or not a function")?;
     let env: mlua::Table = spec
-        .get("envelope")
+        .get(field::ENVELOPE)
         .context("voice field `envelope` is missing or not a table")?;
+    reject_unknown(&env, ENVELOPE_FIELDS, "envelope")?;
 
     let mut clamped = 0usize;
     let mut wave = Vec::with_capacity(TABLE_SIZE);
@@ -157,7 +365,7 @@ fn bake_voice(spec: &mlua::Table, sample_rate: u32) -> anyhow::Result<(Voice, Re
     }
 
     let sustain_level: f64 = env
-        .get("sustainLevel")
+        .get(field::SUSTAIN_LEVEL)
         .context("envelope.sustainLevel is missing or not a number")?;
 
     // Rust owns the sample rate, so it sizes each segment and lets the
@@ -188,9 +396,9 @@ fn bake_voice(spec: &mlua::Table, sample_rate: u32) -> anyhow::Result<(Voice, Re
     let (attack, decay, release) = {
         let _span = debug_span!("bake_envelope").entered();
         (
-            curve("attackMS", "attackFunc", 0.0, 1.0)?,
-            curve("decayMS", "decayFunc", 1.0, sustain_level)?,
-            curve("releaseMS", "releaseFunc", sustain_level, 0.0)?,
+            curve(field::ATTACK_MS, field::ATTACK_FUNC, 0.0, 1.0)?,
+            curve(field::DECAY_MS, field::DECAY_FUNC, 1.0, sustain_level)?,
+            curve(field::RELEASE_MS, field::RELEASE_FUNC, sustain_level, 0.0)?,
         )
     };
 
@@ -205,18 +413,53 @@ fn bake_voice(spec: &mlua::Table, sample_rate: u32) -> anyhow::Result<(Voice, Re
     Ok((voice, report))
 }
 
+/// What `voice.new({})` gives you, for running with no file.
+const DEFAULT: &str = r#"
+local voice = require("synth.voice")
+return voice.new({})
+"#;
+
+#[instrument]
+pub fn load_default(sample_rate: u32) -> anyhow::Result<Patch> {
+    load_source(DEFAULT, "(default)", sample_rate)
+}
+
 #[instrument]
 pub fn load(path: &std::path::Path, sample_rate: u32) -> anyhow::Result<Patch> {
     let source = std::fs::read_to_string(path)
         .with_context(|| format!("reading {}", path.display()))?;
-    load_source(&source, &path.display().to_string(), sample_rate)
+    load_in(
+        &source,
+        &path.display().to_string(),
+        sample_rate,
+        path.parent(),
+    )
 }
 
 /// Same as [`load`] but from a string, so sequences can be tested without
 /// fixture files on disk.
 pub fn load_source(source: &str, name: &str, sample_rate: u32) -> anyhow::Result<Patch> {
+    load_in(source, name, sample_rate, None)
+}
+
+fn load_in(
+    source: &str,
+    name: &str,
+    sample_rate: u32,
+    dir: Option<&std::path::Path>,
+) -> anyhow::Result<Patch> {
     let lua = mlua::Lua::new();
     lua_register(&lua)?;
+
+    // a patch's own requires resolve next to the patch, not next to the
+    // shell's cwd. built through the package table rather than by splicing a
+    // path into Lua source, which a path containing a quote would break.
+    if let Some(dir) = dir {
+        let package: mlua::Table = lua.globals().get(field::PACKAGE)?;
+        let existing: String = package.get(field::PATH)?;
+        let dir = dir.display();
+        package.set(field::PATH, format!("{dir}/?.lua;{dir}/?/init.lua;{existing}"))?;
+    }
 
     // eval to a Value first: a syntax error and a wrong return type both fail
     // this call, and they deserve different messages
@@ -226,28 +469,55 @@ pub fn load_source(source: &str, name: &str, sample_rate: u32) -> anyhow::Result
         other => anyhow::bail!("file must return a table, got {}", other.type_name()),
     };
 
-    let osc: mlua::Table = lua.load(r#"return require("synth.osc")"#).eval()?;
-    let tuning: mlua::Table = osc.get("tuning")?;
-    let to_hz: mlua::Function = tuning.get("frequency")?;
+    let require: mlua::Function = lua.globals().get(field::REQUIRE)?;
+    let osc: mlua::Table = require.call(module::OSC)?;
+    let tuning: mlua::Table = osc.get(field::TUNING)?;
+    let to_hz: mlua::Function = tuning.get(field::FREQUENCY)?;
 
-    let voice_specs: Option<mlua::Table> = table.get("voices")?;
-    let steps: Option<mlua::Table> = table.get("steps")?;
+    let mut freqs = Vec::with_capacity(128);
+    for note in 0..128 {
+        let hz: f64 = to_hz.call(note)?;
+        freqs.push(hz as f32);
+    }
+
+    // a patch may ship its own layout; otherwise the embedded default
+    let layout: mlua::Table = match table.get(field::KEYBOARD)? {
+        Some(table) => table,
+        // the module exposes a constructor now, so the default layout is
+        // keyboard.new() rather than the module table itself
+        None => {
+            let keyboard: mlua::Table = require.call(module::KEYBOARD)?;
+            let new: mlua::Function = keyboard.get(field::NEW)?;
+            new.call(())?
+        }
+    };
+    let keys = keymap(&lua, &layout)?;
+
+    let voice_specs: Option<mlua::Table> = table.get(field::VOICES)?;
+    let steps: Option<mlua::Table> = table.get(field::STEPS)?;
 
     // bound rather than returned directly: the match tuple is a temporary
     // that would otherwise outlive `lua` and borrow it past its drop
     let patch = match (voice_specs, steps) {
         (Some(specs), Some(steps)) => {
-            sequence(&table, &specs, &steps, &to_hz, sample_rate)
+            sequence(&lua, &table, &specs, &steps, sample_rate, freqs, keys)
         }
         // a bare voice file: one sustained note, so a two-event timeline
-        _ => single(&table, sample_rate),
+        _ => single(&table, sample_rate, freqs, keys),
     };
     patch
 }
 
 const SINGLE_HOLD: Duration = Duration::from_millis(1200);
+/// A4, for a bare voice file with no sequence to say otherwise
+const SINGLE_NOTE: u8 = 69;
 
-fn single(spec: &mlua::Table, sample_rate: u32) -> anyhow::Result<Patch> {
+fn single(
+    spec: &mlua::Table,
+    sample_rate: u32,
+    freqs: Vec<f32>,
+    keymap: crate::input::keyboard::Keymap,
+) -> anyhow::Result<Patch> {
     let (voice, report) = bake_voice(spec, sample_rate)?;
     let tail = voice.release.len() as u64;
     let hold = (SINGLE_HOLD.as_secs_f64() * sample_rate as f64) as u64;
@@ -256,11 +526,20 @@ fn single(spec: &mlua::Table, sample_rate: u32) -> anyhow::Result<Patch> {
         timeline: crate::audio::Timeline {
             voices: vec![std::sync::Arc::new(voice)],
             events: vec![
-                (0, crate::audio::Event::On { voice: 0, freq: 440.0 }),
-                (hold, crate::audio::Event::Off),
+                (
+                    0,
+                    crate::audio::Event::NoteOn {
+                        voice: 0,
+                        note: SINGLE_NOTE,
+                        velocity: 127,
+                    },
+                ),
+                (hold, crate::audio::Event::NoteOff { note: SINGLE_NOTE }),
             ],
             total_samples: hold + tail,
         },
+        freqs,
+        keymap,
         bpm: 0.0,
         division: 0.0,
         step_ms: 0.0,
@@ -273,15 +552,17 @@ fn single(spec: &mlua::Table, sample_rate: u32) -> anyhow::Result<Patch> {
 }
 
 fn sequence(
+    lua: &mlua::Lua,
     table: &mlua::Table,
     specs: &mlua::Table,
     steps: &mlua::Table,
-    to_hz: &mlua::Function,
     sample_rate: u32,
+    freqs: Vec<f32>,
+    keymap: crate::input::keyboard::Keymap,
 ) -> anyhow::Result<Patch> {
-    let bpm: f64 = table.get("bpm").context("sequence.bpm is missing")?;
+    let bpm: f64 = table.get(field::BPM).context("sequence.bpm is missing")?;
     anyhow::ensure!(bpm > 0.0, "sequence.bpm must be positive, got {bpm}");
-    let division: f64 = table.get("division").context("sequence.division is missing")?;
+    let division: f64 = table.get(field::DIVISION).context("sequence.division is missing")?;
     anyhow::ensure!(
         division > 0.0,
         "sequence.division must be positive, got {division}"
@@ -304,57 +585,74 @@ fn sequence(
     }
     reports.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // first pass: when does each step's note start
-    let count = steps.len()? as usize;
-    let mut starts = Vec::new();
-    for i in 1..=count {
-        let step: mlua::Table = steps.get(i)?;
-        let note: Option<u8> = step.get("note")?;
-        if note.is_some() {
-            starts.push((i, (step_len * (i - 1) as f64) as u64));
-        }
-    }
+    // deserialized once, then walked three times: the struct replaces a
+    // dozen get("...") calls and validates every field name
+    let parsed: Vec<Step> = mlua::LuaSerdeExt::from_value(lua, mlua::Value::Table(steps.clone()))
+        .context("sequence steps")?;
+
+    let starts: Vec<(usize, u64)> = parsed
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| step.note.is_some())
+        .map(|(i, _)| (i, (step_len * i as f64) as u64))
+        .collect();
 
     let mut events = Vec::new();
     for (position, &(i, start)) in starts.iter().enumerate() {
-        let step: mlua::Table = steps.get(i)?;
-        let note: u8 = step.get("note")?;
-        let name: String = step
-            .get("voice")
-            .with_context(|| format!("step {i} has a note but no voice is in effect"))?;
+        let step = &parsed[i];
+        let note = step.note.expect("filtered to steps with notes");
+        let name = step
+            .voice
+            .as_deref()
+            .with_context(|| format!("step {} has a note but no voice is in effect", i + 1))?;
         let voice = *index
-            .get(&name)
-            .with_context(|| format!("step {i} names voice `{name}`, which is not defined"))?;
-        let freq: f64 = to_hz.call(note)?;
-        events.push((start, crate::audio::Event::On { voice, freq: freq as f32 }));
+            .get(name)
+            .with_context(|| format!("step {} names voice `{name}`, which is not defined", i + 1))?;
 
-        let duration: f64 = step.get("duration")?;
+        events.push((
+            start,
+            crate::audio::Event::NoteOn {
+                voice,
+                note,
+                velocity: 127,
+            },
+        ));
+
         anyhow::ensure!(
-            duration > 0.0,
-            "step {i} has duration {duration}; must be positive"
+            step.duration > 0.0,
+            "step {} has duration {}; must be positive",
+            i + 1,
+            step.duration
         );
-        let ends = start + (step_len * duration) as u64;
+        let ends = start + (step_len * step.duration) as u64;
 
         // mono steals, so a long note is cut by the next one. Without this
         // clamp its Off would land later and release the wrong note.
         let next_start = starts.get(position + 1).map(|&(_, at)| at);
         if next_start.is_none_or(|next| ends < next) {
-            events.push((ends, crate::audio::Event::Off));
+            events.push((ends, crate::audio::Event::NoteOff { note }));
         }
     }
 
-    // explicit rests
-    for i in 1..=count {
-        let step: mlua::Table = steps.get(i)?;
-        let off: Option<bool> = step.get("off")?;
-        if off == Some(true) {
-            events.push(((step_len * (i - 1) as f64) as u64, crate::audio::Event::Off));
+    // explicit rests release whatever the previous note was
+    let mut previous = None;
+    for (i, step) in parsed.iter().enumerate() {
+        if let Some(note) = step.note {
+            previous = Some(note);
+        }
+        if step.off {
+            if let Some(note) = previous {
+                events.push((
+                    (step_len * i as f64) as u64,
+                    crate::audio::Event::NoteOff { note },
+                ));
+            }
         }
     }
 
     events.sort_by_key(|(at, _)| *at);
     let tail = voices.iter().map(|v| v.release.len() as u64).max().unwrap_or(0);
-    let total_samples = (step_len * count as f64) as u64 + tail;
+    let total_samples = (step_len * parsed.len() as f64) as u64 + tail;
 
     Ok(Patch {
         timeline: crate::audio::Timeline {
@@ -362,13 +660,15 @@ fn sequence(
             events,
             total_samples,
         },
+        freqs,
+        keymap,
         bpm: bpm as f32,
         division: division as f32,
         step_ms: (step_len * 1000.0 / sample_rate as f64) as f32,
-        steps: count,
-        patterns: table.get("patterns").unwrap_or(0),
-        chain: table.get("chain").unwrap_or(0),
-        loops: table.get("loop").unwrap_or(1),
+        steps: parsed.len(),
+        patterns: table.get(field::PATTERNS).unwrap_or(0),
+        chain: table.get(field::CHAIN).unwrap_or(0),
+        loops: table.get(field::LOOP).unwrap_or(1),
         voices: reports,
     })
 }
@@ -536,7 +836,7 @@ mod tests {
             .timeline
             .events
             .iter()
-            .filter(|(_, e)| matches!(e, crate::audio::Event::On { .. }))
+            .filter(|(_, e)| matches!(e, crate::audio::Event::NoteOn { .. }))
             .map(|(at, _)| *at)
             .collect();
 
@@ -551,7 +851,7 @@ mod tests {
             .timeline
             .events
             .iter()
-            .filter(|(_, e)| matches!(e, crate::audio::Event::Off))
+            .filter(|(_, e)| matches!(e, crate::audio::Event::NoteOff { .. }))
             .map(|(at, _)| *at)
             .collect();
 
@@ -568,12 +868,12 @@ mod tests {
             .timeline
             .events
             .iter()
-            .filter(|(_, e)| matches!(e, crate::audio::Event::Off))
+            .filter(|(_, e)| matches!(e, crate::audio::Event::NoteOff { .. }))
             .count();
         assert_eq!(offs, 1, "only the final note should emit an off");
 
         let last = patch.timeline.events.last().unwrap();
-        assert!(matches!(last.1, crate::audio::Event::Off));
+        assert!(matches!(last.1, crate::audio::Event::NoteOff { .. }));
         assert_eq!(last.0, 48_000 + 24_000); // beat 1 plus half a beat
     }
 
@@ -585,8 +885,8 @@ mod tests {
             .events
             .iter()
             .filter_map(|(_, e)| match e {
-                crate::audio::Event::On { voice, .. } => Some(*voice),
-                crate::audio::Event::Off => None,
+                crate::audio::Event::NoteOn { voice, .. } => Some(*voice),
+                crate::audio::Event::NoteOff { .. } => None,
             })
             .collect();
 
@@ -615,10 +915,10 @@ mod tests {
     }
 
     #[test]
-    fn midi_note_69_bakes_to_440_hz() {
+    fn a_step_emits_its_midi_note() {
         let patch = seq(r#"{ { note = 69, voice = "a" } }"#);
         match patch.timeline.events[0].1 {
-            crate::audio::Event::On { freq, .. } => assert!((freq - 440.0).abs() < 0.01),
+            crate::audio::Event::NoteOn { note, .. } => assert_eq!(note, 69),
             _ => panic!("expected a note on first"),
         }
     }
@@ -654,6 +954,69 @@ mod tests {
             "#
         );
         load_source(&source, "test", 48000).unwrap()
+    }
+
+    #[test]
+    fn the_anchor_key_lands_on_its_note() {
+        let patch = one_voice(10, 48000);
+        let notes = &patch.keymap.notes;
+
+        assert_eq!(notes.get(&'a'), Some(&69)); // concert A
+        assert_eq!(notes.get(&'s'), Some(&70)); // chromatic along the row
+        assert_eq!(notes.get(&'z'), Some(&64)); // one row down is a 4th below
+        assert_eq!(notes.get(&'q'), Some(&74)); // one row up is a 4th above
+        assert_eq!(notes.get(&'A'), Some(&81)); // shifted is an octave up
+        assert_eq!(notes.get(&'!'), Some(&91)); // and works on the number row
+    }
+
+    #[test]
+    fn changing_offset_keeps_the_anchor_on_pitch() {
+        // a mandolin layout: rows a 5th apart instead of a 4th
+        let source = r#"
+            local voice = require("synth.voice")
+            local osc = require("synth.osc")
+            local keyboard = require("synth.keyboard")
+            return voice.new({
+                waveform = osc.waveform.triangle,
+                envelope = osc.envelope.new({}),
+                keyboard = keyboard.new({ offset = 7 }),
+            })
+        "#;
+        let patch = load_source(source, "test", 48000).unwrap();
+
+        assert_eq!(patch.keymap.notes.get(&'a'), Some(&69), "anchor holds");
+        assert_eq!(patch.keymap.notes.get(&'q'), Some(&76), "a 5th above");
+    }
+
+    #[test]
+    fn an_explicit_shifted_row_of_the_wrong_length_is_rejected() {
+        // derived rows cannot mismatch; an override still can, so the
+        // validation stays as a guard on that one path
+        let source = r#"
+            local voice = require("synth.voice")
+            local keyboard = require("synth.keyboard")
+            return voice.new({
+                keyboard = keyboard.new({
+                    template = { rows = { "asdfghjkl" }, shifted = { "ASD" } },
+                }),
+            })
+        "#;
+        let error = load_source(source, "test", 48000)
+            .err()
+            .expect("row and its shifted form differ in length");
+        assert!(
+            format!("{error:#}").contains("differ in length"),
+            "unexpected: {error:#}"
+        );
+    }
+
+    #[test]
+    fn the_frequency_table_covers_every_midi_note() {
+        let patch = one_voice(10, 48000);
+        assert_eq!(patch.freqs.len(), 128);
+        assert!((patch.freqs[69] - 440.0).abs() < 0.01);
+        assert!((patch.freqs[81] - 880.0).abs() < 0.01);
+        assert!((patch.freqs[57] - 220.0).abs() < 0.01);
     }
 
     #[test]
@@ -724,8 +1087,8 @@ mod tests {
             .events
             .iter()
             .filter_map(|(_, e)| match e {
-                crate::audio::Event::On { voice, .. } => Some(*voice),
-                crate::audio::Event::Off => None,
+                crate::audio::Event::NoteOn { voice, .. } => Some(*voice),
+                crate::audio::Event::NoteOff { .. } => None,
             })
             .collect();
 

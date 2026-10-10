@@ -1,10 +1,6 @@
 [tools]
 rust = "1.98"
 
-[tasks.run]
-description = "run the synth TUI"
-run = "cargo run -- tui"
-
 [tasks.test]
 description = "run the test suite"
 run = "cargo test"
@@ -24,3 +20,7 @@ run = "cargo run -- doctor"
 [tasks.check]
 description = "lint the example patch; nonzero exit on warnings"
 run = "cargo run -- check lua/example.lua"
+
+[tasks.tui]
+description = "play live from the keyboard with the default voice"
+run = "cargo run -- tui"

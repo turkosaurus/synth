@@ -3,8 +3,8 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use synth::terminal::Gating;
-use synth::{audio, script, terminal};
+use synth::input::keyboard::Gating;
+use synth::{audio, script, terminal, view};
 
 /// synth | rust+luaJIT terminal synthesizer
 #[derive(Parser)]
@@ -24,8 +24,10 @@ enum Commands {
         #[arg(long, default_value_t = 48000)]
         rate: u32,
     },
+    /// Play a patch or sequence through the default output device
     Play { path: PathBuf },
-    Tui,
+    /// Play live from the keyboard; without a path, the default voice
+    Tui { path: Option<PathBuf> },
 }
 
 fn main() -> ExitCode {
@@ -56,7 +58,12 @@ fn tracing_init() -> anyhow::Result<()> {
 fn run() -> anyhow::Result<ExitCode> {
     tracing_init()?;
     let args = Args::parse();
-    let gating: Gating = terminal::detect_gating();
+    // the terminal reports a capability; the keyboard decides the policy
+    let gating = if terminal::reports_key_release() {
+        Gating::Held
+    } else {
+        Gating::Fixed(synth::input::keyboard::FIXED_NOTE)
+    };
     match args.command {
         Commands::Doctor { path, rate } => {
             terminal::doctor(gating);
@@ -69,7 +76,7 @@ fn run() -> anyhow::Result<ExitCode> {
             }
         }
         Commands::Play { path } => audio::play(&path)?,
-        Commands::Tui => terminal::tui(gating)?,
+        Commands::Tui { path } => view::tui::run(path.as_deref(), gating)?,
     }
     Ok(ExitCode::SUCCESS)
 }

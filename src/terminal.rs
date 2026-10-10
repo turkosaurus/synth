@@ -1,69 +1,28 @@
 use crossterm::{
-    cursor,
-    event::{
-        self, Event, KeyCode, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-        PushKeyboardEnhancementFlags,
-    },
-    execute,
-    terminal,
+    event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
+    execute, terminal,
 };
 use std::io;
-use std::time::Duration;
+
+use crate::input::keyboard::Gating;
 
 
-#[derive(Clone, Copy)]
-pub enum Gating {
-    Held,
-    Fixed(Duration),
-}
-
-pub fn tui(gating: Gating) -> anyhow::Result<()> {
-    // setup
+/// Put the terminal into the state an interactive view needs, and report
+/// whether gating ended up Held.
+pub fn enter(gating: Gating) -> io::Result<()> {
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), terminal::EnterAlternateScreen)?;
-    enable_gating(gating)?;
+    enable_gating(gating)
+}
 
-    // run + result
-    let result = tui_loop();
-
-    // teardown
+/// Reverse of [`enter`], in reverse order. Errors are discarded: on the way
+/// out there is nothing useful to do about them.
+pub fn leave(gating: Gating) {
     let _ = disable_gating(gating);
     let _ = execute!(io::stdout(), terminal::LeaveAlternateScreen);
     let _ = terminal::disable_raw_mode();
-    result
 }
 
-fn tui_loop() -> anyhow::Result<()> {
-    let mut last = String::from("(none)");
-
-    loop {
-        execute!(
-            io::stdout(),
-            terminal::Clear(terminal::ClearType::All),
-            cursor::MoveTo(0, 0)
-        )?;
-        // NOTE: raw mode stops translating \n, so \r\n is needed to return to column 0
-        print!("last key: {last}\r\n");
-        print!("esc or ctrl-c/d to quit\r\n");
-
-        if event::poll(Duration::from_millis(16))? {
-            if let Event::Key(key) = event::read()? {
-                // NOTE: contains(), not ==, so ctrl+shift+c still counts as ctrl
-                let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-                match key.code {
-                    KeyCode::Esc => break,
-                    KeyCode::Char('c' | 'd') if ctrl => break,
-                    // NOTE: key.kind is Press/Repeat/Release — Release only with gating held
-                    _ => last = format!("{:?} / {:?}", key.code, key.kind),
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-// there is no protocol to push or pop on Windows; release events arrive
-// either way
 fn enable_gating(gating: Gating) -> io::Result<()> {
     if cfg!(windows) {
         return Ok(());
@@ -71,7 +30,12 @@ fn enable_gating(gating: Gating) -> io::Result<()> {
     if let Gating::Held = gating {
         execute!(
             io::stdout(),
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
+            PushKeyboardEnhancementFlags(
+                // DISAMBIGUATE so a lone Esc is not mistaken for the start of
+                // an escape sequence; esc is the panic key and must be instant
+                KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                    | KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            )
         )?;
     }
     Ok(())
@@ -117,13 +81,10 @@ pub fn doctor(gating: Gating) {
 
 // crossterm sets KeyEventKind on Windows unconditionally, but only on Unix
 // once REPORT_EVENT_TYPES is pushed. Querying for the protocol there would
-// answer "no" and cost us sustain on a platform that already has it.
-pub fn detect_gating() -> Gating {
+// answer "no" and cost us release events on a platform that already has them.
+pub fn reports_key_release() -> bool {
     if cfg!(windows) {
-        return Gating::Held;
+        return true;
     }
-    match crossterm::terminal::supports_keyboard_enhancement() {
-        Ok(true) => Gating::Held,
-        _ => Gating::Fixed(Duration::from_millis(400)),
-    }
+    matches!(crossterm::terminal::supports_keyboard_enhancement(), Ok(true))
 }

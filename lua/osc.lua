@@ -23,18 +23,29 @@ function slope.linear(initial, final, steps)
 	return result
 end
 
+-- a plain gated note: fast edges so neither end clicks, and no decay
+-- because sustain is already at the peak
+local envelopeDefaults = {
+	attackMS = 15,
+	attackFunc = slope.linear,
+	decayMS = 0,
+	decayFunc = slope.linear,
+	sustainLevel = 1, -- 0.0 to 1.0
+	releaseMS = 15,
+	releaseFunc = slope.linear,
+}
+
+-- Fills gaps without discarding anything. Building a fresh table here would
+-- swallow a misspelled field silently; passing opts through lets it reach
+-- Rust, which rejects it by name.
 function envelope.new(opts)
 	opts = opts or {}
-	return {
-		attackMS = opts.attackMS or 0,
-		attackFunc = opts.attackFunc or slope.linear,
-		decayMS = opts.decayMS or 0,
-		decayFunc = opts.decayFunc or slope.linear,
-		sustainMS = opts.sustainMS or 200, -- ignored if gated
-		sustainLevel = opts.sustainLevel or 1, -- 0.0 to 1.0
-		releaseMS = opts.releaseMS or 0,
-		releaseFunc = opts.releaseFunc or slope.linear,
-	}
+	for key, default in pairs(envelopeDefaults) do
+		if opts[key] == nil then
+			opts[key] = default
+		end
+	end
+	return opts
 end
 
 -- phase (0.0 to 1.0) to triangle wave (-1.0 to 1.0)

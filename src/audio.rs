@@ -66,6 +66,8 @@ enum Stage {
 // one sounding note
 struct Note {
     voice: Arc<Voice>,
+    /// 0.0-1.0, scaling the envelope peak
+    velocity: f32,
     phase: f32, // 0.0..1.0
     step: f32, // phase increment per sample
     stage: Stage,
@@ -79,8 +81,15 @@ struct Note {
 impl Note {
     // `hold: None` means the note sustains until something calls off(),
     // which is how the sequencer drives it
-    fn new(voice: Arc<Voice>, freq: f32, sample_rate: f32, hold: Option<Duration>) -> Self {
+    fn new(
+        voice: Arc<Voice>,
+        freq: f32,
+        velocity: f32,
+        sample_rate: f32,
+        hold: Option<Duration>,
+    ) -> Self {
         Self {
+            velocity,
             step: freq / sample_rate,
             hold_samples: hold.map(|d| (d.as_secs_f32() * sample_rate) as usize),
             voice,
@@ -158,16 +167,19 @@ impl Note {
 
     fn next(&mut self) -> f32 {
         let env = self.envelope();
-        let sample = self.wave() * env;
+        let sample = self.wave() * env * self.velocity;
         self.phase = (self.phase + self.step).fract();
         sample
     }
 }
 
+/// MIDI-shaped on purpose: note numbers rather than frequencies, and a note
+/// on NoteOff. That keeps a MIDI input close to a passthrough, puts tuning in
+/// one place (the audio side), and means polyphony is not a format change.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    On { voice: usize, freq: f32 },
-    Off,
+    NoteOn { voice: usize, note: u8, velocity: u8 },
+    NoteOff { note: u8 },
 }
 
 /// Events stamped with the sample they fire on. A single sustained note is
@@ -178,53 +190,139 @@ pub struct Timeline {
     pub total_samples: u64,
 }
 
+/// Hz per MIDI note, baked from Lua so temperament lives there and every
+/// input resolves pitch the same way.
+pub type Freqs = Vec<f32>;
+
+/// Where a player's events come from. Downstream handling is identical, so
+/// the sequencer and a live input differ only here.
+enum Feed {
+    Timeline { events: Vec<(u64, Event)>, next: usize },
+    Live(rtrb::Consumer<Event>),
+}
+
 pub struct Player {
-    timeline: Timeline,
+    voices: Vec<Arc<Voice>>,
+    freqs: Freqs,
+    feed: Feed,
     sample_rate: f32,
     note: Option<Note>,
-    next_event: usize,
+    /// which note is sounding, so NoteOff can be matched and a view can
+    /// report it
+    sounding: Option<u8>,
     clock: u64,
+    total_samples: u64,
 }
 
 impl Player {
-    pub fn new(timeline: Timeline, sample_rate: f32) -> Self {
+    pub fn new(timeline: Timeline, freqs: Freqs, sample_rate: f32) -> Self {
         Self {
-            timeline,
+            voices: timeline.voices,
+            freqs,
+            feed: Feed::Timeline {
+                events: timeline.events,
+                next: 0,
+            },
             sample_rate,
             note: None,
-            next_event: 0,
+            sounding: None,
             clock: 0,
+            total_samples: timeline.total_samples,
         }
     }
 
+    pub fn live(
+        voices: Vec<Arc<Voice>>,
+        freqs: Freqs,
+        events: rtrb::Consumer<Event>,
+        sample_rate: f32,
+    ) -> Self {
+        Self {
+            voices,
+            freqs,
+            feed: Feed::Live(events),
+            sample_rate,
+            note: None,
+            sounding: None,
+            clock: 0,
+            total_samples: u64::MAX,
+        }
+    }
+
+    pub fn sounding(&self) -> Option<u8> {
+        self.sounding
+    }
+
     pub fn total_samples(&self) -> u64 {
-        self.timeline.total_samples
+        self.total_samples
+    }
+
+    // returns an owned event so the borrow of `feed` ends before `apply`
+    // needs &mut self
+    fn pull(&mut self) -> Option<Event> {
+        let clock = self.clock;
+        match &mut self.feed {
+            Feed::Timeline { events, next } => {
+                let (at, event) = events.get(*next)?;
+                if *at <= clock {
+                    *next += 1;
+                    Some(event.clone())
+                } else {
+                    None
+                }
+            }
+            Feed::Live(consumer) => consumer.pop().ok(),
+        }
+    }
+
+    fn apply(&mut self, event: Event) {
+        match event {
+            Event::NoteOn {
+                voice,
+                note,
+                velocity,
+            } => {
+                // a MIDI note-on with velocity 0 means note-off
+                if velocity == 0 {
+                    self.release(note);
+                    return;
+                }
+                let Some(voice) = self.voices.get(voice) else {
+                    return;
+                };
+                let Some(&freq) = self.freqs.get(note as usize) else {
+                    return;
+                };
+                // mono: a new note replaces whatever was sounding
+                self.sounding = Some(note);
+                self.note = Some(Note::new(
+                    Arc::clone(voice),
+                    freq,
+                    velocity as f32 / 127.0,
+                    self.sample_rate,
+                    None,
+                ));
+            }
+            Event::NoteOff { note } => self.release(note),
+        }
+    }
+
+    // matched here rather than at each input: without the note on NoteOff,
+    // every input had to track what it had started and filter stale releases
+    fn release(&mut self, note: u8) {
+        if self.sounding != Some(note) {
+            return;
+        }
+        self.sounding = None;
+        if let Some(note) = &mut self.note {
+            note.off();
+        }
     }
 
     fn next(&mut self) -> f32 {
         // several events can land on the same sample, so drain rather than peek
-        while self
-            .timeline
-            .events
-            .get(self.next_event)
-            .is_some_and(|(at, _)| *at <= self.clock)
-        {
-            match &self.timeline.events[self.next_event].1 {
-                Event::On { voice, freq } => {
-                    self.note = Some(Note::new(
-                        Arc::clone(&self.timeline.voices[*voice]),
-                        *freq,
-                        self.sample_rate,
-                        None,
-                    ));
-                }
-                Event::Off => {
-                    if let Some(note) = &mut self.note {
-                        note.off();
-                    }
-                }
-            }
-            self.next_event += 1;
+        while let Some(event) = self.pull() {
+            self.apply(event);
         }
 
         self.clock += 1;
@@ -260,53 +358,82 @@ fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tally {
     tally
 }
 
-pub fn play(path: &std::path::Path) -> anyhow::Result<()> {
+/// A negotiated output device, ready to build a stream on.
+pub struct Output {
+    pub device: cpal::Device,
+    pub config: cpal::SupportedStreamConfig,
+    pub sample_rate: u32,
+    pub channels: usize,
+}
+
+/// Open the default output device. Separated from playback so every view and
+/// command negotiates the device the same way.
+pub fn open() -> anyhow::Result<Output> {
     let device = cpal::default_host()
         .default_output_device()
         .context("no default output device")?;
-    let supported = device.default_output_config()?;
+    let config = device.default_output_config()?;
     anyhow::ensure!(
-        supported.sample_format() == cpal::SampleFormat::F32,
+        config.sample_format() == cpal::SampleFormat::F32,
         "device wants {:?}, only f32 is wired up",
-        supported.sample_format()
+        config.sample_format()
     );
 
-    let sample_rate = supported.sample_rate();
-    let channels = supported.channels() as usize;
-    debug!(sample_rate, channels, format = ?supported.sample_format(), "device");
+    let sample_rate = config.sample_rate();
+    let channels = config.channels() as usize;
+    debug!(sample_rate, channels, format = ?config.sample_format(), "device");
 
-    let patch = load(path, sample_rate)?;
-    let notes = patch.timeline.events.len();
-    let mut player = Player::new(patch.timeline, sample_rate as f32);
-    let seconds = player.total_samples() as f64 / sample_rate as f64;
+    Ok(Output {
+        device,
+        config,
+        sample_rate,
+        channels,
+    })
+}
 
-    let stats = Arc::new(Stats::default());
-    let callback_stats = Arc::clone(&stats);
-
-    let stream = device.build_output_stream(
-        supported.into(),
+/// Build and start a stream that drives `player`, reporting into `stats`.
+pub fn stream(
+    output: &Output,
+    mut player: Player,
+    stats: Arc<Stats>,
+) -> anyhow::Result<cpal::Stream> {
+    let channels = output.channels;
+    let stream = output.device.build_output_stream(
+        output.config.clone().into(),
         move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let start = Instant::now();
             let tally = fill(out, channels, &mut player);
 
             // accumulated in `fill`, then written once per callback rather
             // than once per sample
-            let s = &callback_stats;
-            s.samples.fetch_add(tally.frames as u64, Ordering::Relaxed);
-            s.clips.fetch_add(tally.clips, Ordering::Relaxed);
-            s.frames_max.fetch_max(tally.frames, Ordering::Relaxed);
-            s.record_peak(tally.peak);
-            s.callback_us_max
+            stats.samples.fetch_add(tally.frames as u64, Ordering::Relaxed);
+            stats.clips.fetch_add(tally.clips, Ordering::Relaxed);
+            stats.frames_max.fetch_max(tally.frames, Ordering::Relaxed);
+            stats.record_peak(tally.peak);
+            stats
+                .callback_us_max
                 .fetch_max(start.elapsed().as_micros() as u32, Ordering::Relaxed);
         },
         |err| eprintln!("stream error: {err}"),
         None,
     )?;
     stream.play()?;
+    Ok(stream)
+}
 
-    println!(
-        "{notes} events · {seconds:.1}s · {sample_rate} Hz · {channels} ch"
-    );
+pub fn play(path: &std::path::Path) -> anyhow::Result<()> {
+    let output = open()?;
+    let (sample_rate, channels) = (output.sample_rate, output.channels);
+
+    let patch = load(path, sample_rate)?;
+    let notes = patch.timeline.events.len();
+    let player = Player::new(patch.timeline, patch.freqs, sample_rate as f32);
+    let seconds = player.total_samples() as f64 / sample_rate as f64;
+
+    let stats = Arc::new(Stats::default());
+    let _stream = stream(&output, player, Arc::clone(&stats))?;
+
+    println!("{notes} events · {seconds:.1}s · {sample_rate} Hz · {channels} ch");
     std::thread::sleep(Duration::from_secs_f64(seconds) + Duration::from_millis(300));
 
     let report = stats.report(sample_rate);
@@ -332,7 +459,7 @@ mod tests {
 
     // 4 Hz sample rate makes hold = 1s exactly 4 samples
     fn note(voice: Voice) -> Note {
-        Note::new(Arc::new(voice), 1.0, 4.0, Some(Duration::from_secs(1)))
+        Note::new(Arc::new(voice), 1.0, 1.0, 4.0, Some(Duration::from_secs(1)))
     }
 
     #[test]
@@ -401,19 +528,135 @@ mod tests {
 
     // step 0.25 advances exactly one table entry per sample
     fn flat_note() -> Note {
-        Note::new(Arc::new(flat_voice()), 1.0, 4.0, None)
+        Note::new(Arc::new(flat_voice()), 1.0, 1.0, 4.0, None)
     }
 
     // a Player whose timeline is a single note-on at sample 0
+    // freqs[1] = 1.0 so step is 1/4 of the table per sample at rate 4.0
+    fn freqs() -> Freqs {
+        let mut freqs = vec![0.0; 128];
+        freqs[1] = 1.0;
+        freqs
+    }
+
     fn player(voice: Voice) -> Player {
         Player::new(
             Timeline {
                 voices: vec![Arc::new(voice)],
-                events: vec![(0, Event::On { voice: 0, freq: 1.0 })],
+                events: vec![(
+                    0,
+                    Event::NoteOn {
+                        voice: 0,
+                        note: 1,
+                        velocity: 127,
+                    },
+                )],
                 total_samples: 64,
             },
+            freqs(),
             4.0,
         )
+    }
+
+    #[test]
+    fn a_live_feed_drains_the_queue() {
+        let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
+        let mut player = Player::live(vec![Arc::new(flat_voice())], freqs(), rx, 4.0);
+
+        // nothing queued yet, so silence
+        assert_eq!(player.next(), 0.0);
+
+        tx.push(Event::NoteOn {
+            voice: 0,
+            note: 1,
+            velocity: 127,
+        })
+        .unwrap();
+        assert_eq!(player.next(), 0.25); // wave[0], envelope held at 1.0
+
+        tx.push(Event::NoteOff { note: 1 }).unwrap();
+        // release is empty in flat_voice, so the note goes straight to Done
+        assert_eq!(player.next(), 0.0);
+    }
+
+    #[test]
+    fn a_noteoff_for_a_note_that_is_not_sounding_is_ignored() {
+        let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
+        let mut player = Player::live(vec![Arc::new(flat_voice())], freqs(), rx, 4.0);
+
+        tx.push(Event::NoteOn {
+            voice: 0,
+            note: 1,
+            velocity: 127,
+        })
+        .unwrap();
+        assert_eq!(player.next(), 0.25);
+
+        // a stale release from a key that was already stolen must not cut the
+        // note that is actually sounding
+        tx.push(Event::NoteOff { note: 99 }).unwrap();
+        assert_eq!(player.next(), 0.5); // still playing, advanced one entry
+        assert_eq!(player.sounding(), Some(1));
+    }
+
+    #[test]
+    fn velocity_zero_means_note_off() {
+        let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
+        let mut player = Player::live(vec![Arc::new(flat_voice())], freqs(), rx, 4.0);
+
+        tx.push(Event::NoteOn {
+            voice: 0,
+            note: 1,
+            velocity: 127,
+        })
+        .unwrap();
+        assert_eq!(player.next(), 0.25);
+
+        // the MIDI convention: a note-on at velocity 0 releases
+        tx.push(Event::NoteOn {
+            voice: 0,
+            note: 1,
+            velocity: 0,
+        })
+        .unwrap();
+        assert_eq!(player.next(), 0.0);
+        assert_eq!(player.sounding(), None);
+    }
+
+    #[test]
+    fn velocity_scales_the_output() {
+        let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
+        let mut player = Player::live(vec![Arc::new(flat_voice())], freqs(), rx, 4.0);
+
+        tx.push(Event::NoteOn {
+            voice: 0,
+            note: 1,
+            velocity: 64,
+        })
+        .unwrap();
+        // wave[0] is 0.25, envelope 1.0, velocity 64/127
+        let expected = 0.25 * (64.0 / 127.0);
+        assert!((player.next() - expected).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_live_note_replaces_the_one_sounding() {
+        let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
+        let mut player = Player::live(vec![Arc::new(flat_voice())], freqs(), rx, 4.0);
+
+        let on = |note| Event::NoteOn {
+            voice: 0,
+            note,
+            velocity: 127,
+        };
+
+        tx.push(on(1)).unwrap();
+        player.next();
+        player.next(); // advance into the table
+
+        // a second note-on resets phase, so we are back at wave[0]
+        tx.push(on(1)).unwrap();
+        assert_eq!(player.next(), 0.25);
     }
 
     #[test]
@@ -467,7 +710,7 @@ mod tests {
 
     #[test]
     fn phase_advances_by_frequency_over_sample_rate() {
-        let mut note = Note::new(Arc::new(voice()), 440.0, 48000.0, None);
+        let mut note = Note::new(Arc::new(voice()), 440.0, 1.0, 48000.0, None);
         assert!((note.step - 440.0 / 48000.0).abs() < 1e-9);
 
         let before = note.phase;

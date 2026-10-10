@@ -9,6 +9,7 @@ comfy-table = "8.0.1"
 cpal = "0.18.2"
 crossterm = "0.29.0"
 ratatui = "0.29.0"
+rtrb = "0.4.0"
 tracing = "0.1.44"
 
 [dependencies.clap]
@@ -17,7 +18,11 @@ features = ["derive"]
 
 [dependencies.mlua]
 version = "0.9"
-features = ["luajit", "vendored"]
+features = ["luajit", "vendored", "serialize"]
+
+[dependencies.serde]
+version = "1.0.229"
+features = ["derive"]
 
 [dependencies.tracing-subscriber]
 version = "0.3.23"
