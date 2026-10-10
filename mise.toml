@@ -1,0 +1,14 @@
+[tools]
+rust = "1.98"
+
+[tasks.run]
+description = "run the synth TUI"
+run = "cargo run -- tui"
+
+[tasks.test]
+description = "run the test suite"
+run = "cargo test"
+
+[tasks.play]
+description = "test play"
+run = "cargo run -- play lua/example.lua"
