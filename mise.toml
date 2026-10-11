@@ -2,8 +2,12 @@
 rust = "1.98"
 
 [tasks.test]
-description = "run the test suite"
-run = "cargo test"
+depends = ["test:rust", "check"]
+description = "run all tests: cargo tests and the example patch lint"
+
+[tasks."test:rust"]
+description = "cargo tests"
+run = "cargo test --verbose -- --show-output"
 
 [tasks.play]
 description = "play the example patch, then show the debug log"
@@ -18,7 +22,7 @@ description = "report terminal capabilities and gating mode"
 run = "cargo run -- doctor"
 
 [tasks.check]
-description = "lint the example patch; nonzero exit on warnings"
+description = "lint example.lua; nonzero exit on warnings"
 run = "cargo run -- check lua/example.lua"
 
 [tasks.tui]
