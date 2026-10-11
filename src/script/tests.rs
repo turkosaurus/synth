@@ -27,6 +27,7 @@ fn instrument_with(wave: Vec<f32>) -> Instrument {
         decay: vec![1.0],
         sustain_level: 0.7,
         release: vec![0.7, 0.35],
+        voice_count: 1,
     }
 }
 
@@ -207,6 +208,42 @@ fn an_unknown_instrument_name_is_rejected() {
         .expect("instrument `nope` is not defined");
     assert!(
         format!("{error:#}").contains("not defined"),
+        "unexpected: {error:#}"
+    );
+}
+
+fn with_voices(voice_count: &str) -> anyhow::Result<Patch> {
+    let source = format!(
+        r#"
+        local sequence = require("synth.sequence")
+        local instrument = require("synth.instrument")
+        return sequence.new({{
+            bpm = 60,
+            instruments = {{ a = instrument.new({{ {voice_count} }}) }},
+            steps = {{ {{ note = 69, instrument = "a" }} }},
+        }})
+        "#
+    );
+    load_source(&source, "test", 48000)
+}
+
+#[test]
+fn voice_count_defaults_to_mono() {
+    let patch = with_voices("").unwrap();
+    assert_eq!(patch.timeline.instruments[0].voice_count, 1);
+}
+
+#[test]
+fn voice_count_reaches_the_instrument() {
+    let patch = with_voices("voiceCount = 8").unwrap();
+    assert_eq!(patch.timeline.instruments[0].voice_count, 8);
+}
+
+#[test]
+fn zero_voices_is_rejected() {
+    let error = with_voices("voiceCount = 0").err().expect("0 voices");
+    assert!(
+        format!("{error:#}").contains("voiceCount must be at least 1"),
         "unexpected: {error:#}"
     );
 }

@@ -65,6 +65,7 @@ pub(super) mod field {
     pub const WAVEFORM: &str = "waveform";
     pub const ENVELOPE: &str = "envelope";
     pub const KEYBOARD: &str = "keyboard";
+    pub const VOICE_COUNT: &str = "voiceCount";
 
     pub const ATTACK_MS: &str = "attackMS";
     pub const ATTACK_FUNC: &str = "attackFunc";

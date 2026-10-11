@@ -7,6 +7,7 @@ pub struct Instrument {
     pub decay: Vec<f32>,    // 1.0..sustain_level
     pub sustain_level: f32, // 0.0..1.0
     pub release: Vec<f32>,  // sustain_level..0.0
+    pub voice_count: usize, // notes sounding at once; 1 is mono
 }
 
 /// MIDI-shaped on purpose: note numbers rather than frequencies, and an
