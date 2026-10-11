@@ -1,6 +1,6 @@
 # synth
 
-_Lua defined, pure Rust synthesizer and sequencer_
+_Lua defined, Rust synthesizer and sequencer_
 
 ## requirements
 
