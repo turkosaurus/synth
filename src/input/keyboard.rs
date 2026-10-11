@@ -5,8 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::audio::Event;
 
-/// An isomorphic grid resolved to concrete notes. Built from `lua/keyboard.lua`,
-/// so changing 4ths to 5ths is a config edit rather than a rebuild.
+/// An isomorphic grid resolved to MIDI notes, built from `lua/keyboard.lua`,
 pub struct Keymap {
     pub notes: HashMap<char, u8>,
     pub octave_up: Vec<KeyCode>,
@@ -40,8 +39,7 @@ pub fn binding(name: &str) -> Option<KeyCode> {
     })
 }
 
-/// How long a note sounds when the terminal cannot report key release.
-/// Short enough to play over, long enough to hear the envelope.
+/// Default note duration when input device cannot (or will not) report key release.
 pub const FIXED_NOTE: Duration = Duration::from_millis(200);
 
 /// A key has no depth to time, so there is no velocity to measure. MIDI
@@ -68,6 +66,10 @@ pub struct Keyboard {
     gating: Gating,
     tx: rtrb::Producer<Event>,
     octave: i32,
+    /// The note each held key started. Recomputing it on release would use
+    /// whatever octave is current by then, which orphans the note if the
+    /// octave moved while the key was down.
+    held: HashMap<char, u8>,
     sounding: Option<u8>,
     release_at: Option<Instant>,
     last_key: Option<char>,
@@ -80,6 +82,7 @@ impl Keyboard {
             gating,
             tx,
             octave: 0,
+            held: HashMap::new(),
             sounding: None,
             release_at: None,
             last_key: None,
@@ -101,16 +104,16 @@ impl Keyboard {
     pub fn handle(&mut self, key: KeyEvent) -> Outcome {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
-        // quit is ctrl-c/d only, hardcoded so it survives a broken keymap.
-        // panic is configurable, via the keymap's `stop` list.
+        // quit is ctrl-c/d only, hardcoded to survive an invalid keymap.
+        // sound stop is configurable via the keymap's `stop` list.
         if matches!(key.code, KeyCode::Char('c' | 'd')) && ctrl {
             return Outcome::Quit;
         }
 
         match key.kind {
             KeyEventKind::Press => self.press(key.code),
-            // release only arrives when gating is Held; in Fixed mode `tick`
-            // ends the note instead
+            // release only arrives when gating is Held;
+            // in Fixed mode, `tick` ends the note
             KeyEventKind::Release => {
                 if let KeyCode::Char(ch) = key.code {
                     self.release(ch);
@@ -122,8 +125,8 @@ impl Keyboard {
     }
 
     fn press(&mut self, code: KeyCode) {
-        // control bindings are matched as key codes, so a name like
-        // "backspace" works alongside a character like "="
+        // control bindings are matched as key codes,
+        // so "backspace" works alongside "="
         if self.keymap.stop.contains(&code) {
             self.panic();
             return;
@@ -148,6 +151,7 @@ impl Keyboard {
         };
 
         self.last_key = Some(ch);
+        self.held.insert(ch, note);
         self.sounding = Some(note);
         self.send(Event::NoteOn {
             voice: 0,
@@ -162,12 +166,7 @@ impl Keyboard {
     }
 
     fn release(&mut self, ch: char) {
-        let Some(&base) = self.keymap.notes.get(&ch) else {
-            return;
-        };
-        // no stale-release filtering here: NoteOff names the note, so the
-        // player ignores a release for something it is not sounding
-        if let Some(note) = shift(base, self.octave) {
+        if let Some(note) = self.held.remove(&ch) {
             self.end(note);
         }
     }
@@ -189,6 +188,9 @@ impl Keyboard {
     }
 
     fn end(&mut self, note: u8) {
+        // also reached by tick() and panic(), neither of which sees a key
+        // release, so this is the only place `held` is guaranteed to drain
+        self.held.retain(|_, held| *held != note);
         if self.sounding == Some(note) {
             self.sounding = None;
             self.release_at = None;

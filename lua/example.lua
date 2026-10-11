@@ -2,17 +2,18 @@
 
 local sequence = require("synth.sequence")
 local voice = require("synth.voice")
-local osc = require("synth.osc")
+local wave = require("synth.wave")
+local envelope = require("synth.envelope")
 
 return sequence.new({
 	bpm = 140,
-	division = 4, -- steps per beat, so a quarter note spans four steps
+	division = 4, -- subdivisions per beat; 4 = 16th notes, 8 = 32nd notes, etc.
 	voice = "tri", -- default for every pattern; stickiness resets per pattern
 
 	voices = {
 		tri = voice.new({
-			waveform = osc.waveform.triangle,
-			envelope = osc.envelope.new({
+			waveform = wave.triangle,
+			envelope = envelope.new({
 				attackMS = 100,
 				decayMS = 150,
 				sustainLevel = 0.7,

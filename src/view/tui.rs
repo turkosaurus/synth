@@ -4,6 +4,7 @@ use std::time::Duration;
 use crossterm::{cursor, event, execute, terminal};
 
 use crate::audio::{self, Event, Player, Stats};
+
 use crate::input::keyboard::{Gating, Keyboard, Outcome};
 use crate::script;
 
@@ -70,7 +71,11 @@ fn draw(
     gating: Gating,
 ) -> anyhow::Result<()> {
     let sounding = match keyboard.sounding() {
-        Some(note) => format!("{} ({:.1} Hz)", name(note), 440.0 * 2f32.powf((note as f32 - 69.0) / 12.0)),
+        Some(note) => format!(
+            "{} ({:.1} Hz)",
+            name(note),
+            440.0 * 2f32.powf((note as f32 - 69.0) / 12.0)
+        ),
         None => "—".to_string(),
     };
     let mode = match gating {

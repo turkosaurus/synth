@@ -2,8 +2,9 @@
 
 local sequence = {}
 
--- `note` and `voice` stick until a later step changes them, so a step only
--- names what differs. Resolved here so Rust reads a uniform list.
+-- `note` and `voice` stick until a later step changes them,
+-- so a step only names what differs.
+-- Resolved here so Rust reads a uniform list.
 local function resolve(pattern, into, default_voice)
 	-- a fresh copy per step: a pattern used twice
 	-- must not inherit the voice its first appearance resolved to
@@ -24,9 +25,8 @@ local function resolve(pattern, into, default_voice)
 	end
 end
 
--- Build a list from a function body. A table constructor cannot hold
--- statements, so this is how a loop stays inline where its result is used
--- instead of being hoisted above the table.
+-- A table constructor cannot hold statements, so this makes a function body
+-- an expression, letting a loop build a list inline where it is used.
 function sequence.list(build)
 	local out = {}
 	build(function(...)
@@ -37,9 +37,9 @@ function sequence.list(build)
 	return out
 end
 
--- `patterns` goes in as a table and comes out as a count, so unlike the
--- other constructors this cannot pass opts through. The check lives here
--- instead.
+-- The other constructors return the table you passed in,
+-- so Rust can reject unknown fields by name.
+-- This fresh table builds from scratch, so this allows checks.
 local known = {
 	bpm = true,
 	division = true,

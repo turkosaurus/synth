@@ -4,7 +4,10 @@ use tracing::{debug_span, instrument, warn};
 
 use crate::audio::Voice;
 
-const LUA_OSC: &str = include_str!("../lua/osc.lua");
+const LUA_SLOPE: &str = include_str!("../lua/slope.lua");
+const LUA_WAVE: &str = include_str!("../lua/wave.lua");
+const LUA_ENVELOPE: &str = include_str!("../lua/envelope.lua");
+const LUA_TUNING: &str = include_str!("../lua/tuning.lua");
 const LUA_VOICE: &str = include_str!("../lua/voice.lua");
 const LUA_SEQUENCE: &str = include_str!("../lua/sequence.lua");
 const LUA_KEYBOARD: &str = include_str!("../lua/keyboard.lua");
@@ -21,7 +24,10 @@ fn lua_register(lua: &mlua::Lua) -> anyhow::Result<()> {
     let preload: mlua::Table = package.get(field::PRELOAD)?;
 
     for (name, src) in [
-        (module::OSC, LUA_OSC),
+        (module::SLOPE, LUA_SLOPE),
+        (module::WAVE, LUA_WAVE),
+        (module::ENVELOPE, LUA_ENVELOPE),
+        (module::TUNING, LUA_TUNING),
         (module::VOICE, LUA_VOICE),
         (module::SEQUENCE, LUA_SEQUENCE),
         (module::KEYBOARD, LUA_KEYBOARD),
@@ -140,7 +146,10 @@ struct Step {
 /// Names the embedded modules are registered under. Used both to register
 /// them and to require them, so the two cannot drift.
 mod module {
-    pub const OSC: &str = "synth.osc";
+    pub const SLOPE: &str = "synth.slope";
+    pub const WAVE: &str = "synth.wave";
+    pub const ENVELOPE: &str = "synth.envelope";
+    pub const TUNING: &str = "synth.tuning";
     pub const VOICE: &str = "synth.voice";
     pub const SEQUENCE: &str = "synth.sequence";
     pub const KEYBOARD: &str = "synth.keyboard";
@@ -170,7 +179,6 @@ mod field {
     pub const CHAIN: &str = "chain";
     pub const LOOP: &str = "loop";
 
-    pub const TUNING: &str = "tuning";
     pub const FREQUENCY: &str = "frequency";
 
     // Lua's own, not ours: these can never be renamed, but a typo breaks
@@ -470,8 +478,7 @@ fn load_in(
     };
 
     let require: mlua::Function = lua.globals().get(field::REQUIRE)?;
-    let osc: mlua::Table = require.call(module::OSC)?;
-    let tuning: mlua::Table = osc.get(field::TUNING)?;
+    let tuning: mlua::Table = require.call(module::TUNING)?;
     let to_hz: mlua::Function = tuning.get(field::FREQUENCY)?;
 
     let mut freqs = Vec::with_capacity(128);
@@ -818,7 +825,8 @@ mod tests {
             r#"
             local sequence = require("synth.sequence")
             local voice = require("synth.voice")
-            local osc = require("synth.osc")
+            local wave = require("synth.wave")
+            local envelope = require("synth.envelope")
             return sequence.new({{
                 bpm = 60,
                 voices = {{ a = voice.new({{}}), b = voice.new({{}}) }},
@@ -927,10 +935,11 @@ mod tests {
         let source = format!(
             r#"
             local voice = require("synth.voice")
-            local osc = require("synth.osc")
+            local wave = require("synth.wave")
+            local envelope = require("synth.envelope")
             return voice.new({{
-                waveform = osc.waveform.triangle,
-                envelope = osc.envelope.new({{
+                waveform = wave.triangle,
+                envelope = envelope.new({{
                     attackMS = {attack_ms}, decayMS = 120,
                     sustainLevel = 0.7, releaseMS = 250,
                 }}),
@@ -974,11 +983,12 @@ mod tests {
         // a mandolin layout: rows a 5th apart instead of a 4th
         let source = r#"
             local voice = require("synth.voice")
-            local osc = require("synth.osc")
+            local wave = require("synth.wave")
+            local envelope = require("synth.envelope")
             local keyboard = require("synth.keyboard")
             return voice.new({
-                waveform = osc.waveform.triangle,
-                envelope = osc.envelope.new({}),
+                waveform = wave.triangle,
+                envelope = envelope.new({}),
                 keyboard = keyboard.new({ offset = 7 }),
             })
         "#;
@@ -1113,6 +1123,96 @@ mod tests {
             format!("{error:#}").contains("not defined"),
             "unexpected: {error:#}"
         );
+    }
+
+    // The slopes are Lua, so they are exercised through a real bake. Rate
+    // 1000 makes milliseconds map 1:1 to samples, so `ms` is the step count.
+    // attack rises 0 -> 1, release falls sustainLevel -> 0.
+    fn baked(ctor: &str, ms: u32) -> (Vec<f32>, Vec<f32>) {
+        let source = format!(
+            r#"
+            local slope = require("synth.slope")
+            local voice = require("synth.voice")
+            local wave = require("synth.wave")
+            local envelope = require("synth.envelope")
+            return voice.new({{
+                waveform = wave.triangle,
+                envelope = envelope.new({{
+                    attackMS = {ms},
+                    attackFunc = {ctor},
+                    sustainLevel = 1,
+                    releaseMS = {ms},
+                    releaseFunc = {ctor},
+                }}),
+            }})
+            "#
+        );
+        let patch = load_source(&source, "test", 1000).unwrap();
+        let voice = &patch.timeline.voices[0];
+        (voice.attack.clone(), voice.release.clone())
+    }
+
+    #[test]
+    fn an_exponential_slope_starts_at_initial_and_curves() {
+        let (attack, _) = baked("slope.exponential(3)", 8);
+
+        assert_eq!(attack.len(), 8);
+        assert_eq!(attack[0], 0.0, "starts exactly at initial, like linear");
+
+        // hand-checked against (1 - e^-3t) / (1 - e^-3)
+        for (index, expected) in [(1, 0.329), (2, 0.555), (4, 0.818), (7, 0.976)] {
+            assert!(
+                (attack[index] - expected).abs() < 1e-3,
+                "attack[{index}] = {} want {expected}",
+                attack[index]
+            );
+        }
+
+        // curved, not straight: linear puts the midpoint at 0.5
+        let (linear, _) = baked("slope.linear()", 8);
+        assert!(attack[4] > linear[4] + 0.2);
+    }
+
+    #[test]
+    fn an_exponential_slope_runs_in_both_directions() {
+        let (_, release) = baked("slope.exponential(3)", 8);
+
+        assert_eq!(release[0], 1.0);
+        for pair in release.windows(2) {
+            assert!(
+                pair[1] < pair[0],
+                "a falling segment must decrease: {release:?}"
+            );
+        }
+        // the classic quick drop and long tail: past halfway in one eighth
+        assert!(release[1] < 0.7);
+    }
+
+    #[test]
+    fn handing_over_a_slope_constructor_uncalled_is_caught() {
+        // the mistake is the missing (), which Rust then calls with three
+        // arguments; the guard names it rather than failing on a type
+        let source = r#"
+            local slope = require("synth.slope")
+            local voice = require("synth.voice")
+            local envelope = require("synth.envelope")
+            return voice.new({
+                envelope = envelope.new({ attackMS = 10, attackFunc = slope.exponential }),
+            })
+        "#;
+        let error = load_source(source, "test", 1000)
+            .err()
+            .expect("slope.exponential handed over uncalled");
+        assert!(
+            format!("{error:#}").contains("it is not one itself"),
+            "unexpected: {error:#}"
+        );
+    }
+
+    #[test]
+    fn a_zero_length_slope_is_empty() {
+        assert!(baked("slope.exponential(3)", 0).0.is_empty());
+        assert!(baked("slope.linear()", 0).0.is_empty());
     }
 
     #[test]

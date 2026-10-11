@@ -307,8 +307,9 @@ impl Player {
         }
     }
 
-    // matched here rather than at each input: without the note on NoteOff,
-    // every input had to track what it had started and filter stale releases
+    // Press a, press s, release a. Mono already replaced a's note with s's,
+    // so that release names something no longer playing and acting on it
+    // would cut the note that is.
     fn release(&mut self, note: u8) {
         if self.sounding != Some(note) {
             return;
