@@ -28,9 +28,9 @@ fn reject_unknown(table: &mlua::Table, allowed: &[&str], what: &str) -> anyhow::
     for pair in table.clone().pairs::<mlua::Value, mlua::Value>() {
         let (key, _) = pair?;
         // non-string keys are array indices, which these tables never use
-        if let Some(name) = key.as_str() {
+        if let Some(name) = key.as_string().and_then(|s| s.to_str().ok()) {
             anyhow::ensure!(
-                allowed.contains(&name),
+                allowed.contains(&&*name),
                 "{what}: unknown field `{name}`; expected one of {}",
                 allowed.join(", ")
             );
