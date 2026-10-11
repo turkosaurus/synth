@@ -9,13 +9,14 @@ pub struct Instrument {
     pub release: Vec<f32>,  // sustain_level..0.0
 }
 
-/// MIDI-shaped on purpose: note numbers rather than frequencies, and a note
-/// on NoteOff. That keeps a MIDI input close to a passthrough, puts tuning in
-/// one place (the audio side), and means polyphony is not a format change.
+/// MIDI-shaped on purpose: note numbers rather than frequencies, and an
+/// instrument on every event the way MIDI puts a channel on every message.
+/// That keeps a MIDI input close to a passthrough, puts tuning in one place
+/// (the audio side), and lets a release find the voice pool it belongs to.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     NoteOn { instrument: usize, note: u8, velocity: u8 },
-    NoteOff { note: u8 },
+    NoteOff { instrument: usize, note: u8 },
 }
 
 /// Events stamped with the sample they fire on. A single sustained note is

@@ -46,6 +46,9 @@ pub const FIXED_NOTE: Duration = Duration::from_millis(200);
 /// hardware supplies a real one.
 const VELOCITY: u8 = 100;
 
+/// The keyboard plays the patch's first instrument.
+const INSTRUMENT: usize = 0;
+
 /// How a note ends. Only the keyboard needs this: a terminal may not report
 /// key release, so in `Fixed` mode the poll loop schedules the note-off
 /// itself. MIDI has real note-off and never comes through here.
@@ -154,7 +157,7 @@ impl Keyboard {
         self.held.insert(ch, note);
         self.sounding = Some(note);
         self.send(Event::NoteOn {
-            instrument: 0,
+            instrument: INSTRUMENT,
             note,
             velocity: VELOCITY,
         });
@@ -195,7 +198,10 @@ impl Keyboard {
             self.sounding = None;
             self.release_at = None;
         }
-        self.send(Event::NoteOff { note });
+        self.send(Event::NoteOff {
+            instrument: INSTRUMENT,
+            note,
+        });
     }
 
     // the queue is bounded; a full queue means the audio thread has stalled,

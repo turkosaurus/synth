@@ -234,7 +234,7 @@ impl Player {
                     None,
                 ));
             }
-            Event::NoteOff { note } => self.release(note),
+            Event::NoteOff { note, .. } => self.release(note),
         }
     }
 
@@ -435,7 +435,7 @@ mod tests {
         .unwrap();
         assert_eq!(player.next(), 0.25); // wave[0], envelope held at 1.0
 
-        tx.push(Event::NoteOff { note: 1 }).unwrap();
+        tx.push(Event::NoteOff { instrument: 0, note: 1 }).unwrap();
         // release is empty in flat_instrument, so the note goes straight to Done
         assert_eq!(player.next(), 0.0);
     }
@@ -455,7 +455,7 @@ mod tests {
 
         // a stale release from a key that was already stolen must not cut the
         // note that is actually sounding
-        tx.push(Event::NoteOff { note: 99 }).unwrap();
+        tx.push(Event::NoteOff { instrument: 0, note: 99 }).unwrap();
         assert_eq!(player.next(), 0.5); // still playing, advanced one entry
         assert_eq!(player.sounding(), Some(1));
     }

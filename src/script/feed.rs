@@ -46,7 +46,13 @@ pub(super) fn single(
                         velocity: 127,
                     },
                 ),
-                (hold, crate::audio::Event::NoteOff { note: SINGLE_NOTE }),
+                (
+                    hold,
+                    crate::audio::Event::NoteOff {
+                        instrument: 0,
+                        note: SINGLE_NOTE,
+                    },
+                ),
             ],
             total_samples: hold + tail,
         },
@@ -152,7 +158,7 @@ pub(super) fn sequence(
         // clamp its Off would land later and release the wrong note.
         let next_start = starts.get(position + 1).map(|&(_, at)| at);
         if next_start.is_none_or(|next| ends < next) {
-            events.push((ends, crate::audio::Event::NoteOff { note }));
+            events.push((ends, crate::audio::Event::NoteOff { instrument, note }));
         }
     }
 
@@ -160,13 +166,15 @@ pub(super) fn sequence(
     let mut previous = None;
     for (i, step) in parsed.iter().enumerate() {
         if let Some(note) = step.note {
-            previous = Some(note);
+            // the loop above already rejected a note with no known instrument
+            let instrument = step.instrument.as_deref().and_then(|name| index.get(name));
+            previous = instrument.map(|&instrument| (instrument, note));
         }
         if step.off {
-            if let Some(note) = previous {
+            if let Some((instrument, note)) = previous {
                 events.push((
                     (step_len * i as f64) as u64,
-                    crate::audio::Event::NoteOff { note },
+                    crate::audio::Event::NoteOff { instrument, note },
                 ));
             }
         }
