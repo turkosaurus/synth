@@ -154,10 +154,17 @@ pub(super) fn sequence(
         );
         let ends = start + (step_len * step.duration) as u64;
 
-        // mono steals, so a long note is cut by the next one. Without this
-        // clamp its Off would land later and release the wrong note.
-        let next_start = starts.get(position + 1).map(|&(_, at)| at);
-        if next_start.is_none_or(|next| ends < next) {
+        // A retrigger of the same pitch on the same instrument takes this
+        // note's voice, so an Off landing after it would release the new
+        // note. Any other later note leaves this Off correct: it either
+        // releases a voice still sounding or names one already stolen.
+        let retrigger = starts[position + 1..]
+            .iter()
+            .find(|&&(j, _)| {
+                parsed[j].note == Some(note) && parsed[j].instrument.as_deref() == Some(name)
+            })
+            .map(|&(_, at)| at);
+        if retrigger.is_none_or(|next| ends < next) {
             events.push((ends, crate::audio::Event::NoteOff { instrument, note }));
         }
     }

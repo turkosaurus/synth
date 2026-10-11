@@ -121,11 +121,37 @@ fn duration_sets_the_off_position() {
     assert_eq!(offs, vec![12_000]); // a quarter of one beat
 }
 
+fn offs(patch: &Patch) -> Vec<u64> {
+    patch
+        .timeline
+        .events
+        .iter()
+        .filter(|(_, e)| matches!(e, crate::audio::Event::NoteOff { .. }))
+        .map(|(at, _)| *at)
+        .collect()
+}
+
 #[test]
-fn a_long_note_emits_no_off_because_the_next_note_steals_it() {
-    // duration 3 would end at beat 3, well past the note on beat 1. Left
-    // unclamped that Off would release the *second* note instead.
+fn a_long_note_keeps_its_off_under_a_different_pitch() {
+    // duration 3 ends at beat 3, past the note on beat 1. A different pitch
+    // takes another voice, so the long note still needs its own release.
     let patch = seq(r#"{ { note = 69, instrument = "a", duration = 3 }, { note = 72 } }"#);
+    assert_eq!(offs(&patch), vec![48_000 + 24_000, 3 * 48_000]);
+}
+
+#[test]
+fn a_long_note_keeps_its_off_under_another_instrument() {
+    let patch = seq(
+        r#"{ { note = 69, instrument = "a", duration = 3 }, { note = 69, instrument = "b" } }"#,
+    );
+    assert_eq!(offs(&patch), vec![48_000 + 24_000, 3 * 48_000]);
+}
+
+#[test]
+fn a_long_note_emits_no_off_when_its_pitch_retriggers() {
+    // the retrigger takes this note's voice; left unclamped, the Off at
+    // beat 3 would release the *second* note instead
+    let patch = seq(r#"{ { note = 69, instrument = "a", duration = 3 }, { note = 69 } }"#);
 
     let offs = patch
         .timeline
