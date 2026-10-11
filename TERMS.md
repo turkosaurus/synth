@@ -8,7 +8,8 @@
 | decay | ms | after attack: time to reach sustain amplitude |
 | sustain | `0.0` - `1.0` | after decay: percentage of max amplitude to sustain |
 | release | ms | on note end, time to fall from current level to silence |
-| envelope | `ADSR` | time sections: attack, decay, sustain, release |
+| envelope (generator) | `ADSR` | time sections: attack, decay, sustain, release (adds articulation to an oscillator) |
+| envelope (follower) | `AR` | attack and release rates, no sections (defines reactivity for a compressor) |
 | slope | `lua:func` | points along a sloped curve between two points |
 | waveform | `lua:func` | phase (`0.0` to `1.0`) to amplitude (`-1.0` to `1.0`) |
 | wavetable | `[]f32` | one cycle of a waveform, baked to `TABLE_SIZE` points |
