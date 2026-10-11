@@ -5,8 +5,9 @@ use crate::audio::Instrument;
 
 use super::field;
 
-// points per waveform cycle: enough that the lowest note still reads
-// most of them, small enough that 8 KB stays in L1
+// points per waveform cycle: enough that every note above 23.4 Hz
+// advances at least one entry per sample, small enough that 8 KB
+// stays in L1
 const TABLE_SIZE: usize = 2048;
 
 // An instrument table as Rust reads it. The struct is the schema: serde
