@@ -21,6 +21,38 @@ Goals:
 
 Views are assembled from data, and presentation layers never do additional work.
 
+### diagram
+
+```mermaid
+sequenceDiagram
+    participant input
+    box rust
+        participant listener
+        participant consumer
+        participant init
+        participant instruments@{ "type" : "database" }
+        participant sequences@{ "type" : "database" }
+    end
+
+    participant lua
+    participant output
+
+    init->>+lua: load scripts
+    lua->>-init: return funcs/tables
+
+    init->>instruments: bake tables
+    init->>sequences: schedule notes
+    sequences->>+listener: trigger
+    input->>listener: trigger
+    note over listener: receive note input
+    listener->>instruments: fetch
+    instruments->>listener: 
+    listener->>listener: pitch
+    note over listener: produce note: pitch and envelope
+    listener->>-consumer: real-time ring buffer
+    consumer->>output: to OS API
+```
+
 ## backend
 
 ### lua
