@@ -21,7 +21,7 @@ pub fn run(path: Option<&std::path::Path>, gating: Gating) -> anyhow::Result<()>
     // the producer stays here; the consumer moves into the audio callback
     let (tx, rx) = rtrb::RingBuffer::<Event>::new(QUEUE);
     let player = Player::live(
-        patch.timeline.voices,
+        patch.timeline.instruments,
         patch.freqs,
         rx,
         output.sample_rate as f32,

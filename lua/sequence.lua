@@ -2,16 +2,16 @@
 
 local sequence = {}
 
--- `note` and `voice` stick until a later step changes them,
+-- `note` and `instrument` stick until a later step changes them,
 -- so a step only names what differs.
 -- Resolved here so Rust reads a uniform list.
-local function resolve(pattern, into, default_voice)
+local function resolve(pattern, into, default_instrument)
 	-- a fresh copy per step: a pattern used twice
-	-- must not inherit the voice its first appearance resolved to
-	local voice = default_voice
+	-- must not inherit the instrument its first appearance resolved to
+	local instrument = default_instrument
 	for i = 1, #pattern do
 		local step = pattern[i]
-		voice = step.voice or voice
+		instrument = step.instrument or instrument
 
 		-- copied field by field rather than rebuilt: listing the known keys
 		-- here would turn a misspelled one into a silent rest
@@ -19,7 +19,7 @@ local function resolve(pattern, into, default_voice)
 		for key, value in pairs(step) do
 			out[key] = value
 		end
-		out.voice = voice
+		out.instrument = instrument
 		out.duration = step.duration or 0.5 -- steps to sound; may exceed 1
 		into[#into + 1] = out
 	end
@@ -43,8 +43,8 @@ end
 local known = {
 	bpm = true,
 	division = true,
-	voice = true,
-	voices = true,
+	instrument = true,
+	instruments = true,
 	patterns = true,
 	chain = true,
 	loop = true,
@@ -76,17 +76,17 @@ function sequence.new(opts)
 				if not pattern then
 					error("chain names pattern '" .. tostring(name) .. "', which is not defined")
 				end
-				resolve(pattern, steps, opts.voice)
+				resolve(pattern, steps, opts.instrument)
 			end
 		end
 	else
-		resolve(opts.steps or {}, steps, opts.voice)
+		resolve(opts.steps or {}, steps, opts.instrument)
 	end
 
 	return {
 		bpm = opts.bpm or 120,
 		division = opts.division or 1, -- steps per beat; 4 = sixteenths
-		voices = opts.voices or {},
+		instruments = opts.instruments or {},
 		steps = steps,
 		patterns = patterns,
 		chain = #chain,

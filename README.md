@@ -27,7 +27,7 @@ Views are assembled from data, and presentation layers never do additional work.
 
 - oscillator/generator: mathematical slopes and waveforms defined by Lua functions
 - envelope: same slopes may define an ADSR amp envelope 
-- sequencer: composed voices may be sequenced and chained 
+- sequencer: composed instruments may be sequenced and chained 
 
 ### rust
 
@@ -39,7 +39,7 @@ Lua states the two shapes differently. A waveform is a function of phase, so Rus
 
 2048 points means every note above 23.4 Hz advances at least one entry per output sample, so no playable pitch stretches the shape; at 8 KB it also stays in L1.
 
-A voice reaches the audio backend as two things: one cycle of waveform, and an amplitude envelope that scales it. The waveform loops at pitch for as long as the note sounds, in every stage.
+An instrument reaches the audio backend as two things: one cycle of waveform, and an amplitude envelope that scales it. The waveform loops at pitch for as long as the note sounds, in every stage.
 
 The envelope is baked in four parts:
 - attack (fixed-length)

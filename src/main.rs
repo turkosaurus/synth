@@ -29,7 +29,7 @@ enum Commands {
     },
     /// Play a patch or sequence through the default output device
     Play { path: PathBuf },
-    /// Play live from the keyboard; without a path, the default voice
+    /// Play live from the keyboard; without a path, the default instrument
     Tui { path: Option<PathBuf> },
 }
 

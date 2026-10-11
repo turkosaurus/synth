@@ -3,10 +3,10 @@
 local wave = require("synth.wave")
 local envelope = require("synth.envelope")
 
-local voice = {}
+local instrument = {}
 
 -- passes opts through for the same reason envelope.new does
-function voice.new(opts)
+function instrument.new(opts)
 	opts = opts or {}
 	if opts.waveform == nil then
 		opts.waveform = wave.triangle
@@ -17,4 +17,4 @@ function voice.new(opts)
 	return opts
 end
 
-return voice
+return instrument

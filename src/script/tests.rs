@@ -1,4 +1,4 @@
-use crate::audio::Voice;
+use crate::audio::Instrument;
 
 use super::bake::inspect;
 use super::*;
@@ -20,8 +20,8 @@ fn triangle(phase: f32) -> f32 {
     }
 }
 
-fn voice_with(wave: Vec<f32>) -> Voice {
-    Voice {
+fn instrument_with(wave: Vec<f32>) -> Instrument {
+    Instrument {
         wave,
         attack: vec![0.0, 0.5],
         decay: vec![1.0],
@@ -32,7 +32,7 @@ fn voice_with(wave: Vec<f32>) -> Voice {
 
 #[test]
 fn clean_triangle_raises_nothing() {
-    let report = inspect(&voice_with(wave_from(triangle, 2048)), 0);
+    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 0);
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     assert_eq!(report.peak, 1.0);
     assert!(report.dc.abs() < 1e-6);
@@ -40,36 +40,36 @@ fn clean_triangle_raises_nothing() {
 
 #[test]
 fn flags_clamping() {
-    let report = inspect(&voice_with(wave_from(triangle, 2048)), 17);
+    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 17);
     assert!(report.warnings.iter().any(|w| w.contains("17 points")));
 }
 
 #[test]
 fn flags_dc_offset() {
     // a triangle lifted entirely above zero
-    let report = inspect(&voice_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)), 0);
+    let report = inspect(&instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)), 0);
     assert!(report.warnings.iter().any(|w| w.contains("DC offset")));
 }
 
 #[test]
 fn flags_wrap_discontinuity() {
     // a saw ends at +1 and restarts at -1: a step of 2.0 every cycle
-    let report = inspect(&voice_with(wave_from(|p| 2.0 * p - 1.0, 2048)), 0);
+    let report = inspect(&instrument_with(wave_from(|p| 2.0 * p - 1.0, 2048)), 0);
     assert!(report.warnings.iter().any(|w| w.contains("wrap smoothly")));
 }
 
 #[test]
 fn flags_weak_peak() {
-    let report = inspect(&voice_with(wave_from(|p| triangle(p) * 0.2, 2048)), 0);
+    let report = inspect(&instrument_with(wave_from(|p| triangle(p) * 0.2, 2048)), 0);
     assert!(report.warnings.iter().any(|w| w.contains("peaks at only")));
 }
 
 #[test]
 fn flags_zero_release_and_bad_sustain() {
-    let mut voice = voice_with(wave_from(triangle, 2048));
-    voice.release = vec![];
-    voice.sustain_level = 1.5;
-    let report = inspect(&voice, 0);
+    let mut instrument = instrument_with(wave_from(triangle, 2048));
+    instrument.release = vec![];
+    instrument.sustain_level = 1.5;
+    let report = inspect(&instrument, 0);
     assert!(report.warnings.iter().any(|w| w.contains("releaseMS = 0")));
     assert!(report.warnings.iter().any(|w| w.contains("outside 0.0..1.0")));
 }
@@ -79,12 +79,12 @@ fn seq(steps: &str) -> Patch {
     let source = format!(
         r#"
         local sequence = require("synth.sequence")
-        local voice = require("synth.voice")
+        local instrument = require("synth.instrument")
         local wave = require("synth.wave")
         local envelope = require("synth.envelope")
         return sequence.new({{
             bpm = 60,
-            voices = {{ a = voice.new({{}}), b = voice.new({{}}) }},
+            instruments = {{ a = instrument.new({{}}), b = instrument.new({{}}) }},
             steps = {steps},
         }})
         "#
@@ -94,7 +94,7 @@ fn seq(steps: &str) -> Patch {
 
 #[test]
 fn steps_land_one_beat_apart() {
-    let patch = seq(r#"{ { note = 69, voice = "a" }, {}, { note = 69 } }"#);
+    let patch = seq(r#"{ { note = 69, instrument = "a" }, {}, { note = 69 } }"#);
     let ons: Vec<u64> = patch
         .timeline
         .events
@@ -109,7 +109,7 @@ fn steps_land_one_beat_apart() {
 
 #[test]
 fn duration_sets_the_off_position() {
-    let patch = seq(r#"{ { note = 69, voice = "a", duration = 0.25 } }"#);
+    let patch = seq(r#"{ { note = 69, instrument = "a", duration = 0.25 } }"#);
     let offs: Vec<u64> = patch
         .timeline
         .events
@@ -125,7 +125,7 @@ fn duration_sets_the_off_position() {
 fn a_long_note_emits_no_off_because_the_next_note_steals_it() {
     // duration 3 would end at beat 3, well past the note on beat 1. Left
     // unclamped that Off would release the *second* note instead.
-    let patch = seq(r#"{ { note = 69, voice = "a", duration = 3 }, { note = 72 } }"#);
+    let patch = seq(r#"{ { note = 69, instrument = "a", duration = 3 }, { note = 72 } }"#);
 
     let offs = patch
         .timeline
@@ -141,36 +141,36 @@ fn a_long_note_emits_no_off_because_the_next_note_steals_it() {
 }
 
 #[test]
-fn voice_sticks_until_a_step_changes_it() {
-    let patch = seq(r#"{ { note = 69, voice = "a" }, { note = 71 }, { note = 72, voice = "b" } }"#);
+fn instrument_sticks_until_a_step_changes_it() {
+    let patch = seq(r#"{ { note = 69, instrument = "a" }, { note = 71 }, { note = 72, instrument = "b" } }"#);
     let used: Vec<usize> = patch
         .timeline
         .events
         .iter()
         .filter_map(|(_, e)| match e {
-            crate::audio::Event::NoteOn { voice, .. } => Some(*voice),
+            crate::audio::Event::NoteOn { instrument, .. } => Some(*instrument),
             crate::audio::Event::NoteOff { .. } => None,
         })
         .collect();
 
-    assert_eq!(used[0], used[1], "step 2 inherits step 1's voice");
+    assert_eq!(used[0], used[1], "step 2 inherits step 1's instrument");
     assert_ne!(used[1], used[2], "step 3 switches");
 }
 
 #[test]
-fn an_unknown_voice_name_is_rejected() {
+fn an_unknown_instrument_name_is_rejected() {
     let source = r#"
         local sequence = require("synth.sequence")
-        local voice = require("synth.voice")
+        local instrument = require("synth.instrument")
         return sequence.new({
             bpm = 60,
-            voices = { a = voice.new({}) },
-            steps = { { note = 69, voice = "nope" } },
+            instruments = { a = instrument.new({}) },
+            steps = { { note = 69, instrument = "nope" } },
         })
     "#;
     let error = load_source(source, "test", 48000)
         .err()
-        .expect("voice `nope` is not defined");
+        .expect("instrument `nope` is not defined");
     assert!(
         format!("{error:#}").contains("not defined"),
         "unexpected: {error:#}"
@@ -179,20 +179,20 @@ fn an_unknown_voice_name_is_rejected() {
 
 #[test]
 fn a_step_emits_its_midi_note() {
-    let patch = seq(r#"{ { note = 69, voice = "a" } }"#);
+    let patch = seq(r#"{ { note = 69, instrument = "a" } }"#);
     match patch.timeline.events[0].1 {
         crate::audio::Event::NoteOn { note, .. } => assert_eq!(note, 69),
         _ => panic!("expected a note on first"),
     }
 }
 
-fn one_voice(attack_ms: u32, rate: u32) -> Patch {
+fn one_instrument(attack_ms: u32, rate: u32) -> Patch {
     let source = format!(
         r#"
-        local voice = require("synth.voice")
+        local instrument = require("synth.instrument")
         local wave = require("synth.wave")
         local envelope = require("synth.envelope")
-        return voice.new({{
+        return instrument.new({{
             waveform = wave.triangle,
             envelope = envelope.new({{
                 attackMS = {attack_ms}, decayMS = 120,
@@ -208,11 +208,11 @@ fn arranged(body: &str) -> Patch {
     let source = format!(
         r#"
         local sequence = require("synth.sequence")
-        local voice = require("synth.voice")
+        local instrument = require("synth.instrument")
         return sequence.new({{
             bpm = 60,
-            voice = "a",
-            voices = {{ a = voice.new({{}}), b = voice.new({{}}) }},
+            instrument = "a",
+            instruments = {{ a = instrument.new({{}}), b = instrument.new({{}}) }},
             {body}
         }})
         "#
@@ -222,7 +222,7 @@ fn arranged(body: &str) -> Patch {
 
 #[test]
 fn the_anchor_key_lands_on_its_note() {
-    let patch = one_voice(10, 48000);
+    let patch = one_instrument(10, 48000);
     let notes = &patch.keymap.notes;
 
     assert_eq!(notes.get(&'a'), Some(&69)); // concert A
@@ -237,11 +237,11 @@ fn the_anchor_key_lands_on_its_note() {
 fn changing_offset_keeps_the_anchor_on_pitch() {
     // a mandolin layout: rows a 5th apart instead of a 4th
     let source = r#"
-        local voice = require("synth.voice")
+        local instrument = require("synth.instrument")
         local wave = require("synth.wave")
         local envelope = require("synth.envelope")
         local keyboard = require("synth.keyboard")
-        return voice.new({
+        return instrument.new({
             waveform = wave.triangle,
             envelope = envelope.new({}),
             keyboard = keyboard.new({ offset = 7 }),
@@ -258,9 +258,9 @@ fn an_explicit_shifted_row_of_the_wrong_length_is_rejected() {
     // derived rows cannot mismatch; an override still can, so the
     // validation stays as a guard on that one path
     let source = r#"
-        local voice = require("synth.voice")
+        local instrument = require("synth.instrument")
         local keyboard = require("synth.keyboard")
-        return voice.new({
+        return instrument.new({
             keyboard = keyboard.new({
                 template = { rows = { "asdfghjkl" }, shifted = { "ASD" } },
             }),
@@ -277,7 +277,7 @@ fn an_explicit_shifted_row_of_the_wrong_length_is_rejected() {
 
 #[test]
 fn the_frequency_table_covers_every_midi_note() {
-    let patch = one_voice(10, 48000);
+    let patch = one_instrument(10, 48000);
     assert_eq!(patch.freqs.len(), 128);
     assert!((patch.freqs[69] - 440.0).abs() < 0.01);
     assert!((patch.freqs[81] - 880.0).abs() < 0.01);
@@ -335,14 +335,14 @@ fn loop_repeats_the_whole_chain() {
 }
 
 #[test]
-fn a_reused_pattern_resolves_to_the_same_voice_each_time() {
-    // `y` sets voice "b"; `x` must still get the sequence default both
+fn a_reused_pattern_resolves_to_the_same_instrument_each_time() {
+    // `y` sets instrument "b"; `x` must still get the sequence default both
     // times it appears, not inherit "b" from the pass before it
     let patch = arranged(
         r#"
         patterns = {
             x = { { note = 60 } },
-            y = { { note = 70, voice = "b" } },
+            y = { { note = 70, instrument = "b" } },
         },
         chain = { "x", "y", "x" },
         "#,
@@ -352,7 +352,7 @@ fn a_reused_pattern_resolves_to_the_same_voice_each_time() {
         .events
         .iter()
         .filter_map(|(_, e)| match e {
-            crate::audio::Event::NoteOn { voice, .. } => Some(*voice),
+            crate::audio::Event::NoteOn { instrument, .. } => Some(*instrument),
             crate::audio::Event::NoteOff { .. } => None,
         })
         .collect();
@@ -387,10 +387,10 @@ fn baked(ctor: &str, ms: u32) -> (Vec<f32>, Vec<f32>) {
     let source = format!(
         r#"
         local slope = require("synth.slope")
-        local voice = require("synth.voice")
+        local instrument = require("synth.instrument")
         local wave = require("synth.wave")
         local envelope = require("synth.envelope")
-        return voice.new({{
+        return instrument.new({{
             waveform = wave.triangle,
             envelope = envelope.new({{
                 attackMS = {ms},
@@ -403,8 +403,8 @@ fn baked(ctor: &str, ms: u32) -> (Vec<f32>, Vec<f32>) {
         "#
     );
     let patch = load_source(&source, "test", 1000).unwrap();
-    let voice = &patch.timeline.voices[0];
-    (voice.attack.clone(), voice.release.clone())
+    let instrument = &patch.timeline.instruments[0];
+    (instrument.attack.clone(), instrument.release.clone())
 }
 
 #[test]
@@ -449,9 +449,9 @@ fn handing_over_a_slope_constructor_uncalled_is_caught() {
     // arguments; the guard names it rather than failing on a type
     let source = r#"
         local slope = require("synth.slope")
-        local voice = require("synth.voice")
+        local instrument = require("synth.instrument")
         local envelope = require("synth.envelope")
-        return voice.new({
+        return instrument.new({
             envelope = envelope.new({ attackMS = 10, attackFunc = slope.exponential }),
         })
     "#;
@@ -472,8 +472,8 @@ fn a_zero_length_slope_is_empty() {
 
 #[test]
 fn bakes_the_triangle_landmarks() {
-    let patch = one_voice(10, 48000);
-    let wave = &patch.timeline.voices[0].wave;
+    let patch = one_instrument(10, 48000);
+    let wave = &patch.timeline.instruments[0].wave;
     assert_eq!(wave.len(), 2048);
 
     for (index, expected) in [(0, 0.0), (512, 1.0), (1024, 0.0), (1536, -1.0)] {
@@ -488,8 +488,8 @@ fn bakes_the_triangle_landmarks() {
 #[test]
 fn envelope_lengths_follow_the_sample_rate() {
     // 10 ms of attack is a different number of samples per device
-    assert_eq!(one_voice(10, 48000).timeline.voices[0].attack.len(), 480);
-    assert_eq!(one_voice(10, 44100).timeline.voices[0].attack.len(), 441);
+    assert_eq!(one_instrument(10, 48000).timeline.instruments[0].attack.len(), 480);
+    assert_eq!(one_instrument(10, 44100).timeline.instruments[0].attack.len(), 441);
 }
 
 // the only thing worth asserting about a file the author tunes by ear is
@@ -504,7 +504,7 @@ fn the_shipped_example_loads_clean() {
     for (name, report) in &patch.reports {
         assert!(
             report.warnings.is_empty(),
-            "voice {name}: {:?}",
+            "instrument {name}: {:?}",
             report.warnings
         );
     }

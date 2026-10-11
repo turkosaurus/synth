@@ -34,9 +34,11 @@
 
 | term | type | definition |
 | ---  | ---  | ---        |
-| patch | | baked result of one lua file: voices, timeline, keymap |
-| voice | | lua-defined timbre: one waveform, one envelope, baked |
-| note | | one sounding instance of a voice at a pitch |
+| patch | | baked result of one lua file: instruments, timeline, keymap |
+| instrument | | lua-defined sound: one waveform, one envelope, baked |
+| note | | one sounding instance of an instrument at a pitch |
+| voice | | one slot that can sound one note at a time |
+| polyphony | count | how many voices exist; 1 is monophonic |
 | gate | | held signal; note sounds while high |
 | trigger | | instantaneous event; a fixed-length note follows one |
 | note stealing | | ending a sounding note to free its slot |

@@ -154,7 +154,7 @@ impl Keyboard {
         self.held.insert(ch, note);
         self.sounding = Some(note);
         self.send(Event::NoteOn {
-            voice: 0,
+            instrument: 0,
             note,
             velocity: VELOCITY,
         });

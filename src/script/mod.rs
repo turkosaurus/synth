@@ -17,7 +17,7 @@ const LUA_SLOPE: &str = include_str!("../../lua/slope.lua");
 const LUA_WAVE: &str = include_str!("../../lua/wave.lua");
 const LUA_ENVELOPE: &str = include_str!("../../lua/envelope.lua");
 const LUA_TUNING: &str = include_str!("../../lua/tuning.lua");
-const LUA_VOICE: &str = include_str!("../../lua/voice.lua");
+const LUA_INSTRUMENT: &str = include_str!("../../lua/instrument.lua");
 const LUA_SEQUENCE: &str = include_str!("../../lua/sequence.lua");
 const LUA_KEYBOARD: &str = include_str!("../../lua/keyboard.lua");
 
@@ -32,7 +32,7 @@ fn lua_register(lua: &mlua::Lua) -> anyhow::Result<()> {
         (module::WAVE, LUA_WAVE),
         (module::ENVELOPE, LUA_ENVELOPE),
         (module::TUNING, LUA_TUNING),
-        (module::VOICE, LUA_VOICE),
+        (module::INSTRUMENT, LUA_INSTRUMENT),
         (module::SEQUENCE, LUA_SEQUENCE),
         (module::KEYBOARD, LUA_KEYBOARD),
     ] {
@@ -53,7 +53,7 @@ mod module {
     pub const WAVE: &str = "synth.wave";
     pub const ENVELOPE: &str = "synth.envelope";
     pub const TUNING: &str = "synth.tuning";
-    pub const VOICE: &str = "synth.voice";
+    pub const INSTRUMENT: &str = "synth.instrument";
     pub const SEQUENCE: &str = "synth.sequence";
     pub const KEYBOARD: &str = "synth.keyboard";
 }
@@ -76,7 +76,7 @@ pub(super) mod field {
 
     pub const BPM: &str = "bpm";
     pub const DIVISION: &str = "division";
-    pub const VOICES: &str = "voices";
+    pub const INSTRUMENTS: &str = "instruments";
     pub const STEPS: &str = "steps";
     pub const PATTERNS: &str = "patterns";
     pub const CHAIN: &str = "chain";
@@ -95,7 +95,7 @@ pub(super) mod field {
 // constructors pass unknown fields through rather than discarding them, so a
 // misspelling arrives here and gets named instead of taking a default.
 
-/// A loaded file: a playable timeline plus one report per voice in it.
+/// A loaded file: a playable timeline plus one report per instrument in it.
 pub struct Patch {
     pub timeline: crate::audio::Timeline,
     /// hz for every midi note, baked from Lua so temperament stays there
@@ -112,16 +112,16 @@ pub struct Patch {
 }
 
 impl Patch {
-    /// No voice raised a warning, so the patch is safe to play as written.
+    /// No instrument raised a warning, so the patch is safe to play as written.
     pub fn clean(&self) -> bool {
         self.reports.iter().all(|(_, report)| report.warnings.is_empty())
     }
 }
 
-/// What `voice.new({})` gives you, for running with no file.
+/// What `instrument.new({})` gives you, for running with no file.
 const DEFAULT: &str = r#"
-local voice = require("synth.voice")
-return voice.new({})
+local instrument = require("synth.instrument")
+return instrument.new({})
 "#;
 
 #[instrument]
@@ -197,16 +197,16 @@ fn load_in(
     };
     let keys = keymap(&lua, &layout)?;
 
-    let voice_specs: Option<mlua::Table> = table.get(field::VOICES)?;
+    let instrument_specs: Option<mlua::Table> = table.get(field::INSTRUMENTS)?;
     let steps: Option<mlua::Table> = table.get(field::STEPS)?;
 
     // bound rather than returned directly: the match tuple is a temporary
     // that would otherwise outlive `lua` and borrow it past its drop
-    let patch = match (voice_specs, steps) {
+    let patch = match (instrument_specs, steps) {
         (Some(specs), Some(steps)) => {
             sequence(&lua, &table, &specs, &steps, sample_rate, freqs, keys)
         }
-        // a bare voice file: one sustained note, so a two-event timeline
+        // a bare instrument file: one sustained note, so a two-event timeline
         _ => single(&table, sample_rate, freqs, keys),
     };
     patch
