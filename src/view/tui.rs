@@ -38,11 +38,7 @@ pub fn run(path: Option<&std::path::Path>, gating: Gating) -> anyhow::Result<()>
     result
 }
 
-fn pump(
-    keyboard: &mut Keyboard,
-    stats: &Stats,
-    gating: Gating,
-) -> anyhow::Result<()> {
+fn pump(keyboard: &mut Keyboard, stats: &Stats, gating: Gating) -> anyhow::Result<()> {
     loop {
         draw(keyboard, stats, gating)?;
 
@@ -63,11 +59,7 @@ fn pump(
     }
 }
 
-fn draw(
-    keyboard: &Keyboard,
-    stats: &Stats,
-    gating: Gating,
-) -> anyhow::Result<()> {
+fn draw(keyboard: &Keyboard, stats: &Stats, gating: Gating) -> anyhow::Result<()> {
     let sounding = match keyboard.sounding() {
         Some(note) => format!(
             "{} ({:.1} Hz)",

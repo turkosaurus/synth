@@ -1,5 +1,5 @@
-use crate::input::keyboard::Gating;
 use crate::audio::Snapshot;
+use crate::input::keyboard::Gating;
 use crate::script::Patch;
 
 use super::table;

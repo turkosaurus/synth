@@ -1,10 +1,10 @@
 use clap::{Parser, Subcommand};
-use tracing::debug;
-use tracing_subscriber::fmt::format::FmtSpan;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::debug;
+use tracing_subscriber::fmt::format::FmtSpan;
 
 use synth::input::keyboard::Gating;
 use synth::{audio, script, terminal, view};

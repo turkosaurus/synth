@@ -33,7 +33,8 @@ impl Stats {
     // for non-negative floats the IEEE-754 bit pattern orders the same as
     // the value, so fetch_max on the bits is a correct max on the float
     fn record_peak(&self, peak: f32) {
-        self.peak_bits.fetch_max(peak.abs().to_bits(), Ordering::Relaxed);
+        self.peak_bits
+            .fetch_max(peak.abs().to_bits(), Ordering::Relaxed);
     }
 
     fn record_load(&self, load: f32) {
@@ -135,7 +136,9 @@ pub fn stream(
 
             // accumulated in `fill`, then written once per callback rather
             // than once per sample
-            stats.frames.fetch_add(tally.frames as u64, Ordering::Relaxed);
+            stats
+                .frames
+                .fetch_add(tally.frames as u64, Ordering::Relaxed);
             stats.clips.fetch_add(tally.clips, Ordering::Relaxed);
             stats.record_peak(tally.peak);
 

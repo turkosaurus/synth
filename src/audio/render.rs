@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::instrument::{Event, Freqs, Timeline, Instrument};
+use super::instrument::{Event, Freqs, Instrument, Timeline};
 
 enum Stage {
     Attack,
@@ -17,13 +17,13 @@ struct Note {
     /// 0.0-1.0, scaling the envelope peak
     velocity: f32,
     phase: f32, // 0.0..1.0
-    step: f32, // phase increment per sample
+    step: f32,  // phase increment per sample
     stage: Stage,
-    idx: usize, // index into the current envelope segment
-    held: usize, // how many samples have been held in sustain
+    idx: usize,                  // index into the current envelope segment
+    held: usize,                 // how many samples have been held in sustain
     hold_samples: Option<usize>, // how many samples to hold in sustain
-    level: f32, // current envelope level
-    release_scale: f32, // scale factor for release envelope
+    level: f32,                  // current envelope level
+    release_scale: f32,          // scale factor for release envelope
 }
 
 impl Note {
@@ -114,7 +114,8 @@ impl Note {
         let pos = self.phase * n as f32;
         let i = pos as usize % n;
         let j = (i + 1) % n;
-        self.instrument.wave[i] + (self.instrument.wave[j] - self.instrument.wave[i]) * (pos - pos.floor())
+        self.instrument.wave[i]
+            + (self.instrument.wave[j] - self.instrument.wave[i]) * (pos - pos.floor())
     }
 
     fn next(&mut self) -> f32 {
@@ -128,7 +129,10 @@ impl Note {
 /// Where a player's events come from. Downstream handling is identical, so
 /// the sequencer and a live input differ only here.
 enum Feed {
-    Timeline { events: Vec<(u64, Event)>, next: usize },
+    Timeline {
+        events: Vec<(u64, Event)>,
+        next: usize,
+    },
     Live(rtrb::Consumer<Event>),
 }
 
@@ -307,7 +311,13 @@ mod tests {
 
     // 4 Hz sample rate makes hold = 1s exactly 4 samples
     fn note(instrument: Instrument) -> Note {
-        Note::new(Arc::new(instrument), 1.0, 1.0, 4.0, Some(Duration::from_secs(1)))
+        Note::new(
+            Arc::new(instrument),
+            1.0,
+            1.0,
+            4.0,
+            Some(Duration::from_secs(1)),
+        )
     }
 
     #[test]
@@ -435,7 +445,11 @@ mod tests {
         .unwrap();
         assert_eq!(player.next(), 0.25); // wave[0], envelope held at 1.0
 
-        tx.push(Event::NoteOff { instrument: 0, note: 1 }).unwrap();
+        tx.push(Event::NoteOff {
+            instrument: 0,
+            note: 1,
+        })
+        .unwrap();
         // release is empty in flat_instrument, so the note goes straight to Done
         assert_eq!(player.next(), 0.0);
     }
@@ -455,7 +469,11 @@ mod tests {
 
         // a stale release from a key that was already stolen must not cut the
         // note that is actually sounding
-        tx.push(Event::NoteOff { instrument: 0, note: 99 }).unwrap();
+        tx.push(Event::NoteOff {
+            instrument: 0,
+            note: 99,
+        })
+        .unwrap();
         assert_eq!(player.next(), 0.5); // still playing, advanced one entry
         assert_eq!(player.sounding(), Some(1));
     }
@@ -547,11 +565,7 @@ mod tests {
         instrument.wave = vec![0.5, -2.0, 1.5, 0.1];
 
         let mut out = [0.0f32; 8];
-        let tally = fill(
-            &mut out,
-            2,
-            &mut player(instrument),
-        );
+        let tally = fill(&mut out, 2, &mut player(instrument));
 
         assert_eq!(tally.frames, 4);
         assert_eq!(tally.clips, 2); // -2.0 and 1.5 both exceed full scale

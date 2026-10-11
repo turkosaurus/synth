@@ -15,8 +15,15 @@ pub struct Instrument {
 /// (the audio side), and lets a release find the voice pool it belongs to.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    NoteOn { instrument: usize, note: u8, velocity: u8 },
-    NoteOff { instrument: usize, note: u8 },
+    NoteOn {
+        instrument: usize,
+        note: u8,
+        velocity: u8,
+    },
+    NoteOff {
+        instrument: usize,
+        note: u8,
+    },
 }
 
 /// Events stamped with the sample they fire on. A single sustained note is

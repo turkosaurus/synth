@@ -6,7 +6,6 @@ use std::io;
 
 use crate::input::keyboard::Gating;
 
-
 /// Put the terminal into the state an interactive view needs, and report
 /// whether gating ended up Held.
 pub fn enter(gating: Gating) -> io::Result<()> {
@@ -51,7 +50,6 @@ fn disable_gating(gating: Gating) -> io::Result<()> {
     Ok(())
 }
 
-
 // crossterm sets KeyEventKind on Windows unconditionally, but only on Unix
 // once REPORT_EVENT_TYPES is pushed. Querying for the protocol there would
 // answer "no" and cost us release events on a platform that already has them.
@@ -59,5 +57,8 @@ pub fn reports_key_release() -> bool {
     if cfg!(windows) {
         return true;
     }
-    matches!(crossterm::terminal::supports_keyboard_enhancement(), Ok(true))
+    matches!(
+        crossterm::terminal::supports_keyboard_enhancement(),
+        Ok(true)
+    )
 }

@@ -47,7 +47,10 @@ fn flags_clamping() {
 #[test]
 fn flags_dc_offset() {
     // a triangle lifted entirely above zero
-    let report = inspect(&instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)), 0);
+    let report = inspect(
+        &instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)),
+        0,
+    );
     assert!(report.warnings.iter().any(|w| w.contains("DC offset")));
 }
 
@@ -71,7 +74,10 @@ fn flags_zero_release_and_bad_sustain() {
     instrument.sustain_level = 1.5;
     let report = inspect(&instrument, 0);
     assert!(report.warnings.iter().any(|w| w.contains("releaseMS = 0")));
-    assert!(report.warnings.iter().any(|w| w.contains("outside 0.0..1.0")));
+    assert!(report
+        .warnings
+        .iter()
+        .any(|w| w.contains("outside 0.0..1.0")));
 }
 
 // 48000 Hz at 60 bpm makes one beat exactly 48000 samples
@@ -168,7 +174,9 @@ fn a_long_note_emits_no_off_when_its_pitch_retriggers() {
 
 #[test]
 fn instrument_sticks_until_a_step_changes_it() {
-    let patch = seq(r#"{ { note = 69, instrument = "a" }, { note = 71 }, { note = 72, instrument = "b" } }"#);
+    let patch = seq(
+        r#"{ { note = 69, instrument = "a" }, { note = 71 }, { note = 72, instrument = "b" } }"#,
+    );
     let used: Vec<usize> = patch
         .timeline
         .events
@@ -514,8 +522,18 @@ fn bakes_the_triangle_landmarks() {
 #[test]
 fn envelope_lengths_follow_the_sample_rate() {
     // 10 ms of attack is a different number of samples per device
-    assert_eq!(one_instrument(10, 48000).timeline.instruments[0].attack.len(), 480);
-    assert_eq!(one_instrument(10, 44100).timeline.instruments[0].attack.len(), 441);
+    assert_eq!(
+        one_instrument(10, 48000).timeline.instruments[0]
+            .attack
+            .len(),
+        480
+    );
+    assert_eq!(
+        one_instrument(10, 44100).timeline.instruments[0]
+            .attack
+            .len(),
+        441
+    );
 }
 
 // the only thing worth asserting about a file the author tunes by ear is
