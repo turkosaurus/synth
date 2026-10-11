@@ -1,7 +1,7 @@
 use anyhow::Context;
 use std::time::Duration;
 
-use super::bake::bake_voice;
+use super::bake::bake_instrument;
 use super::field;
 use super::Patch;
 
@@ -15,13 +15,13 @@ struct Step {
     note: Option<u8>,
     #[serde(default)]
     off: bool,
-    voice: Option<String>,
+    instrument: Option<String>,
     duration: f64,
 }
 
 const SINGLE_HOLD: Duration = Duration::from_millis(1200);
 
-/// A4, for a bare voice file with no sequence to say otherwise
+/// A4, for a bare instrument file with no sequence to say otherwise
 const SINGLE_NOTE: u8 = 69;
 
 pub(super) fn single(
@@ -30,18 +30,18 @@ pub(super) fn single(
     freqs: Vec<f32>,
     keymap: crate::input::keyboard::Keymap,
 ) -> anyhow::Result<Patch> {
-    let (voice, report) = bake_voice(spec, sample_rate)?;
-    let tail = voice.release.len() as u64;
+    let (instrument, report) = bake_instrument(spec, sample_rate)?;
+    let tail = instrument.release.len() as u64;
     let hold = (SINGLE_HOLD.as_secs_f64() * sample_rate as f64) as u64;
 
     Ok(Patch {
         timeline: crate::audio::Timeline {
-            voices: vec![std::sync::Arc::new(voice)],
+            instruments: vec![std::sync::Arc::new(instrument)],
             events: vec![
                 (
                     0,
                     crate::audio::Event::NoteOn {
-                        voice: 0,
+                        instrument: 0,
                         note: SINGLE_NOTE,
                         velocity: 127,
                     },
@@ -83,16 +83,16 @@ pub(super) fn sequence(
     // the grid and the gate length share a unit.
     let step_len = sample_rate as f64 * 60.0 / bpm / division;
 
-    // bake each voice exactly once; steps reference them by index
-    let mut voices = Vec::new();
+    // bake each instrument exactly once; steps reference them by index
+    let mut instruments = Vec::new();
     let mut reports = Vec::new();
     let mut index = std::collections::HashMap::new();
     for pair in specs.clone().pairs::<String, mlua::Table>() {
         let (name, spec) = pair?;
-        let (voice, report) = bake_voice(&spec, sample_rate)
-            .with_context(|| format!("voice `{name}`"))?;
-        index.insert(name.clone(), voices.len());
-        voices.push(std::sync::Arc::new(voice));
+        let (instrument, report) = bake_instrument(&spec, sample_rate)
+            .with_context(|| format!("instrument `{name}`"))?;
+        index.insert(name.clone(), instruments.len());
+        instruments.push(std::sync::Arc::new(instrument));
         reports.push((name, report));
     }
     reports.sort_by(|a, b| a.0.cmp(&b.0));
@@ -114,17 +114,17 @@ pub(super) fn sequence(
         let step = &parsed[i];
         let note = step.note.expect("filtered to steps with notes");
         let name = step
-            .voice
+            .instrument
             .as_deref()
-            .with_context(|| format!("step {} has a note but no voice is in effect", i + 1))?;
-        let voice = *index
+            .with_context(|| format!("step {} has a note but no instrument is in effect", i + 1))?;
+        let instrument = *index
             .get(name)
-            .with_context(|| format!("step {} names voice `{name}`, which is not defined", i + 1))?;
+            .with_context(|| format!("step {} names instrument `{name}`, which is not defined", i + 1))?;
 
         events.push((
             start,
             crate::audio::Event::NoteOn {
-                voice,
+                instrument,
                 note,
                 velocity: 127,
             },
@@ -163,12 +163,12 @@ pub(super) fn sequence(
     }
 
     events.sort_by_key(|(at, _)| *at);
-    let tail = voices.iter().map(|v| v.release.len() as u64).max().unwrap_or(0);
+    let tail = instruments.iter().map(|v| v.release.len() as u64).max().unwrap_or(0);
     let total_samples = (step_len * parsed.len() as f64) as u64 + tail;
 
     Ok(Patch {
         timeline: crate::audio::Timeline {
-            voices,
+            instruments,
             events,
             total_samples,
         },

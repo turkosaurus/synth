@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::voice::{Event, Freqs, Timeline, Voice};
+use super::instrument::{Event, Freqs, Timeline, Instrument};
 
 enum Stage {
     Attack,
@@ -13,7 +13,7 @@ enum Stage {
 
 // one sounding note
 struct Note {
-    voice: Arc<Voice>,
+    instrument: Arc<Instrument>,
     /// 0.0-1.0, scaling the envelope peak
     velocity: f32,
     phase: f32, // 0.0..1.0
@@ -30,7 +30,7 @@ impl Note {
     // `hold: None` means the note sustains until something calls off(),
     // which is how the sequencer drives it
     fn new(
-        voice: Arc<Voice>,
+        instrument: Arc<Instrument>,
         freq: f32,
         velocity: f32,
         sample_rate: f32,
@@ -40,7 +40,7 @@ impl Note {
             velocity,
             step: freq / sample_rate,
             hold_samples: hold.map(|d| (d.as_secs_f32() * sample_rate) as usize),
-            voice,
+            instrument,
             phase: 0.0,
             stage: Stage::Attack,
             idx: 0,
@@ -53,8 +53,8 @@ impl Note {
     // release starts from wherever the envelope actually was, so a key
     // lifted mid-attack does not jump up to sustain level first
     fn off(&mut self) {
-        self.release_scale = if self.voice.sustain_level > 0.0 {
-            self.level / self.voice.sustain_level
+        self.release_scale = if self.instrument.sustain_level > 0.0 {
+            self.level / self.instrument.sustain_level
         } else {
             1.0
         };
@@ -67,7 +67,7 @@ impl Note {
         loop {
             match self.stage {
                 Stage::Attack => {
-                    if let Some(&value) = self.voice.attack.get(self.idx) {
+                    if let Some(&value) = self.instrument.attack.get(self.idx) {
                         self.idx += 1;
                         self.level = value;
                         return value;
@@ -76,7 +76,7 @@ impl Note {
                     self.idx = 0;
                 }
                 Stage::Decay => {
-                    if let Some(&value) = self.voice.decay.get(self.idx) {
+                    if let Some(&value) = self.instrument.decay.get(self.idx) {
                         self.idx += 1;
                         self.level = value;
                         return value;
@@ -90,11 +90,11 @@ impl Note {
                         continue;
                     }
                     self.held += 1;
-                    self.level = self.voice.sustain_level;
+                    self.level = self.instrument.sustain_level;
                     return self.level;
                 }
                 Stage::Release => {
-                    if let Some(&value) = self.voice.release.get(self.idx) {
+                    if let Some(&value) = self.instrument.release.get(self.idx) {
                         self.idx += 1;
                         return value * self.release_scale;
                     }
@@ -106,11 +106,11 @@ impl Note {
     }
 
     fn wave(&self) -> f32 {
-        let n = self.voice.wave.len();
+        let n = self.instrument.wave.len();
         let pos = self.phase * n as f32;
         let i = pos as usize % n;
         let j = (i + 1) % n;
-        self.voice.wave[i] + (self.voice.wave[j] - self.voice.wave[i]) * (pos - pos.floor())
+        self.instrument.wave[i] + (self.instrument.wave[j] - self.instrument.wave[i]) * (pos - pos.floor())
     }
 
     fn next(&mut self) -> f32 {
@@ -129,7 +129,7 @@ enum Feed {
 }
 
 pub struct Player {
-    voices: Vec<Arc<Voice>>,
+    instruments: Vec<Arc<Instrument>>,
     freqs: Freqs,
     feed: Feed,
     sample_rate: f32,
@@ -144,7 +144,7 @@ pub struct Player {
 impl Player {
     pub fn new(timeline: Timeline, freqs: Freqs, sample_rate: f32) -> Self {
         Self {
-            voices: timeline.voices,
+            instruments: timeline.instruments,
             freqs,
             feed: Feed::Timeline {
                 events: timeline.events,
@@ -159,13 +159,13 @@ impl Player {
     }
 
     pub fn live(
-        voices: Vec<Arc<Voice>>,
+        instruments: Vec<Arc<Instrument>>,
         freqs: Freqs,
         events: rtrb::Consumer<Event>,
         sample_rate: f32,
     ) -> Self {
         Self {
-            voices,
+            instruments,
             freqs,
             feed: Feed::Live(events),
             sample_rate,
@@ -205,7 +205,7 @@ impl Player {
     fn apply(&mut self, event: Event) {
         match event {
             Event::NoteOn {
-                voice,
+                instrument,
                 note,
                 velocity,
             } => {
@@ -214,7 +214,7 @@ impl Player {
                     self.release(note);
                     return;
                 }
-                let Some(voice) = self.voices.get(voice) else {
+                let Some(instrument) = self.instruments.get(instrument) else {
                     return;
                 };
                 let Some(&freq) = self.freqs.get(note as usize) else {
@@ -223,7 +223,7 @@ impl Player {
                 // mono: a new note replaces whatever was sounding
                 self.sounding = Some(note);
                 self.note = Some(Note::new(
-                    Arc::clone(voice),
+                    Arc::clone(instrument),
                     freq,
                     velocity as f32 / 127.0,
                     self.sample_rate,
@@ -291,8 +291,8 @@ mod tests {
     use super::*;
 
     // 4-entry wave so interpolation is checkable by hand
-    fn voice() -> Voice {
-        Voice {
+    fn instrument() -> Instrument {
+        Instrument {
             wave: vec![0.0, 1.0, 0.0, -1.0],
             attack: vec![0.0, 0.5],
             decay: vec![1.0, 0.85],
@@ -302,13 +302,13 @@ mod tests {
     }
 
     // 4 Hz sample rate makes hold = 1s exactly 4 samples
-    fn note(voice: Voice) -> Note {
-        Note::new(Arc::new(voice), 1.0, 1.0, 4.0, Some(Duration::from_secs(1)))
+    fn note(instrument: Instrument) -> Note {
+        Note::new(Arc::new(instrument), 1.0, 1.0, 4.0, Some(Duration::from_secs(1)))
     }
 
     #[test]
     fn envelope_walks_every_stage_in_order() {
-        let mut note = note(voice());
+        let mut note = note(instrument());
         let got: Vec<f32> = (0..12).map(|_| note.envelope()).collect();
         assert_eq!(
             got,
@@ -324,15 +324,15 @@ mod tests {
 
     #[test]
     fn zero_length_segment_falls_through() {
-        let mut voice = voice();
-        voice.attack = vec![];
+        let mut instrument = instrument();
+        instrument.attack = vec![];
         // with no attack samples the first value must come from decay
-        assert_eq!(note(voice).envelope(), 1.0);
+        assert_eq!(note(instrument).envelope(), 1.0);
     }
 
     #[test]
     fn release_resumes_from_the_current_level() {
-        let mut note = note(voice());
+        let mut note = note(instrument());
         assert_eq!(note.envelope(), 0.0);
         assert_eq!(note.envelope(), 0.5);
 
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn wave_interpolates_and_wraps() {
-        let mut note = note(voice());
+        let mut note = note(instrument());
 
         note.phase = 0.0;
         assert_eq!(note.wave(), 0.0);
@@ -358,10 +358,10 @@ mod tests {
         assert_eq!(note.wave(), -0.5);
     }
 
-    // a voice whose envelope holds 1.0 forever, so fill() output is the
+    // an instrument whose envelope holds 1.0 forever, so fill() output is the
     // waveform alone and easy to predict
-    fn flat_voice() -> Voice {
-        Voice {
+    fn flat_instrument() -> Instrument {
+        Instrument {
             wave: vec![0.25, 0.5, 0.75, 1.0],
             attack: vec![],
             decay: vec![],
@@ -372,7 +372,7 @@ mod tests {
 
     // step 0.25 advances exactly one table entry per sample
     fn flat_note() -> Note {
-        Note::new(Arc::new(flat_voice()), 1.0, 1.0, 4.0, None)
+        Note::new(Arc::new(flat_instrument()), 1.0, 1.0, 4.0, None)
     }
 
     // a Player whose timeline is a single note-on at sample 0
@@ -383,14 +383,14 @@ mod tests {
         freqs
     }
 
-    fn player(voice: Voice) -> Player {
+    fn player(instrument: Instrument) -> Player {
         Player::new(
             Timeline {
-                voices: vec![Arc::new(voice)],
+                instruments: vec![Arc::new(instrument)],
                 events: vec![(
                     0,
                     Event::NoteOn {
-                        voice: 0,
+                        instrument: 0,
                         note: 1,
                         velocity: 127,
                     },
@@ -405,13 +405,13 @@ mod tests {
     #[test]
     fn a_live_feed_drains_the_queue() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![Arc::new(flat_voice())], freqs(), rx, 4.0);
+        let mut player = Player::live(vec![Arc::new(flat_instrument())], freqs(), rx, 4.0);
 
         // nothing queued yet, so silence
         assert_eq!(player.next(), 0.0);
 
         tx.push(Event::NoteOn {
-            voice: 0,
+            instrument: 0,
             note: 1,
             velocity: 127,
         })
@@ -419,17 +419,17 @@ mod tests {
         assert_eq!(player.next(), 0.25); // wave[0], envelope held at 1.0
 
         tx.push(Event::NoteOff { note: 1 }).unwrap();
-        // release is empty in flat_voice, so the note goes straight to Done
+        // release is empty in flat_instrument, so the note goes straight to Done
         assert_eq!(player.next(), 0.0);
     }
 
     #[test]
     fn a_noteoff_for_a_note_that_is_not_sounding_is_ignored() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![Arc::new(flat_voice())], freqs(), rx, 4.0);
+        let mut player = Player::live(vec![Arc::new(flat_instrument())], freqs(), rx, 4.0);
 
         tx.push(Event::NoteOn {
-            voice: 0,
+            instrument: 0,
             note: 1,
             velocity: 127,
         })
@@ -446,10 +446,10 @@ mod tests {
     #[test]
     fn velocity_zero_means_note_off() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![Arc::new(flat_voice())], freqs(), rx, 4.0);
+        let mut player = Player::live(vec![Arc::new(flat_instrument())], freqs(), rx, 4.0);
 
         tx.push(Event::NoteOn {
-            voice: 0,
+            instrument: 0,
             note: 1,
             velocity: 127,
         })
@@ -458,7 +458,7 @@ mod tests {
 
         // the MIDI convention: a note-on at velocity 0 releases
         tx.push(Event::NoteOn {
-            voice: 0,
+            instrument: 0,
             note: 1,
             velocity: 0,
         })
@@ -470,10 +470,10 @@ mod tests {
     #[test]
     fn velocity_scales_the_output() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![Arc::new(flat_voice())], freqs(), rx, 4.0);
+        let mut player = Player::live(vec![Arc::new(flat_instrument())], freqs(), rx, 4.0);
 
         tx.push(Event::NoteOn {
-            voice: 0,
+            instrument: 0,
             note: 1,
             velocity: 64,
         })
@@ -486,10 +486,10 @@ mod tests {
     #[test]
     fn a_live_note_replaces_the_one_sounding() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![Arc::new(flat_voice())], freqs(), rx, 4.0);
+        let mut player = Player::live(vec![Arc::new(flat_instrument())], freqs(), rx, 4.0);
 
         let on = |note| Event::NoteOn {
-            voice: 0,
+            instrument: 0,
             note,
             velocity: 127,
         };
@@ -506,7 +506,7 @@ mod tests {
     #[test]
     fn fill_writes_one_sample_across_every_channel() {
         let mut out = [0.0f32; 8];
-        let tally = fill(&mut out, 2, &mut player(flat_voice()));
+        let tally = fill(&mut out, 2, &mut player(flat_instrument()));
 
         assert_eq!(tally.frames, 4);
         // each pair is one frame: both channels carry the same sample
@@ -516,24 +516,24 @@ mod tests {
     #[test]
     fn fill_handles_mono_and_four_channels() {
         let mut mono = [0.0f32; 4];
-        assert_eq!(fill(&mut mono, 1, &mut player(flat_voice())).frames, 4);
+        assert_eq!(fill(&mut mono, 1, &mut player(flat_instrument())).frames, 4);
         assert_eq!(mono, [0.25, 0.5, 0.75, 1.0]);
 
         let mut quad = [0.0f32; 8];
-        assert_eq!(fill(&mut quad, 4, &mut player(flat_voice())).frames, 2);
+        assert_eq!(fill(&mut quad, 4, &mut player(flat_instrument())).frames, 2);
         assert_eq!(quad, [0.25, 0.25, 0.25, 0.25, 0.5, 0.5, 0.5, 0.5]);
     }
 
     #[test]
     fn fill_tracks_peak_and_clipping() {
-        let mut voice = flat_voice();
-        voice.wave = vec![0.5, -2.0, 1.5, 0.1];
+        let mut instrument = flat_instrument();
+        instrument.wave = vec![0.5, -2.0, 1.5, 0.1];
 
         let mut out = [0.0f32; 8];
         let tally = fill(
             &mut out,
             2,
-            &mut player(voice),
+            &mut player(instrument),
         );
 
         assert_eq!(tally.frames, 4);
@@ -546,7 +546,7 @@ mod tests {
         // cpal should always hand over whole frames; this pins the behavior
         // if it ever does not
         let mut out = [0.0f32; 5];
-        let tally = fill(&mut out, 2, &mut player(flat_voice()));
+        let tally = fill(&mut out, 2, &mut player(flat_instrument()));
 
         assert_eq!(tally.frames, 3); // two full frames plus a short one
         assert_eq!(out, [0.25, 0.25, 0.5, 0.5, 0.75]);
@@ -554,7 +554,7 @@ mod tests {
 
     #[test]
     fn phase_advances_by_frequency_over_sample_rate() {
-        let mut note = Note::new(Arc::new(voice()), 440.0, 1.0, 48000.0, None);
+        let mut note = Note::new(Arc::new(instrument()), 440.0, 1.0, 48000.0, None);
         assert!((note.step - 440.0 / 48000.0).abs() < 1e-9);
 
         let before = note.phase;

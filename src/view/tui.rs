@@ -21,7 +21,7 @@ pub fn run(path: Option<&std::path::Path>, gating: Gating) -> anyhow::Result<()>
     // the producer stays here; the consumer moves into the audio callback
     let (tx, rx) = rtrb::RingBuffer::<Event>::new(QUEUE);
     let player = Player::live(
-        patch.timeline.voices,
+        patch.timeline.instruments,
         patch.freqs,
         rx,
         output.sample_rate as f32,
@@ -33,7 +33,7 @@ pub fn run(path: Option<&std::path::Path>, gating: Gating) -> anyhow::Result<()>
     let mut keyboard = Keyboard::new(patch.keymap, gating, tx);
 
     crate::terminal::enter(gating)?;
-    let result = pump(&mut keyboard, &stats, &output, gating);
+    let result = pump(&mut keyboard, &stats, gating);
     crate::terminal::leave(gating);
     result
 }
@@ -41,11 +41,10 @@ pub fn run(path: Option<&std::path::Path>, gating: Gating) -> anyhow::Result<()>
 fn pump(
     keyboard: &mut Keyboard,
     stats: &Stats,
-    output: &audio::Output,
     gating: Gating,
 ) -> anyhow::Result<()> {
     loop {
-        draw(keyboard, stats, output, gating)?;
+        draw(keyboard, stats, gating)?;
 
         if event::poll(POLL)? {
             // drain everything queued, so held chords and fast playing do not
@@ -67,7 +66,6 @@ fn pump(
 fn draw(
     keyboard: &Keyboard,
     stats: &Stats,
-    output: &audio::Output,
     gating: Gating,
 ) -> anyhow::Result<()> {
     let sounding = match keyboard.sounding() {
@@ -97,7 +95,7 @@ fn draw(
         keyboard.octave()
     );
     print!("  gating  {mode}\r\n\r\n");
-    print!("  {}\r\n\r\n", stats.report(output.sample_rate));
+    print!("  {}\r\n\r\n", super::report::stats(&stats.snapshot()));
     print!("  esc panics · ctrl-c/d quits · -/= octave\r\n");
     Ok(())
 }

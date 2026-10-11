@@ -1,7 +1,7 @@
 use anyhow::Context;
 use tracing::{debug_span, instrument};
 
-use crate::audio::Voice;
+use crate::audio::Instrument;
 
 use super::field;
 
@@ -9,10 +9,10 @@ use super::field;
 // most of them, small enough that 8 KB stays in L1
 const TABLE_SIZE: usize = 2048;
 
-// Which fields a voice and its envelope may carry. Lua constructors pass
+// Which fields an instrument and its envelope may carry. Lua constructors pass
 // unknown fields through rather than discarding them, so a misspelling
 // arrives here and gets named instead of silently taking a default.
-const VOICE_FIELDS: &[&str] = &[field::WAVEFORM, field::ENVELOPE, field::KEYBOARD];
+const INSTRUMENT_FIELDS: &[&str] = &[field::WAVEFORM, field::ENVELOPE, field::KEYBOARD];
 
 const ENVELOPE_FIELDS: &[&str] = &[
     field::ATTACK_MS,
@@ -40,15 +40,15 @@ fn reject_unknown(table: &mlua::Table, allowed: &[&str], what: &str) -> anyhow::
 }
 
 #[instrument(skip(spec))]
-pub(super) fn bake_voice(spec: &mlua::Table, sample_rate: u32) -> anyhow::Result<(Voice, Report)> {
-    reject_unknown(spec, VOICE_FIELDS, "voice")?;
+pub(super) fn bake_instrument(spec: &mlua::Table, sample_rate: u32) -> anyhow::Result<(Instrument, Report)> {
+    reject_unknown(spec, INSTRUMENT_FIELDS, "instrument")?;
 
     let wave_fn: mlua::Function = spec
         .get(field::WAVEFORM)
-        .context("voice field `waveform` is missing or not a function")?;
+        .context("instrument field `waveform` is missing or not a function")?;
     let env: mlua::Table = spec
         .get(field::ENVELOPE)
-        .context("voice field `envelope` is missing or not a table")?;
+        .context("instrument field `envelope` is missing or not a table")?;
     reject_unknown(&env, ENVELOPE_FIELDS, "envelope")?;
 
     let mut clamped = 0usize;
@@ -105,15 +105,15 @@ pub(super) fn bake_voice(spec: &mlua::Table, sample_rate: u32) -> anyhow::Result
         )
     };
 
-    let voice = Voice {
+    let instrument = Instrument {
         wave,
         attack,
         decay,
         sustain_level: sustain_level as f32,
         release,
     };
-    let report = inspect(&voice, clamped);
-    Ok((voice, report))
+    let report = inspect(&instrument, clamped);
+    Ok((instrument, report))
 }
 
 /// Measurements and warnings from a baked patch. Pure data, so the caller
@@ -133,8 +133,8 @@ pub struct Report {
 
 // each warning corresponds to something audible: flattened peaks, a click
 // once per cycle, a speaker cone resting off-center, or a note cut mid-wave
-pub(super) fn inspect(voice: &Voice, clamped: usize) -> Report {
-    let wave = &voice.wave;
+pub(super) fn inspect(instrument: &Instrument, clamped: usize) -> Report {
+    let wave = &instrument.wave;
     let peak = wave.iter().fold(0.0f32, |acc, v| acc.max(v.abs()));
     let dc = wave.iter().sum::<f32>() / wave.len() as f32;
     let seam = (wave[wave.len() - 1] - wave[0]).abs();
@@ -157,13 +157,13 @@ pub(super) fn inspect(voice: &Voice, clamped: usize) -> Report {
     if peak < 0.5 {
         warnings.push(format!("waveform peaks at only {peak:.3}"));
     }
-    if voice.release.is_empty() {
+    if instrument.release.is_empty() {
         warnings.push("releaseMS = 0 cuts the note mid-cycle and will click".to_string());
     }
-    if !(0.0..=1.0).contains(&voice.sustain_level) {
+    if !(0.0..=1.0).contains(&instrument.sustain_level) {
         warnings.push(format!(
             "sustainLevel {} is outside 0.0..1.0",
-            voice.sustain_level
+            instrument.sustain_level
         ));
     }
 
@@ -172,10 +172,10 @@ pub(super) fn inspect(voice: &Voice, clamped: usize) -> Report {
         dc,
         seam,
         clamped,
-        attack: voice.attack.len(),
-        decay: voice.decay.len(),
-        release: voice.release.len(),
-        sustain_level: voice.sustain_level,
+        attack: instrument.attack.len(),
+        decay: instrument.decay.len(),
+        release: instrument.release.len(),
+        sustain_level: instrument.sustain_level,
         warnings,
     }
 }

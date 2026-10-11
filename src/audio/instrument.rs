@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 // timbre and envelope
-pub struct Voice {
+pub struct Instrument {
     pub wave: Vec<f32>,     // full waveform cycle, -1.0..1.0
     pub attack: Vec<f32>,   // 0.0..1.0
     pub decay: Vec<f32>,    // 1.0..sustain_level
@@ -14,14 +14,14 @@ pub struct Voice {
 /// one place (the audio side), and means polyphony is not a format change.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    NoteOn { voice: usize, note: u8, velocity: u8 },
+    NoteOn { instrument: usize, note: u8, velocity: u8 },
     NoteOff { note: u8 },
 }
 
 /// Events stamped with the sample they fire on. A single sustained note is
 /// just a two-event timeline, so playback has one code path.
 pub struct Timeline {
-    pub voices: Vec<Arc<Voice>>,
+    pub instruments: Vec<Arc<Instrument>>,
     pub events: Vec<(u64, Event)>,
     pub total_samples: u64,
 }

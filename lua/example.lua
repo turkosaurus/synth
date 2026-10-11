@@ -1,17 +1,17 @@
 #!/usr/bin/env luajit
 
 local sequence = require("synth.sequence")
-local voice = require("synth.voice")
+local instrument = require("synth.instrument")
 local wave = require("synth.wave")
 local envelope = require("synth.envelope")
 
 return sequence.new({
 	bpm = 140,
 	division = 4, -- subdivisions per beat; 4 = 16th notes, 8 = 32nd notes, etc.
-	voice = "tri", -- default for every pattern; stickiness resets per pattern
+	instrument = "tri", -- default for every pattern; stickiness resets per pattern
 
-	voices = {
-		tri = voice.new({
+	instruments = {
+		tri = instrument.new({
 			waveform = wave.triangle,
 			envelope = envelope.new({
 				attackMS = 100,

@@ -29,7 +29,7 @@ enum Commands {
     },
     /// Play a patch or sequence through the default output device
     Play { path: PathBuf },
-    /// Play live from the keyboard; without a path, the default voice
+    /// Play live from the keyboard; without a path, the default instrument
     Tui { path: Option<PathBuf> },
 }
 
@@ -101,8 +101,21 @@ fn play(path: &std::path::Path) -> anyhow::Result<()> {
     println!("{notes} events · {seconds:.1}s · {sample_rate} Hz · {channels} ch");
     std::thread::sleep(Duration::from_secs_f64(seconds) + Duration::from_millis(300));
 
-    let report = stats.report(sample_rate);
-    debug!(%report, "stream");
-    println!("{report}");
+    // structured fields rather than a preformatted string, so the log is
+    // queryable per counter. one snapshot feeds both the log and the print,
+    // because taking a second one would read gauges that just reset.
+    let snap = stats.snapshot();
+    debug!(
+        frames = snap.frames,
+        clips = snap.clips,
+        overruns = snap.overruns,
+        errors = snap.errors,
+        peak = snap.peak,
+        budget_us = snap.budget_us,
+        callback_us_max = snap.callback_us_max,
+        load = snap.load,
+        "stream",
+    );
+    println!("{}", view::report::stats(&snap));
     Ok(())
 }

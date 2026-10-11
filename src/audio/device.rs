@@ -12,11 +12,21 @@ use super::render::{fill, Player};
 // counters, not gates on other memory.
 #[derive(Default)]
 pub struct Stats {
-    callback_us_max: AtomicU32,
-    frames_max: AtomicU32,
-    samples: AtomicU64,
+    /// frames, not samples: one frame is one sample per channel
+    frames: AtomicU64,
     clips: AtomicU64,
+    /// callbacks that ran past their deadline, which is the count that
+    /// corresponds to something audible
+    overruns: AtomicU64,
+    /// errors the driver reported, counted rather than logged because the
+    /// error callback may run on the audio thread
+    errors: AtomicU64,
     peak_bits: AtomicU32,
+    /// the most recent callback's deadline, so it describes a callback that
+    /// actually ran
+    budget_us: AtomicU32,
+    callback_us_max: AtomicU32,
+    load_bits: AtomicU32,
 }
 
 impl Stats {
@@ -26,24 +36,53 @@ impl Stats {
         self.peak_bits.fetch_max(peak.abs().to_bits(), Ordering::Relaxed);
     }
 
-    pub fn peak(&self) -> f32 {
+    fn record_load(&self, load: f32) {
+        self.load_bits.fetch_max(load.to_bits(), Ordering::Relaxed);
+    }
+
+    fn peak(&self) -> f32 {
         f32::from_bits(self.peak_bits.load(Ordering::Relaxed))
     }
 
-    pub fn report(&self, sample_rate: u32) -> String {
-        let frames = self.frames_max.load(Ordering::Relaxed);
-        let budget_us = frames as f64 / sample_rate as f64 * 1e6;
-        let used_us = self.callback_us_max.load(Ordering::Relaxed);
-        format!(
-            "samples={} clips={} peak={:.3} callback_max={}us budget={:.0}us ({:.1}%)",
-            self.samples.load(Ordering::Relaxed),
-            self.clips.load(Ordering::Relaxed),
-            self.peak(),
-            used_us,
-            budget_us,
-            used_us as f64 / budget_us * 100.0,
-        )
+    /// How long one callback has before the buffer it was handed is late.
+    /// Polyphony needs this as a number to know what it can afford, and
+    /// asking must not disturb the gauges, so this does not reset.
+    pub fn budget_us(&self) -> u32 {
+        self.budget_us.load(Ordering::Relaxed)
     }
+
+    /// Read every counter once. The gauges reset here, so a snapshot
+    /// describes the period since the previous one; a lifetime max would be
+    /// pinned by the first callback after startup and could never report an
+    /// improvement. Taking one reading in one call is what keeps that
+    /// resetting correct, since a caller cannot read a gauge twice.
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            frames: self.frames.load(Ordering::Relaxed),
+            clips: self.clips.load(Ordering::Relaxed),
+            overruns: self.overruns.load(Ordering::Relaxed),
+            errors: self.errors.load(Ordering::Relaxed),
+            peak: self.peak(),
+            budget_us: self.budget_us(),
+            callback_us_max: self.callback_us_max.swap(0, Ordering::Relaxed),
+            load: f32::from_bits(self.load_bits.swap(0, Ordering::Relaxed)),
+        }
+    }
+}
+
+/// One reading of [`Stats`]. Plain data, so a view can render it and a log
+/// can carry it as fields without either touching an atomic.
+#[derive(Debug, Default, PartialEq)]
+pub struct Snapshot {
+    pub frames: u64,
+    pub clips: u64,
+    pub overruns: u64,
+    pub errors: u64,
+    pub peak: f32,
+    pub budget_us: u32,
+    pub callback_us_max: u32,
+    /// worst fraction of the deadline used, 1.0 being the deadline itself
+    pub load: f32,
 }
 
 /// A negotiated output device, ready to build a stream on.
@@ -86,6 +125,8 @@ pub fn stream(
     stats: Arc<Stats>,
 ) -> anyhow::Result<cpal::Stream> {
     let channels = output.channels;
+    let sample_rate = output.sample_rate;
+    let faults = Arc::clone(&stats);
     let stream = output.device.build_output_stream(
         output.config.clone().into(),
         move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -94,15 +135,30 @@ pub fn stream(
 
             // accumulated in `fill`, then written once per callback rather
             // than once per sample
-            stats.samples.fetch_add(tally.frames as u64, Ordering::Relaxed);
+            stats.frames.fetch_add(tally.frames as u64, Ordering::Relaxed);
             stats.clips.fetch_add(tally.clips, Ordering::Relaxed);
-            stats.frames_max.fetch_max(tally.frames, Ordering::Relaxed);
             stats.record_peak(tally.peak);
-            stats
-                .callback_us_max
-                .fetch_max(start.elapsed().as_micros() as u32, Ordering::Relaxed);
+
+            let used_us = start.elapsed().as_micros() as u32;
+            stats.callback_us_max.fetch_max(used_us, Ordering::Relaxed);
+
+            // the deadline comes from this callback's own frame count. the
+            // driver may vary the buffer, so a ratio of two independent
+            // maxima would describe no callback that ever ran.
+            let budget_us = tally.frames as f32 / sample_rate as f32 * 1e6;
+            if budget_us > 0.0 {
+                stats.budget_us.store(budget_us as u32, Ordering::Relaxed);
+                stats.record_load(used_us as f32 / budget_us);
+                if used_us as f32 > budget_us {
+                    stats.overruns.fetch_add(1, Ordering::Relaxed);
+                }
+            }
         },
-        |err| eprintln!("stream error: {err}"),
+        // counted, not printed: the tui owns the screen, and this callback
+        // may run on the audio thread, where formatting is not allowed
+        move |_| {
+            faults.errors.fetch_add(1, Ordering::Relaxed);
+        },
         None,
     )?;
     stream.play()?;

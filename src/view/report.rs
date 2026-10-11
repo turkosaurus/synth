@@ -1,4 +1,5 @@
 use crate::input::keyboard::Gating;
+use crate::audio::Snapshot;
 use crate::script::Patch;
 
 use super::table;
@@ -65,7 +66,7 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
 
     for (name, report) in &patch.reports {
         table::pairs(
-            &format!("voice {name}  (rate {sample_rate})"),
+            &format!("instrument {name}  (rate {sample_rate})"),
             &[
                 ("peak", format!("{:.3}", report.peak)),
                 ("dc", format!("{:+.4}", report.dc)),
@@ -112,4 +113,26 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
     if patch.clean() {
         println!("  ok");
     }
+}
+
+/// One line of stream telemetry. Returns rather than prints, because the tui
+/// needs raw-mode line endings and `play` does not; both embed this in their
+/// own layout.
+pub fn stats(snap: &Snapshot) -> String {
+    let Snapshot {
+        frames,
+        clips,
+        overruns,
+        errors,
+        peak,
+        budget_us,
+        callback_us_max,
+        load,
+    } = *snap;
+    let pct = load * 100.0;
+    format!(
+        "frames={frames} clips={clips} peak={peak:.3} \
+         callback_max={callback_us_max}us budget={budget_us}us ({pct:.1}%) \
+         overruns={overruns} errors={errors}"
+    )
 }

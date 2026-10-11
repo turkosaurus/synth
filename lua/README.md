@@ -1,6 +1,6 @@
 # lua
 
-Lua defines not only configuration, but provides functions to the Rust audio engine that define waveforms, slopes, envelopes, the voices they compose into, and the patterns that may be chained for automated note sequencing.
+Lua defines not only configuration, but provides functions to the Rust audio engine that define waveforms, slopes, envelopes, the instruments they compose into, and the patterns that may be chained for automated note sequencing.
 
 
 | file | purpose |
@@ -9,7 +9,7 @@ Lua defines not only configuration, but provides functions to the Rust audio eng
 | [`wave.lua`](./wave.lua) | waveform shapes |
 | [`envelope.lua`](./envelope.lua) | envelope generator |
 | [`tuning.lua`](./tuning.lua) | MIDI note to Hz |
-| [`voice.lua`](./voice.lua) | default mono voice |
+| [`instrument.lua`](./instrument.lua) | default mono instrument |
 | [`keyboard.lua`](./keyboard.lua) | mapping character keyboards to MIDI |
 | [`sequence.lua`](./sequence.lua) | sequencer blocks composed with chains |
 | [`example.lua`](./example.lua) | test validator and example |
