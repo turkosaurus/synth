@@ -43,12 +43,12 @@ sequenceDiagram
     producer->>consumer: bake freqs, midi to hz
     producer->>producer: bake keymap
 
-    alt play: live
+    alt live
         note over producer: listening
         input->>producer: keypress
         note over producer: key to midi note, plus octave
         producer->>consumer: note on/off, real-time ring buffer
-    else play: sequenced
+    else sequenced
         producer->>timeline: schedule note events
         timeline->>consumer: note events due on the sample clock
     end
