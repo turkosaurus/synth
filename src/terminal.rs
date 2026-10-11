@@ -51,33 +51,6 @@ fn disable_gating(gating: Gating) -> io::Result<()> {
     Ok(())
 }
 
-pub fn doctor(gating: Gating) {
-    let term = std::env::var("TERM").unwrap_or_default();
-    let in_tmux = std::env::var("TMUX").is_ok();
-
-    let (release, mode) = match gating {
-        Gating::Held => ("yes".to_string(), "held notes".to_string()),
-        Gating::Fixed(length) => ("no".to_string(), format!("fixed {} ms", length.as_millis())),
-    };
-
-    crate::ui::pairs(
-        "environment",
-        &[
-            ("terminal", term),
-            (
-                "multiplexer",
-                if in_tmux { "tmux" } else { "none" }.to_string(),
-            ),
-            ("key release", release),
-            ("gating", mode),
-        ],
-        false,
-    );
-
-    if in_tmux {
-        println!("  tmux blocks the kitty keyboard protocol; re-run outside tmux");
-    }
-}
 
 // crossterm sets KeyEventKind on Windows unconditionally, but only on Unix
 // once REPORT_EVENT_TYPES is pushed. Querying for the protocol there would

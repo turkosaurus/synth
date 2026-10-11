@@ -1,0 +1,68 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      # one leg failing should not hide whether the others work
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-13, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # cpal links the system audio api. macos and windows ship theirs;
+      # only linux needs the headers installed.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      # cargo resolves semver for dependencies, but nothing bumps our own
+      # version, so the tag and Cargo.toml can drift. check them once.
+      - if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          if [ "v$crate" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml $crate" >&2
+            exit 1
+          fi
+
+      - run: cargo build --release --target ${{ matrix.target }}
+
+      - shell: bash
+        run: |
+          set -euo pipefail
+          dir=target/${{ matrix.target }}/release
+          if [ "$RUNNER_OS" = Windows ]; then bin=synth.exe; else bin=synth; fi
+          tar -czf synth-${{ matrix.target }}.tar.gz -C "$dir" "$bin"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synth-${{ matrix.target }}
+          path: synth-${{ matrix.target }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      # gh is preinstalled on the runner, so no third party action is needed
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --repo "$GITHUB_REPOSITORY"

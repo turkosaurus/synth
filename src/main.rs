@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
+use tracing::debug;
 use tracing_subscriber::fmt::format::FmtSpan;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::Duration;
 
 use synth::input::keyboard::Gating;
 use synth::{audio, script, terminal, view};
@@ -66,17 +69,40 @@ fn run() -> anyhow::Result<ExitCode> {
     };
     match args.command {
         Commands::Doctor { path, rate } => {
-            terminal::doctor(gating);
+            view::report::environment(gating);
             // only patch problems fail; being in tmux is a fact, not an error
             if let Some(path) = path {
                 println!();
-                if !script::check(&path, rate)? {
+                let patch = script::load(&path, rate)?;
+                view::report::patch(&path, &patch, rate);
+                if !patch.clean() {
                     return Ok(ExitCode::FAILURE);
                 }
             }
         }
-        Commands::Play { path } => audio::play(&path)?,
+        Commands::Play { path } => play(&path)?,
         Commands::Tui { path } => view::tui::run(path.as_deref(), gating)?,
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn play(path: &std::path::Path) -> anyhow::Result<()> {
+    let output = audio::open()?;
+    let (sample_rate, channels) = (output.sample_rate, output.channels);
+
+    let patch = script::load(path, sample_rate)?;
+    let notes = patch.timeline.events.len();
+    let player = audio::Player::new(patch.timeline, patch.freqs, sample_rate as f32);
+    let seconds = player.total_samples() as f64 / sample_rate as f64;
+
+    let stats = Arc::new(audio::Stats::default());
+    let _stream = audio::stream(&output, player, Arc::clone(&stats))?;
+
+    println!("{notes} events · {seconds:.1}s · {sample_rate} Hz · {channels} ch");
+    std::thread::sleep(Duration::from_secs_f64(seconds) + Duration::from_millis(300));
+
+    let report = stats.report(sample_rate);
+    debug!(%report, "stream");
+    println!("{report}");
+    Ok(())
 }
