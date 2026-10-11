@@ -96,11 +96,15 @@ impl Note {
                 Stage::Release => {
                     if let Some(&value) = self.instrument.release.get(self.idx) {
                         self.idx += 1;
-                        return value * self.release_scale;
+                        self.level = value * self.release_scale;
+                        return self.level;
                     }
                     self.stage = Stage::Done;
                 }
-                Stage::Done => return 0.0,
+                Stage::Done => {
+                    self.level = 0.0;
+                    return 0.0;
+                }
             }
         }
     }
@@ -339,6 +343,24 @@ mod tests {
         // lifted mid-attack: release must start at 0.5, not jump to sustain
         note.off();
         assert!((note.envelope() - 0.5).abs() < 1e-6);
+    }
+
+    // a voice stolen mid-release hands its level to the next note, so the
+    // level has to follow the release down rather than stay at sustain
+    #[test]
+    fn release_tracks_the_falling_level() {
+        let mut note = note(instrument());
+        for _ in 0..5 {
+            note.envelope(); // attack, decay, into sustain
+        }
+        note.off();
+
+        assert_eq!(note.envelope(), 0.7);
+        assert_eq!(note.envelope(), 0.35);
+        assert_eq!(note.level, 0.35);
+
+        note.envelope(); // release exhausted
+        assert_eq!(note.level, 0.0);
     }
 
     #[test]
