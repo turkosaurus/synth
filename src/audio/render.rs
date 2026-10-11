@@ -370,11 +370,6 @@ mod tests {
         }
     }
 
-    // step 0.25 advances exactly one table entry per sample
-    fn flat_note() -> Note {
-        Note::new(Arc::new(flat_instrument()), 1.0, 1.0, 4.0, None)
-    }
-
     // a Player whose timeline is a single note-on at sample 0
     // freqs[1] = 1.0 so step is 1/4 of the table per sample at rate 4.0
     fn freqs() -> Freqs {
