@@ -20,7 +20,7 @@ jobs:
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # cpal links the system audio api. macos and windows ship theirs;
       # only linux needs the headers installed.
@@ -48,7 +48,7 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then bin=synth.exe; else bin=synth; fi
           tar -czf synth-${{ matrix.target }}.tar.gz -C "$dir" "$bin"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: synth-${{ matrix.target }}
           path: synth-${{ matrix.target }}.tar.gz
@@ -57,7 +57,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           path: dist

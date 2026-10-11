@@ -128,7 +128,7 @@ pub fn stream(
     let sample_rate = output.sample_rate;
     let faults = Arc::clone(&stats);
     let stream = output.device.build_output_stream(
-        output.config.clone().into(),
+        output.config.into(),
         move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let start = Instant::now();
             let tally = fill(out, channels, &mut player);

@@ -91,10 +91,6 @@ pub(super) mod field {
     pub const PATH: &str = "path";
 }
 
-// Built from the consts above, so each name is spelled exactly once. Lua
-// constructors pass unknown fields through rather than discarding them, so a
-// misspelling arrives here and gets named instead of taking a default.
-
 /// A loaded file: a playable timeline plus one report per instrument in it.
 pub struct Patch {
     pub timeline: crate::audio::Timeline,
@@ -114,7 +110,9 @@ pub struct Patch {
 impl Patch {
     /// No instrument raised a warning, so the patch is safe to play as written.
     pub fn clean(&self) -> bool {
-        self.reports.iter().all(|(_, report)| report.warnings.is_empty())
+        self.reports
+            .iter()
+            .all(|(_, report)| report.warnings.is_empty())
     }
 }
 
@@ -131,8 +129,8 @@ pub fn load_default(sample_rate: u32) -> anyhow::Result<Patch> {
 
 #[instrument]
 pub fn load(path: &std::path::Path, sample_rate: u32) -> anyhow::Result<Patch> {
-    let source = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let source =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     load_in(
         &source,
         &path.display().to_string(),
@@ -163,7 +161,10 @@ fn load_in(
         let package: mlua::Table = lua.globals().get(field::PACKAGE)?;
         let existing: String = package.get(field::PATH)?;
         let dir = dir.display();
-        package.set(field::PATH, format!("{dir}/?.lua;{dir}/?/init.lua;{existing}"))?;
+        package.set(
+            field::PATH,
+            format!("{dir}/?.lua;{dir}/?/init.lua;{existing}"),
+        )?;
     }
 
     // eval to a Value first: a syntax error and a wrong return type both fail
@@ -202,12 +203,16 @@ fn load_in(
 
     // bound rather than returned directly: the match tuple is a temporary
     // that would otherwise outlive `lua` and borrow it past its drop
-    let patch = match (instrument_specs, steps) {
+    match (instrument_specs, steps) {
         (Some(specs), Some(steps)) => {
             sequence(&lua, &table, &specs, &steps, sample_rate, freqs, keys)
         }
         // a bare instrument file: one sustained note, so a two-event timeline
-        _ => single(&table, sample_rate, freqs, keys),
-    };
-    patch
+        _ => single(
+            lua.unpack(mlua::Value::Table(table))?,
+            sample_rate,
+            freqs,
+            keys,
+        ),
+    }
 }

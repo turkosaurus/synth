@@ -62,7 +62,7 @@ pub fn commas(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (index, digit) in digits.char_indices() {
-        if index > 0 && (digits.len() - index) % 3 == 0 {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
             out.push(',');
         }
         out.push(digit);
