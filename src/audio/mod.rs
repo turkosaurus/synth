@@ -7,6 +7,6 @@ mod device;
 mod render;
 mod voice;
 
-pub use device::{open, stream, Output, Stats};
+pub use device::{open, stream, Output, Snapshot, Stats};
 pub use render::{Player, Tally};
 pub use voice::{Event, Freqs, Timeline, Voice};

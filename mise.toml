@@ -1,8 +1,26 @@
 [tools]
 rust = "1.98"
 
+[tasks."test:separation"]
+description = "lua stays in script/, cpal stays in audio/device.rs"
+run = '''
+set -eu
+failed=0
+for rule in "mlua:src/script/" "cpal:src/audio/device.rs"; do
+  name=${rule%%:*}
+  allowed=${rule#*:}
+  if offenders=$(grep -rln "use $name\|$name::" src/ | grep -v "^$allowed"); then
+    echo "$name must stay in $allowed, found in:" >&2
+    echo "$offenders" >&2
+    failed=1
+  fi
+done
+exit $failed
+'''
+
 [tasks.test]
 description = "run the test suite"
+depends = ["test:separation"]
 run = "cargo test"
 
 [tasks.play]
