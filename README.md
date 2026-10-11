@@ -25,31 +25,37 @@ Views are assembled from data, and presentation layers never do additional work.
 
 ```mermaid
 sequenceDiagram
+    participant lua
     participant input
     box rust
-        participant listener
+        participant producer
         participant consumer
-        participant init
         participant instruments@{ "type" : "database" }
-        participant sequences@{ "type" : "database" }
+        participant timeline@{ "type" : "database" }
     end
 
-    participant lua
     participant output
 
-    init->>+lua: load scripts
-    lua->>-init: return funcs/tables
+    producer->>+lua: load scripts
+    lua->>-producer: return funcs/tables
 
-    init->>instruments: bake tables
-    init->>sequences: schedule notes
-    sequences->>+listener: trigger
-    input->>listener: trigger
-    note over listener: receive note input
-    listener->>instruments: fetch
-    instruments->>listener: 
-    listener->>listener: pitch
-    note over listener: produce note: pitch and envelope
-    listener->>-consumer: real-time ring buffer
+    producer->>instruments: bake waves and envelopes
+    producer->>consumer: bake freqs, midi to hz
+    producer->>producer: bake keymap
+
+    alt play: live
+        note over producer: listening
+        input->>producer: keypress
+        note over producer: key to midi note, plus octave
+        producer->>consumer: note on/off, real-time ring buffer
+    else play: sequenced
+        producer->>timeline: schedule note events
+        timeline->>consumer: note events due on the sample clock
+    end
+
+    consumer->>+instruments: fetch
+    note over consumer: pitch, phase, envelope: produce samples
+    instruments->>-consumer: wave and envelope
     consumer->>output: to OS API
 ```
 
