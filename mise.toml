@@ -19,7 +19,7 @@ exit $failed
 '''
 
 [tasks.test]
-depends = ["test:rust", "test:separation", "check"]
+depends = ["test:rust", "test:separation", "test:example"]
 description = "run all tests: cargo tests and the example patch lint"
 
 [tasks."test:rust"]
@@ -38,10 +38,10 @@ run = "touch synth.log; tail -F synth.log"
 description = "report terminal capabilities and gating mode"
 run = "cargo run -- doctor"
 
-[tasks.check]
+[tasks."test:example"]
 description = "lint example.lua; nonzero exit on warnings"
 run = "cargo run -- check lua/example.lua"
 
 [tasks.tui]
-description = "play live from the keyboard with the default voice"
+description = "play live from the keyboard with the default instrument"
 run = "cargo run -- tui"
