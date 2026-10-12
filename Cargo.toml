@@ -10,6 +10,7 @@ cpal = "0.18.2"
 crossterm = "0.29.0"
 ratatui = "0.29.0"
 rtrb = "0.4.0"
+signal-hook = "0.3"
 tracing = "0.1.44"
 
 [dependencies.clap]

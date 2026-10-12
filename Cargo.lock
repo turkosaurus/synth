@@ -1354,6 +1354,7 @@ dependencies = [
  "ratatui",
  "rtrb",
  "serde",
+ "signal-hook",
  "tracing",
  "tracing-subscriber",
 ]
