@@ -3,6 +3,10 @@ use std::time::Duration;
 
 use super::instrument::{Event, Freqs, Instrument, Timeline};
 
+/// How long a stolen voice's velocity takes to ease to the new note's own.
+/// Short enough to hear as the new note, long enough not to click.
+const GLIDE: Duration = Duration::from_millis(5);
+
 enum Stage {
     Attack,
     Decay,
@@ -14,8 +18,12 @@ enum Stage {
 // one sounding note
 struct Note {
     instrument: Arc<Instrument>,
-    /// 0.0-1.0, scaling the envelope peak
+    /// 0.0-1.0, scaling the envelope peak; differs from `target` only while
+    /// easing after a steal
     velocity: f32,
+    target: f32,
+    glide: f32, // velocity moved per sample toward `target`
+    ramp: f32,  // samples in GLIDE at this sample rate
     phase: f32, // 0.0..1.0
     step: f32,  // phase increment per sample
     stage: Stage,
@@ -38,6 +46,9 @@ impl Note {
     ) -> Self {
         Self {
             velocity,
+            target: velocity,
+            glide: 0.0,
+            ramp: (GLIDE.as_secs_f32() * sample_rate).max(1.0),
             step: freq / sample_rate,
             hold_samples: hold.map(|d| (d.as_secs_f32() * sample_rate) as usize),
             instrument,
@@ -122,6 +133,8 @@ impl Note {
         let env = self.envelope();
         let sample = self.wave() * env * self.velocity;
         self.phase = (self.phase + self.step).fract();
+        let gap = self.target - self.velocity;
+        self.velocity += gap.clamp(-self.glide, self.glide);
         sample
     }
 
@@ -133,8 +146,14 @@ impl Note {
     // this note's velocity. Attack resumes at its first entry at or above
     // that level, which assumes a rising attack; a curve that dips takes its
     // first crossing.
+    //
+    // The envelope cannot always land on that level: a soft note stealing a
+    // loud one needs more than its peak, and an instrument with no attack
+    // starts at decay. So velocity starts wherever makes the first sample
+    // match, then eases to this note's own over GLIDE.
     fn take_over(&mut self, from: &Note) {
-        let level = from.level * from.velocity / self.velocity;
+        let audible = from.level * from.velocity;
+        let level = audible / self.target;
         self.phase = from.phase;
         self.level = level;
         let attack = &self.instrument.attack;
@@ -142,6 +161,16 @@ impl Note {
             .iter()
             .position(|&value| value >= level)
             .unwrap_or(attack.len());
+
+        let first = attack
+            .get(self.idx)
+            .or(self.instrument.decay.first())
+            .copied()
+            .unwrap_or(self.instrument.sustain_level);
+        if first > 0.0 {
+            self.velocity = audible / first;
+            self.glide = (self.target - self.velocity).abs() / self.ramp;
+        }
     }
 
     fn releasing(&self) -> bool {
@@ -664,6 +693,38 @@ mod tests {
         let mut note = Note::new(Arc::new(rising()), 1.0, 1.0, 4.0, None);
         note.take_over(&from);
         assert_eq!(note.envelope(), 0.25); // 0.25 × 1.0 matches
+    }
+
+    #[test]
+    fn a_soft_note_stealing_a_loud_one_eases_down() {
+        let mut from = Note::new(Arc::new(rising()), 1.0, 1.0, 4.0, None);
+        from.level = 0.7; // sustaining at full velocity
+        from.phase = 0.25; // wave[1] = 1.0, so samples read as env × velocity
+
+        let soft = 40.0 / 127.0;
+        let mut note = Note::new(Arc::new(rising()), 0.0, soft, 4.0, None);
+        note.take_over(&from);
+
+        // 0.7 is above anything the soft note's envelope can reach, so
+        // velocity carries it; the first sample matches, with no drop
+        assert!((note.next() - 0.7).abs() < 1e-6);
+        // GLIDE is under one sample at this rate, so it lands at once
+        assert_eq!(note.velocity, soft);
+    }
+
+    #[test]
+    fn take_over_with_no_attack_eases_up_from_the_handed_over_level() {
+        let mut instrument = rising();
+        instrument.attack = vec![];
+        let mut from = Note::new(Arc::new(rising()), 1.0, 1.0, 4.0, None);
+        from.level = 0.2;
+        from.phase = 0.25;
+
+        let mut note = Note::new(Arc::new(instrument), 0.0, 1.0, 4.0, None);
+        note.take_over(&from);
+        // decay starts at 1.0, so velocity starts at 0.2 instead of jumping
+        assert!((note.next() - 0.2).abs() < 1e-6);
+        assert_eq!(note.velocity, 1.0);
     }
 
     // A live player on flat_instrument with `voice_count` voices. Only
