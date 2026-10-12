@@ -11,6 +11,11 @@ _Lua defined Rust synthesizer and sequencer_
 sudo apt install libasound2-dev pkg-config build-essential
 ```
 
+Run TUI:
+```sh
+mise run tui
+```
+
 ## architecture 
 
 Except where necessary to preserve a non-blocking, non-allocating audio pipeline, care is taken to implement [the ELM architecture](https://guide.elm-lang.org/architecture/), separating data, mutation, and presentation.
