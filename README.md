@@ -2,7 +2,7 @@
 [![test](https://github.com/turkosaurus/synth/actions/workflows/test.yml/badge.svg)](https://github.com/turkosaurus/synth/actions/workflows/test.yml)
 ![GitHub Release](https://img.shields.io/github/v/release/turkosaurus/synth)
 
-_Lua defined, Rust synthesizer and sequencer_
+_Lua defined Rust synthesizer and sequencer_
 
 ## requirements
 
