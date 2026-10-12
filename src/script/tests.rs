@@ -174,6 +174,21 @@ fn a_long_note_emits_no_off_when_its_pitch_retriggers() {
 }
 
 #[test]
+fn an_off_landing_on_its_retrigger_is_dropped() {
+    // duration 1 ends on the very sample the retrigger starts. The clamp
+    // keeps only Offs strictly before it, so the retrigger's own Off is the
+    // one that ends the voice
+    let patch = seq(r#"{ { note = 69, instrument = "a", duration = 1 }, { note = 69 } }"#);
+    assert_eq!(offs(&patch), vec![48_000 + 24_000]);
+}
+
+#[test]
+fn an_off_landing_on_a_different_pitch_is_kept() {
+    let patch = seq(r#"{ { note = 69, instrument = "a", duration = 1 }, { note = 72 } }"#);
+    assert_eq!(offs(&patch), vec![48_000, 48_000 + 24_000]);
+}
+
+#[test]
 fn a_rest_releases_every_note_on_its_instrument() {
     let patch =
         seq(r#"{ { note = 69, instrument = "a", duration = 3 }, { note = 72 }, { off = true } }"#);

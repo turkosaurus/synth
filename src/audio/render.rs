@@ -805,6 +805,26 @@ mod tests {
     }
 
     #[test]
+    fn a_retrigger_while_releasing_resumes_from_the_fade() {
+        let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
+        let mut instrument = flat_instrument();
+        instrument.release = vec![1.0, 0.5, 0.25];
+        let mut player = Player::live(vec![Arc::new(instrument)], freqs(), rx, 4.0);
+
+        tx.push(on(2)).unwrap();
+        player.next();
+        tx.push(off(2)).unwrap();
+        player.next(); // release[0]
+        assert_eq!(player.next(), 0.25 * 0.5); // release[1]
+
+        // the retrigger starts at the faded level, not full, then eases up
+        tx.push(on(2)).unwrap();
+        assert_eq!(player.next(), 0.25 * 0.5);
+        assert_eq!(player.next(), 0.25);
+        assert!(!player.pools[0].voices[0].as_ref().unwrap().note.releasing());
+    }
+
+    #[test]
     fn a_full_pool_steals_the_oldest_voice() {
         let (mut tx, mut player) = pooled(2);
         for note in [1, 2, 3] {
