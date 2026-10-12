@@ -267,6 +267,13 @@ pub struct Tally {
     pub peak: f32,
 }
 
+/// Full scale. A sample beyond this cannot be represented and is clipped.
+///
+/// One mono voice can reach this but not pass it: the wavetable is clamped
+/// at bake, and envelope and velocity only ever scale it down. Summed
+/// voices are what will cross it.
+const CLIP: f32 = 1.0;
+
 /// Lay one sample per frame across every channel. Split out of the callback
 /// so the interleaving can be tested without an audio device.
 pub(super) fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tally {
@@ -274,7 +281,7 @@ pub(super) fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tal
 
     for frame in out.chunks_mut(channels) {
         let sample = player.next();
-        if sample.abs() > 1.0 {
+        if sample.abs() > CLIP {
             tally.clips += 1;
         }
         tally.peak = tally.peak.max(sample.abs());

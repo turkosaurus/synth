@@ -8,8 +8,9 @@ anyhow = "1.0.104"
 comfy-table = "8.0.1"
 cpal = "0.18.2"
 crossterm = "0.29.0"
-ratatui = "0.29.0"
+ratatui = "0.30"
 rtrb = "0.4.0"
+signal-hook = "0.3"
 tracing = "0.1.44"
 
 [dependencies.clap]

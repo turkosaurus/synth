@@ -8,9 +8,14 @@ use crate::audio::Event;
 /// An isomorphic grid resolved to MIDI notes, built from `lua/keyboard.lua`,
 pub struct Keymap {
     pub notes: HashMap<char, u8>,
+    /// Which built-in layout this came from, if it was one.
+    pub template: Option<String>,
+    /// Semitones between rows of the grid.
+    pub offset: i32,
     pub octave_up: Vec<KeyCode>,
     pub octave_down: Vec<KeyCode>,
     pub stop: Vec<KeyCode>,
+    pub help: Vec<KeyCode>,
 }
 
 /// Parses a binding from the keymap. A single character is that key; anything
@@ -55,10 +60,14 @@ pub enum Gating {
     Fixed(Duration),
 }
 
+/// What the view should do about a key the keyboard has seen. Dispatch stays
+/// here rather than in the view sniffing key codes, so the keymap remains the
+/// one place a binding is decided.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Outcome {
     Continue,
     Quit,
+    Help,
 }
 
 pub struct Keyboard {
@@ -101,6 +110,31 @@ impl Keyboard {
         self.last_key
     }
 
+    /// The resolved layout, so a view can show what the bindings are rather
+    /// than restate them in prose that drifts.
+    pub fn keymap(&self) -> &Keymap {
+        &self.keymap
+    }
+
+    /// Dispatch for a view that is showing something modal: only bindings
+    /// that must work everywhere are honoured, and nothing sounds. Releases
+    /// report `Continue`, so the press that opened an overlay is not undone
+    /// by its own key coming back up.
+    pub fn global(&self, key: KeyEvent) -> Outcome {
+        if key.kind != KeyEventKind::Press {
+            return Outcome::Continue;
+        }
+        if matches!(key.code, KeyCode::Char('c' | 'd'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            return Outcome::Quit;
+        }
+        if self.keymap.help.contains(&key.code) {
+            return Outcome::Help;
+        }
+        Outcome::Continue
+    }
+
     pub fn handle(&mut self, key: KeyEvent) -> Outcome {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
@@ -111,7 +145,14 @@ impl Keyboard {
         }
 
         match key.kind {
-            KeyEventKind::Press => self.press(key.code),
+            KeyEventKind::Press => {
+                // tested before press(), so a layout that puts the help key
+                // somewhere in the note grid cannot also sound it
+                if self.keymap.help.contains(&key.code) {
+                    return Outcome::Help;
+                }
+                self.press(key.code)
+            }
             // release only arrives when gating is Held;
             // in Fixed mode, `tick` ends the note
             KeyEventKind::Release => {
