@@ -79,22 +79,6 @@ jobs:
     if: needs.version.outputs.release == 'true'
     uses: ./.github/workflows/test.yml
 
-  tag:
-    needs: [version, test]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      # pushed with the default token, which deliberately does not trigger more workflow runs
-      - env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v$VERSION" -m "release v$VERSION"
-          git push origin "v$VERSION"
-
   build:
     needs: [version, test]
     strategy:
@@ -129,7 +113,7 @@ jobs:
           path: synth-${{ matrix.target }}.tar.gz
 
   release:
-    needs: [version, tag, build]
+    needs: [version, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -140,4 +124,8 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
-        run: gh release create "v$VERSION" dist/* --generate-notes --repo "$GITHUB_REPOSITORY"
+        run: |
+          gh release create "v$VERSION" dist/* \
+            --target "$GITHUB_SHA" \
+            --generate-notes \
+            --repo "$GITHUB_REPOSITORY"
