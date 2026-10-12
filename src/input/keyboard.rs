@@ -73,8 +73,10 @@ pub struct Keyboard {
     /// whatever octave is current by then, which orphans the note if the
     /// octave moved while the key was down.
     held: HashMap<char, u8>,
+    /// the latest note, for the view to report
     sounding: Option<u8>,
-    release_at: Option<Instant>,
+    /// when each `Fixed` note ends; one per note, so a chord releases whole
+    release_at: HashMap<u8, Instant>,
     last_key: Option<char>,
 }
 
@@ -87,7 +89,7 @@ impl Keyboard {
             octave: 0,
             held: HashMap::new(),
             sounding: None,
-            release_at: None,
+            release_at: HashMap::new(),
             last_key: None,
         }
     }
@@ -162,10 +164,10 @@ impl Keyboard {
             velocity: VELOCITY,
         });
 
-        self.release_at = match self.gating {
-            Gating::Held => None,
-            Gating::Fixed(length) => Some(Instant::now() + length),
-        };
+        // a retrigger replaces its pitch's deadline rather than adding one
+        if let Gating::Fixed(length) = self.gating {
+            self.release_at.insert(note, Instant::now() + length);
+        }
     }
 
     fn release(&mut self, ch: char) {
@@ -174,12 +176,17 @@ impl Keyboard {
         }
     }
 
-    /// Call once per poll iteration. Ends a `Fixed` note whose time is up.
+    /// Call once per poll iteration. Ends every `Fixed` note whose time is up.
     pub fn tick(&mut self) {
-        if self.release_at.is_some_and(|at| Instant::now() >= at) {
-            if let Some(note) = self.sounding {
-                self.end(note);
-            }
+        let now = Instant::now();
+        let due: Vec<u8> = self
+            .release_at
+            .iter()
+            .filter(|&(_, &at)| now >= at)
+            .map(|(&note, _)| note)
+            .collect();
+        for note in due {
+            self.end(note);
         }
     }
 
@@ -188,7 +195,7 @@ impl Keyboard {
     pub fn panic(&mut self) {
         self.held.clear();
         self.sounding = None;
-        self.release_at = None;
+        self.release_at.clear();
         self.send(Event::AllNotesOff {
             instrument: INSTRUMENT,
         });
@@ -198,9 +205,9 @@ impl Keyboard {
         // also reached by tick(), which sees no key release, so this is the
         // only place `held` drains one note at a time
         self.held.retain(|_, held| *held != note);
+        self.release_at.remove(&note);
         if self.sounding == Some(note) {
             self.sounding = None;
-            self.release_at = None;
         }
         self.send(Event::NoteOff {
             instrument: INSTRUMENT,
@@ -218,4 +225,77 @@ impl Keyboard {
 fn shift(note: u8, octave: i32) -> Option<u8> {
     let shifted = note as i32 + octave * 12;
     (0..128).contains(&shifted).then_some(shifted as u8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keyboard(gating: Gating) -> (Keyboard, rtrb::Consumer<Event>) {
+        let keymap = Keymap {
+            notes: HashMap::from([('a', 60), ('s', 62)]),
+            octave_up: vec![],
+            octave_down: vec![],
+            stop: vec![KeyCode::Backspace],
+        };
+        let (tx, rx) = rtrb::RingBuffer::new(16);
+        (Keyboard::new(keymap, gating, tx), rx)
+    }
+
+    fn press(keyboard: &mut Keyboard, code: KeyCode) {
+        keyboard.handle(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    fn drain(rx: &mut rtrb::Consumer<Event>) -> Vec<Event> {
+        std::iter::from_fn(|| rx.pop().ok()).collect()
+    }
+
+    #[test]
+    fn fixed_gating_ends_every_note_in_a_chord() {
+        let (mut keyboard, mut rx) = keyboard(Gating::Fixed(Duration::ZERO));
+        press(&mut keyboard, KeyCode::Char('a'));
+        press(&mut keyboard, KeyCode::Char('s'));
+        drain(&mut rx);
+
+        keyboard.tick();
+        // HashMap order, so sort before comparing
+        let mut offs: Vec<u8> = drain(&mut rx)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::NoteOff { note, .. } => Some(note),
+                _ => None,
+            })
+            .collect();
+        offs.sort();
+        assert_eq!(offs, vec![60, 62]);
+        assert!(keyboard.held.is_empty());
+    }
+
+    #[test]
+    fn fixed_gating_waits_for_the_deadline() {
+        let (mut keyboard, mut rx) = keyboard(Gating::Fixed(Duration::from_secs(60)));
+        press(&mut keyboard, KeyCode::Char('a'));
+        drain(&mut rx);
+
+        keyboard.tick();
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[test]
+    fn panic_releases_everything_once() {
+        let (mut keyboard, mut rx) = keyboard(Gating::Held);
+        press(&mut keyboard, KeyCode::Char('a'));
+        press(&mut keyboard, KeyCode::Char('s'));
+        drain(&mut rx);
+
+        press(&mut keyboard, KeyCode::Backspace);
+        assert_eq!(
+            drain(&mut rx),
+            vec![Event::AllNotesOff {
+                instrument: INSTRUMENT
+            }]
+        );
+        assert!(keyboard.held.is_empty());
+        assert_eq!(keyboard.sounding(), None);
+    }
 }
