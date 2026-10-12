@@ -147,12 +147,21 @@ struct Voice {
 struct Pool {
     instrument: Arc<Instrument>,
     voices: Vec<Option<Voice>>,
+    /// Voices at different pitches rarely peak together, so N of them sum to
+    /// about sqrt(N) times one. Fixed at load: a gain that followed the live
+    /// note count would step every other note's level on each note-on.
+    gain: f32,
 }
 
 impl Pool {
     fn new(instrument: Arc<Instrument>) -> Self {
         let voices = (0..instrument.voice_count).map(|_| None).collect();
-        Self { instrument, voices }
+        let gain = 1.0 / (instrument.voice_count.max(1) as f32).sqrt();
+        Self {
+            instrument,
+            voices,
+            gain,
+        }
     }
 
     // A retrigger takes its own pitch's voice, then a free slot. A full pool
@@ -198,7 +207,7 @@ impl Pool {
                 }
             }
         }
-        sum
+        sum * self.gain
     }
 }
 
@@ -634,14 +643,22 @@ mod tests {
     }
 
     #[test]
+    fn a_pool_is_scaled_by_one_over_root_voice_count() {
+        let (mut tx, mut player) = pooled(4);
+        tx.push(on(2)).unwrap();
+        assert_eq!(player.next(), 0.25 * 0.5);
+    }
+
+    #[test]
     fn two_pitches_sound_together() {
         let (mut tx, mut player) = pooled(2);
         tx.push(on(1)).unwrap();
-        assert_eq!(player.next(), 0.25);
+        player.next();
 
         tx.push(on(2)).unwrap();
         // note 1 has moved on to wave[1]; note 2 adds its wave[0]
-        assert_eq!(player.next(), 0.5 + 0.25);
+        let gain = 1.0 / 2.0f32.sqrt();
+        assert!((player.next() - (0.5 + 0.25) * gain).abs() < 1e-6);
         assert_eq!(pitches(&player), vec![Some(1), Some(2)]);
     }
 
