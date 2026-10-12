@@ -125,6 +125,25 @@ impl Note {
         sample
     }
 
+    // A stolen voice hands over where it was, so the new note picks up the
+    // waveform and envelope mid-flight rather than jumping to zero: no
+    // click. Both notes share a pool, so they read the same wavetable.
+    //
+    // The level carried is what was audible, env × velocity, re-expressed at
+    // this note's velocity. Attack resumes at its first entry at or above
+    // that level, which assumes a rising attack; a curve that dips takes its
+    // first crossing.
+    fn take_over(&mut self, from: &Note) {
+        let level = from.level * from.velocity / self.velocity;
+        self.phase = from.phase;
+        self.level = level;
+        let attack = &self.instrument.attack;
+        self.idx = attack
+            .iter()
+            .position(|&value| value >= level)
+            .unwrap_or(attack.len());
+    }
+
     fn releasing(&self) -> bool {
         matches!(self.stage, Stage::Release | Stage::Done)
     }
@@ -305,14 +324,18 @@ impl Player {
                 let Some(slot) = pool.slot(note) else {
                     return; // a pool with no voices
                 };
+                let mut started = Note::new(
+                    Arc::clone(&pool.instrument),
+                    freq,
+                    velocity as f32 / 127.0,
+                    self.sample_rate,
+                    None,
+                );
+                if let Some(stolen) = &pool.voices[slot] {
+                    started.take_over(&stolen.note);
+                }
                 pool.voices[slot] = Some(Voice {
-                    note: Note::new(
-                        Arc::clone(&pool.instrument),
-                        freq,
-                        velocity as f32 / 127.0,
-                        self.sample_rate,
-                        None,
-                    ),
+                    note: started,
                     pitch: note,
                     age: self.clock,
                 });
@@ -591,23 +614,43 @@ mod tests {
     }
 
     #[test]
-    fn a_live_note_replaces_the_one_sounding() {
-        let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![Arc::new(flat_instrument())], freqs(), rx, 4.0);
-
-        let on = |note| Event::NoteOn {
-            instrument: 0,
-            note,
-            velocity: 127,
-        };
-
+    fn a_retrigger_continues_the_waveform() {
+        let (mut tx, mut player) = pooled(1);
         tx.push(on(1)).unwrap();
         player.next();
         player.next(); // advance into the table
 
-        // a second note-on resets phase, so we are back at wave[0]
+        // the retrigger keeps the phase, so this is wave[2], not wave[0]
         tx.push(on(1)).unwrap();
-        assert_eq!(player.next(), 0.25);
+        assert_eq!(player.next(), 0.75);
+    }
+
+    fn rising() -> Instrument {
+        let mut instrument = instrument();
+        instrument.attack = vec![0.0, 0.25, 0.5, 0.75];
+        instrument
+    }
+
+    #[test]
+    fn take_over_resumes_attack_at_the_handed_over_level() {
+        let mut from = Note::new(Arc::new(rising()), 1.0, 1.0, 4.0, None);
+        from.level = 0.5;
+        from.phase = 0.3;
+
+        let mut note = Note::new(Arc::new(rising()), 2.0, 1.0, 4.0, None);
+        note.take_over(&from);
+        assert_eq!(note.phase, 0.3);
+        assert_eq!(note.envelope(), 0.5); // attack[2], not attack[0]
+    }
+
+    #[test]
+    fn take_over_matches_audible_level_across_velocities() {
+        let mut from = Note::new(Arc::new(rising()), 1.0, 0.5, 4.0, None);
+        from.level = 0.5; // audible at 0.5 × 0.5 = 0.25
+
+        let mut note = Note::new(Arc::new(rising()), 1.0, 1.0, 4.0, None);
+        note.take_over(&from);
+        assert_eq!(note.envelope(), 0.25); // 0.25 × 1.0 matches
     }
 
     // A live player on flat_instrument with `voice_count` voices. Only
@@ -709,8 +752,11 @@ mod tests {
         let (mut tx, mut player) = pooled(1);
         tx.push(on(1)).unwrap();
         player.next();
+        // legato: note 2 takes over note 1's phase, now at wave[1], and
+        // holds there because its own frequency is 0
         tx.push(on(2)).unwrap();
-        assert_eq!(player.next(), 0.25); // note 2 alone, note 1 is gone
+        assert_eq!(player.next(), 0.5);
+        assert_eq!(player.next(), 0.5);
         assert_eq!(pitches(&player), vec![Some(2)]);
     }
 
