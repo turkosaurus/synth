@@ -174,6 +174,24 @@ fn a_long_note_emits_no_off_when_its_pitch_retriggers() {
 }
 
 #[test]
+fn a_rest_releases_every_note_on_its_instrument() {
+    let patch =
+        seq(r#"{ { note = 69, instrument = "a", duration = 3 }, { note = 72 }, { off = true } }"#);
+    let events = &patch.timeline.events;
+    let crate::audio::Event::NoteOn { instrument, .. } = events[0].1 else {
+        panic!("first event should be a note-on");
+    };
+    let rests: Vec<_> = events
+        .iter()
+        .filter(|(_, e)| matches!(e, crate::audio::Event::AllNotesOff { .. }))
+        .collect();
+    assert_eq!(
+        rests,
+        vec![&(2 * 48_000, crate::audio::Event::AllNotesOff { instrument })]
+    );
+}
+
+#[test]
 fn instrument_sticks_until_a_step_changes_it() {
     let patch = seq(
         r#"{ { note = 69, instrument = "a" }, { note = 71 }, { note = 72, instrument = "b" } }"#,
@@ -184,7 +202,7 @@ fn instrument_sticks_until_a_step_changes_it() {
         .iter()
         .filter_map(|(_, e)| match e {
             crate::audio::Event::NoteOn { instrument, .. } => Some(*instrument),
-            crate::audio::Event::NoteOff { .. } => None,
+            crate::audio::Event::NoteOff { .. } | crate::audio::Event::AllNotesOff { .. } => None,
         })
         .collect();
 
@@ -424,7 +442,7 @@ fn a_reused_pattern_resolves_to_the_same_instrument_each_time() {
         .iter()
         .filter_map(|(_, e)| match e {
             crate::audio::Event::NoteOn { instrument, .. } => Some(*instrument),
-            crate::audio::Event::NoteOff { .. } => None,
+            crate::audio::Event::NoteOff { .. } | crate::audio::Event::AllNotesOff { .. } => None,
         })
         .collect();
 

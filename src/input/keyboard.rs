@@ -184,15 +184,19 @@ impl Keyboard {
     }
 
     /// Emergency silence, bound to whatever the keymap's `stop` list names.
+    /// Releases every voice, not only the latest, so nothing is left held.
     pub fn panic(&mut self) {
-        if let Some(note) = self.sounding {
-            self.end(note);
-        }
+        self.held.clear();
+        self.sounding = None;
+        self.release_at = None;
+        self.send(Event::AllNotesOff {
+            instrument: INSTRUMENT,
+        });
     }
 
     fn end(&mut self, note: u8) {
-        // also reached by tick() and panic(), neither of which sees a key
-        // release, so this is the only place `held` is guaranteed to drain
+        // also reached by tick(), which sees no key release, so this is the
+        // only place `held` drains one note at a time
         self.held.retain(|_, held| *held != note);
         if self.sounding == Some(note) {
             self.sounding = None;

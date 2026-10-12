@@ -169,22 +169,22 @@ pub(super) fn sequence(
         }
     }
 
-    // explicit rests release whatever the previous note was
-    let mut previous = None;
-    for (i, step) in parsed.iter().enumerate() {
-        if let Some(note) = step.note {
-            // the loop above already rejected a note with no known instrument
-            let instrument = step.instrument.as_deref().and_then(|name| index.get(name));
-            previous = instrument.map(|&instrument| (instrument, note));
-        }
-        if step.off {
-            if let Some((instrument, note)) = previous {
-                events.push((
-                    (step_len * i as f64) as u64,
-                    crate::audio::Event::NoteOff { instrument, note },
-                ));
-            }
-        }
+    // A rest silences its instrument: every voice releases, like MIDI All
+    // Notes Off. With no instrument in effect nothing can be sounding.
+    for (i, step) in parsed.iter().enumerate().filter(|(_, step)| step.off) {
+        let Some(name) = step.instrument.as_deref() else {
+            continue;
+        };
+        let instrument = *index.get(name).with_context(|| {
+            format!(
+                "step {} names instrument `{name}`, which is not defined",
+                i + 1
+            )
+        })?;
+        events.push((
+            (step_len * i as f64) as u64,
+            crate::audio::Event::AllNotesOff { instrument },
+        ));
     }
 
     events.sort_by_key(|(at, _)| *at);

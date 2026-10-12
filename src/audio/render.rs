@@ -216,6 +216,14 @@ impl Pool {
         }
     }
 
+    fn release_all(&mut self) {
+        for voice in self.voices.iter_mut().flatten() {
+            if !voice.note.releasing() {
+                voice.note.off();
+            }
+        }
+    }
+
     fn next(&mut self) -> f32 {
         let mut sum = 0.0;
         for slot in &mut self.voices {
@@ -341,6 +349,11 @@ impl Player {
                 });
             }
             Event::NoteOff { instrument, note } => self.release(instrument, note),
+            Event::AllNotesOff { instrument } => {
+                if let Some(pool) = self.pools.get_mut(instrument) {
+                    pool.release_all();
+                }
+            }
         }
     }
 
@@ -758,6 +771,31 @@ mod tests {
         assert_eq!(player.next(), 0.5);
         assert_eq!(player.next(), 0.5);
         assert_eq!(pitches(&player), vec![Some(2)]);
+    }
+
+    #[test]
+    fn all_notes_off_releases_every_voice_on_its_instrument() {
+        let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
+        let mut wide = flat_instrument();
+        wide.voice_count = 2;
+        let instruments = vec![Arc::new(wide), Arc::new(flat_instrument())];
+        let mut player = Player::live(instruments, freqs(), rx, 4.0);
+
+        tx.push(on(1)).unwrap();
+        tx.push(on(2)).unwrap();
+        tx.push(Event::NoteOn {
+            instrument: 1,
+            note: 2,
+            velocity: 127,
+        })
+        .unwrap();
+        player.next();
+
+        // flat_instrument has no release, so released voices free at once
+        tx.push(Event::AllNotesOff { instrument: 0 }).unwrap();
+        player.next();
+        assert_eq!(pitches(&player), vec![None, None]);
+        assert!(player.pools[1].voices[0].is_some(), "other instrument kept");
     }
 
     #[test]

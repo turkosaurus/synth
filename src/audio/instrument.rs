@@ -25,6 +25,11 @@ pub enum Event {
         instrument: usize,
         note: u8,
     },
+    /// MIDI All Notes Off (CC 123): every voice on the instrument releases,
+    /// and the release stage still plays.
+    AllNotesOff {
+        instrument: usize,
+    },
 }
 
 /// Events stamped with the sample they fire on. A single sustained note is
