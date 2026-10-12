@@ -1,5 +1,6 @@
 # synth
 [![test](https://github.com/turkosaurus/synth/actions/workflows/test.yml/badge.svg)](https://github.com/turkosaurus/synth/actions/workflows/test.yml)
+[![release](https://github.com/turkosaurus/synth/actions/workflows/release.yml/badge.svg?event=release)](https://github.com/turkosaurus/synth/actions/workflows/release.yml)
 
 _Lua defined, Rust synthesizer and sequencer_
 
