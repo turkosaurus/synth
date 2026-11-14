@@ -2,20 +2,34 @@ use std::sync::Arc;
 
 // timbre and envelope
 pub struct Instrument {
-    pub wave: Vec<f32>,            // full waveform cycle, -1.0..1.0
-    pub(crate) attack: Vec<f32>,   // 0.0..1.0
-    pub(crate) decay: Vec<f32>,    // 1.0..sustain_level
-    pub(crate) sustain_level: f32, // 0.0..1.0
-    pub(crate) release: Vec<f32>,  // sustain_level..0.0
+    pub wave: Vec<f32>,             // full waveform cycle, -1.0..1.0
+    pub(crate) attack: Vec<f32>,    // 0.0..1.0
+    pub(crate) decay: Vec<f32>,     // 1.0..sustain_level
+    pub(crate) sustain_level: f32,  // 0.0..1.0
+    pub(crate) release: Vec<f32>,   // sustain_level..0.0
+    pub(crate) voice_count: usize,  // notes sounding at once; 1 is mono
 }
 
-/// MIDI-shaped on purpose: note numbers rather than frequencies, and a note
-/// on NoteOff. That keeps a MIDI input close to a passthrough, puts tuning in
-/// one place (the audio side), and means polyphony is not a format change.
+/// MIDI-shaped on purpose: note numbers rather than frequencies, and an
+/// instrument on every event the way MIDI puts a channel on every message.
+/// That keeps a MIDI input close to a passthrough, puts tuning in one place
+/// (the audio side), and lets a release find the voice pool it belongs to.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    NoteOn { instrument: usize, note: u8, velocity: u8 },
-    NoteOff { note: u8 },
+    NoteOn {
+        instrument: usize,
+        note: u8,
+        velocity: u8,
+    },
+    NoteOff {
+        instrument: usize,
+        note: u8,
+    },
+    /// MIDI All Notes Off (CC 123): every voice on the instrument releases,
+    /// and the release stage still plays.
+    AllNotesOff {
+        instrument: usize,
+    },
 }
 
 /// Events stamped with the sample they fire on. A single sustained note is

@@ -1,5 +1,5 @@
-use crate::input::keyboard::Gating;
 use crate::audio::Snapshot;
+use crate::input::keyboard::Gating;
 use crate::script::Patch;
 
 use super::table;
@@ -10,7 +10,8 @@ pub fn environment(gating: Gating) {
 
     let (release, mode) = match gating {
         Gating::Held => ("yes".to_string(), "held notes".to_string()),
-        Gating::Fixed(length) => ("no".to_string(), format!("fixed {} ms", length.as_millis())),
+        // the length is the keyboard's gateMS, which belongs to a patch
+        Gating::Fixed => ("no".to_string(), "fixed length (keyboard gateMS)".to_string()),
     };
 
     table::pairs(

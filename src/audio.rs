@@ -4,8 +4,8 @@
 //! `instrument` is baked, immutable data that both sides read.
 
 mod device;
-mod render;
 mod instrument;
+mod render;
 
 pub use device::{open, stream, Output, Snapshot, Stats};
 pub use instrument::{Event, Freqs, Instrument, Timeline};

@@ -445,8 +445,8 @@ fn state(keyboard: &Keyboard, freqs: &[f32], gating: Gating) -> Table<'static> {
 
     let gating = match gating {
         Gating::Held => ("gated".to_string(), dim),
-        Gating::Fixed(length) => (
-            format!("{}ms", length.as_millis()),
+        Gating::Fixed => (
+            format!("{}ms", keyboard.keymap().gate.as_millis()),
             Style::new().fg(Color::Yellow),
         ),
     };

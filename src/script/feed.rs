@@ -17,6 +17,8 @@ struct Step {
     off: bool,
     instrument: Option<String>,
     duration: f64,
+    /// defaulted in `sequence.lua`, so every resolved step carries one
+    velocity: u8,
 }
 
 const SINGLE_HOLD: Duration = Duration::from_millis(1200);
@@ -46,7 +48,13 @@ pub(super) fn single(
                         velocity: 127,
                     },
                 ),
-                (hold, crate::audio::Event::NoteOff { note: SINGLE_NOTE }),
+                (
+                    hold,
+                    crate::audio::Event::NoteOff {
+                        instrument: 0,
+                        note: SINGLE_NOTE,
+                    },
+                ),
             ],
             total_samples: hold + tail,
         },
@@ -131,12 +139,19 @@ pub(super) fn sequence(
             )
         })?;
 
+        // 0 would be MIDI's note-off spelled as a note-on
+        anyhow::ensure!(
+            (1..=127).contains(&step.velocity),
+            "step {} has velocity {}; must be 1 to 127",
+            i + 1,
+            step.velocity
+        );
         events.push((
             start,
             crate::audio::Event::NoteOn {
                 instrument,
                 note,
-                velocity: 127,
+                velocity: step.velocity,
             },
         ));
 
@@ -148,28 +163,37 @@ pub(super) fn sequence(
         );
         let ends = start + (step_len * step.duration) as u64;
 
-        // mono steals, so a long note is cut by the next one. Without this
-        // clamp its Off would land later and release the wrong note.
-        let next_start = starts.get(position + 1).map(|&(_, at)| at);
-        if next_start.is_none_or(|next| ends < next) {
-            events.push((ends, crate::audio::Event::NoteOff { note }));
+        // A retrigger of the same pitch on the same instrument takes this
+        // note's voice, so an Off landing after it would release the new
+        // note. Any other later note leaves this Off correct: it either
+        // releases a voice still sounding or names one already stolen.
+        let retrigger = starts[position + 1..]
+            .iter()
+            .find(|&&(j, _)| {
+                parsed[j].note == Some(note) && parsed[j].instrument.as_deref() == Some(name)
+            })
+            .map(|&(_, at)| at);
+        if retrigger.is_none_or(|next| ends < next) {
+            events.push((ends, crate::audio::Event::NoteOff { instrument, note }));
         }
     }
 
-    // explicit rests release whatever the previous note was
-    let mut previous = None;
-    for (i, step) in parsed.iter().enumerate() {
-        if let Some(note) = step.note {
-            previous = Some(note);
-        }
-        if step.off {
-            if let Some(note) = previous {
-                events.push((
-                    (step_len * i as f64) as u64,
-                    crate::audio::Event::NoteOff { note },
-                ));
-            }
-        }
+    // A rest silences its instrument: every voice releases, like MIDI All
+    // Notes Off. With no instrument in effect nothing can be sounding.
+    for (i, step) in parsed.iter().enumerate().filter(|(_, step)| step.off) {
+        let Some(name) = step.instrument.as_deref() else {
+            continue;
+        };
+        let instrument = *index.get(name).with_context(|| {
+            format!(
+                "step {} names instrument `{name}`, which is not defined",
+                i + 1
+            )
+        })?;
+        events.push((
+            (step_len * i as f64) as u64,
+            crate::audio::Event::AllNotesOff { instrument },
+        ));
     }
 
     events.sort_by_key(|(at, _)| *at);

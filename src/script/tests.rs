@@ -27,6 +27,7 @@ fn instrument_with(wave: Vec<f32>) -> Instrument {
         decay: vec![1.0],
         sustain_level: 0.7,
         release: vec![0.7, 0.35],
+        voice_count: 1,
     }
 }
 
@@ -47,7 +48,10 @@ fn flags_clamping() {
 #[test]
 fn flags_dc_offset() {
     // a triangle lifted entirely above zero
-    let report = inspect(&instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)), 0);
+    let report = inspect(
+        &instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)),
+        0,
+    );
     assert!(report.warnings.iter().any(|w| w.contains("DC offset")));
 }
 
@@ -71,7 +75,10 @@ fn flags_zero_release_and_bad_sustain() {
     instrument.sustain_level = 1.5;
     let report = inspect(&instrument, 0);
     assert!(report.warnings.iter().any(|w| w.contains("releaseMS = 0")));
-    assert!(report.warnings.iter().any(|w| w.contains("outside 0.0..1.0")));
+    assert!(report
+        .warnings
+        .iter()
+        .any(|w| w.contains("outside 0.0..1.0")));
 }
 
 // 48000 Hz at 60 bpm makes one beat exactly 48000 samples
@@ -121,11 +128,37 @@ fn duration_sets_the_off_position() {
     assert_eq!(offs, vec![12_000]); // a quarter of one beat
 }
 
+fn offs(patch: &Patch) -> Vec<u64> {
+    patch
+        .timeline
+        .events
+        .iter()
+        .filter(|(_, e)| matches!(e, crate::audio::Event::NoteOff { .. }))
+        .map(|(at, _)| *at)
+        .collect()
+}
+
 #[test]
-fn a_long_note_emits_no_off_because_the_next_note_steals_it() {
-    // duration 3 would end at beat 3, well past the note on beat 1. Left
-    // unclamped that Off would release the *second* note instead.
+fn a_long_note_keeps_its_off_under_a_different_pitch() {
+    // duration 3 ends at beat 3, past the note on beat 1. A different pitch
+    // takes another voice, so the long note still needs its own release.
     let patch = seq(r#"{ { note = 69, instrument = "a", duration = 3 }, { note = 72 } }"#);
+    assert_eq!(offs(&patch), vec![48_000 + 24_000, 3 * 48_000]);
+}
+
+#[test]
+fn a_long_note_keeps_its_off_under_another_instrument() {
+    let patch = seq(
+        r#"{ { note = 69, instrument = "a", duration = 3 }, { note = 69, instrument = "b" } }"#,
+    );
+    assert_eq!(offs(&patch), vec![48_000 + 24_000, 3 * 48_000]);
+}
+
+#[test]
+fn a_long_note_emits_no_off_when_its_pitch_retriggers() {
+    // the retrigger takes this note's voice; left unclamped, the Off at
+    // beat 3 would release the *second* note instead
+    let patch = seq(r#"{ { note = 69, instrument = "a", duration = 3 }, { note = 69 } }"#);
 
     let offs = patch
         .timeline
@@ -141,15 +174,50 @@ fn a_long_note_emits_no_off_because_the_next_note_steals_it() {
 }
 
 #[test]
+fn an_off_landing_on_its_retrigger_is_dropped() {
+    // duration 1 ends on the very sample the retrigger starts. The clamp
+    // keeps only Offs strictly before it, so the retrigger's own Off is the
+    // one that ends the voice
+    let patch = seq(r#"{ { note = 69, instrument = "a", duration = 1 }, { note = 69 } }"#);
+    assert_eq!(offs(&patch), vec![48_000 + 24_000]);
+}
+
+#[test]
+fn an_off_landing_on_a_different_pitch_is_kept() {
+    let patch = seq(r#"{ { note = 69, instrument = "a", duration = 1 }, { note = 72 } }"#);
+    assert_eq!(offs(&patch), vec![48_000, 48_000 + 24_000]);
+}
+
+#[test]
+fn a_rest_releases_every_note_on_its_instrument() {
+    let patch =
+        seq(r#"{ { note = 69, instrument = "a", duration = 3 }, { note = 72 }, { off = true } }"#);
+    let events = &patch.timeline.events;
+    let crate::audio::Event::NoteOn { instrument, .. } = events[0].1 else {
+        panic!("first event should be a note-on");
+    };
+    let rests: Vec<_> = events
+        .iter()
+        .filter(|(_, e)| matches!(e, crate::audio::Event::AllNotesOff { .. }))
+        .collect();
+    assert_eq!(
+        rests,
+        vec![&(2 * 48_000, crate::audio::Event::AllNotesOff { instrument })]
+    );
+}
+
+#[test]
 fn instrument_sticks_until_a_step_changes_it() {
-    let patch = seq(r#"{ { note = 69, instrument = "a" }, { note = 71 }, { note = 72, instrument = "b" } }"#);
+    let patch = seq(
+        r#"{ { note = 69, instrument = "a" }, { note = 71 }, { note = 72, instrument = "b" } }"#,
+    );
     let used: Vec<usize> = patch
         .timeline
         .events
         .iter()
         .filter_map(|(_, e)| match e {
             crate::audio::Event::NoteOn { instrument, .. } => Some(*instrument),
-            crate::audio::Event::NoteOff { .. } => None,
+            crate::audio::Event::NoteOff { .. } | crate::audio::Event::AllNotesOff { .. } => None,
         })
         .collect();
 
@@ -173,6 +241,42 @@ fn an_unknown_instrument_name_is_rejected() {
         .expect("instrument `nope` is not defined");
     assert!(
         format!("{error:#}").contains("not defined"),
+        "unexpected: {error:#}"
+    );
+}
+
+fn with_voices(voice_count: &str) -> anyhow::Result<Patch> {
+    let source = format!(
+        r#"
+        local sequence = require("synth.sequence")
+        local instrument = require("synth.instrument")
+        return sequence.new({{
+            bpm = 60,
+            instruments = {{ a = instrument.new({{ {voice_count} }}) }},
+            steps = {{ {{ note = 69, instrument = "a" }} }},
+        }})
+        "#
+    );
+    load_source(&source, "test", 48000)
+}
+
+#[test]
+fn voice_count_defaults_to_mono() {
+    let patch = with_voices("").unwrap();
+    assert_eq!(patch.timeline.instruments[0].voice_count, 1);
+}
+
+#[test]
+fn voice_count_reaches_the_instrument() {
+    let patch = with_voices("voiceCount = 8").unwrap();
+    assert_eq!(patch.timeline.instruments[0].voice_count, 8);
+}
+
+#[test]
+fn zero_voices_is_rejected() {
+    let error = with_voices("voiceCount = 0").err().expect("0 voices");
+    assert!(
+        format!("{error:#}").contains("voiceCount must be at least 1"),
         "unexpected: {error:#}"
     );
 }
@@ -353,7 +457,7 @@ fn a_reused_pattern_resolves_to_the_same_instrument_each_time() {
         .iter()
         .filter_map(|(_, e)| match e {
             crate::audio::Event::NoteOn { instrument, .. } => Some(*instrument),
-            crate::audio::Event::NoteOff { .. } => None,
+            crate::audio::Event::NoteOff { .. } | crate::audio::Event::AllNotesOff { .. } => None,
         })
         .collect();
 
@@ -488,8 +592,18 @@ fn bakes_the_triangle_landmarks() {
 #[test]
 fn envelope_lengths_follow_the_sample_rate() {
     // 10 ms of attack is a different number of samples per device
-    assert_eq!(one_instrument(10, 48000).timeline.instruments[0].attack.len(), 480);
-    assert_eq!(one_instrument(10, 44100).timeline.instruments[0].attack.len(), 441);
+    assert_eq!(
+        one_instrument(10, 48000).timeline.instruments[0]
+            .attack
+            .len(),
+        480
+    );
+    assert_eq!(
+        one_instrument(10, 44100).timeline.instruments[0]
+            .attack
+            .len(),
+        441
+    );
 }
 
 // the only thing worth asserting about a file the author tunes by ear is

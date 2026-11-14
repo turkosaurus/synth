@@ -15,6 +15,7 @@ const TABLE_SIZE: usize = 2048;
 pub(super) struct InstrumentSpec {
     waveform: mlua::Function,
     envelope: EnvelopeSpec,
+    voice_count: usize,
 }
 
 pub(super) struct EnvelopeSpec {
@@ -34,12 +35,18 @@ impl mlua::FromLua for InstrumentSpec {
         expect_only(
             &table,
             "instrument",
-            &[field::WAVEFORM, field::ENVELOPE, field::KEYBOARD],
+            &[
+                field::WAVEFORM,
+                field::ENVELOPE,
+                field::KEYBOARD,
+                field::VOICE_COUNT,
+            ],
         )?;
         Ok(Self {
             waveform: spec_entry(&table, "instrument", field::WAVEFORM, "function")?,
             // no wrapping: EnvelopeSpec names its own bad field
             envelope: table.get(field::ENVELOPE)?,
+            voice_count: spec_entry(&table, "instrument", field::VOICE_COUNT, "count")?,
         })
     }
 }
@@ -135,6 +142,12 @@ pub(super) fn bake_instrument(
     spec: InstrumentSpec,
     sample_rate: u32,
 ) -> anyhow::Result<(Instrument, Report)> {
+    anyhow::ensure!(
+        spec.voice_count >= 1,
+        "{} must be at least 1, got {}",
+        field::VOICE_COUNT,
+        spec.voice_count
+    );
     let env = spec.envelope;
 
     let mut clamped = 0usize;
@@ -212,6 +225,7 @@ pub(super) fn bake_instrument(
         decay,
         sustain_level: sustain_level as f32,
         release,
+        voice_count: spec.voice_count,
     };
     let report = inspect(&instrument, clamped);
     Ok((instrument, report))

@@ -12,6 +12,12 @@ struct KeyboardConfig {
     octave_down: Vec<String>,
     stop: Vec<String>,
     help: Vec<String>,
+    // camelCase alone would make this `gateMs`; the Lua side spells unit
+    // suffixes in capitals, as envelope's `attackMS` does
+    #[serde(rename = "gateMS")]
+    gate_ms: f64,
+    velocity: u8,
+    octave_range: i32,
 }
 
 /// The physical grid, kept nested because rows and their shifted forms are
@@ -108,6 +114,27 @@ pub(super) fn keymap(
         "keyboard.stop must name at least one key to silence with"
     );
 
+    // a zero gate would end each note on the poll after it starts
+    anyhow::ensure!(
+        config.gate_ms.is_finite() && config.gate_ms > 0.0,
+        "keyboard.gateMS must be a positive number of milliseconds, got {}",
+        config.gate_ms
+    );
+
+    // 0 is MIDI's note-off spelled as a note-on, and above 127 is not MIDI
+    anyhow::ensure!(
+        (1..=127).contains(&config.velocity),
+        "keyboard.velocity must be 1 to 127, got {}",
+        config.velocity
+    );
+
+    // past 10 octaves every shift leaves MIDI's 0..127 note range
+    anyhow::ensure!(
+        (0..=10).contains(&config.octave_range),
+        "keyboard.octaveRange must be 0 to 10, got {}",
+        config.octave_range
+    );
+
     Ok(crate::input::keyboard::Keymap {
         notes,
         template: config.template.name,
@@ -118,5 +145,8 @@ pub(super) fn keymap(
         // may be empty: a layout that would rather not spend a key on it
         // just leaves help unreachable
         help: bindings(config.help, "help")?,
+        gate: std::time::Duration::from_secs_f64(config.gate_ms / 1000.0),
+        velocity: config.velocity,
+        octave_range: config.octave_range,
     })
 }
