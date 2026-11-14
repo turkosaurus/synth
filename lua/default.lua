@@ -14,11 +14,11 @@ return instrument.new({
 		decayMS = 80,
 		decayFunc = slope.linear(),
 		sustainLevel = 0.7, -- 0.0 to 1.0
-		releaseMS = 200,
-		releaseFunc = slope.exponential(4),
+		releaseMS = 800,
+		releaseFunc = slope.exponential(2),
 	}),
 	voiceCount = 4,
 	keyboard = keyboard.new({
-		gateMS = 500, -- note length when the terminal cannot report key release
+		gateMS = 400, -- note length when the terminal cannot report key release
 	}),
 })
