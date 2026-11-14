@@ -18,3 +18,4 @@ jobs:
 
       - uses: jdx/mise-action@v5
       - run: mise run test
+      - run: mise run lint
