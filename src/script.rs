@@ -117,11 +117,8 @@ impl Patch {
     }
 }
 
-/// What `instrument.new({})` gives you, for running with no file.
-const DEFAULT: &str = r#"
-local instrument = require("synth.instrument")
-return instrument.new({})
-"#;
+/// What plays when no file is given.
+const DEFAULT: &str = include_str!("../lua/default.lua");
 
 #[instrument]
 pub(crate) fn load_default(sample_rate: u32) -> anyhow::Result<Patch> {
