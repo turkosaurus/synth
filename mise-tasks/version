@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#MISE description="check Cargo.toml's version against the previous one and the tags: VERSION_BASE=<ref> mise run version"
+#
+# One check, run twice: by test.yml on a PR, so a bad bump fails before merge,
+# and by release.yml after merge, to decide whether to release. Both read the
+# version from HEAD and compare with VERSION_BASE, the git ref holding the
+# previous version. An empty VERSION_BASE means a manual release of the
+# version as it stands, with nothing to compare against.
+#
+# Prints version=X.Y.Z and release=true|false, and appends both to
+# $GITHUB_OUTPUT inside Actions. Every outcome is also an annotation.
+set -euo pipefail
+
+base=${VERSION_BASE:-}
+semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+
+note() { echo "::notice::$*"; }
+fail() {
+    echo "::error::$*"
+    exit 1
+}
+emit() {
+    echo "$1"
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then
+        echo "$1" >>"$GITHUB_OUTPUT"
+    fi
+}
+
+# from a revision, not the working tree, so the previous version is readable
+# without checking it out
+version_of() {
+    git show "$1:Cargo.toml" | yq -p toml -r '.package.version'
+}
+
+if ! new=$(version_of HEAD); then
+    fail "cannot read the version from Cargo.toml"
+fi
+if [[ ! $new =~ $semver ]]; then
+    fail "Cargo.toml version '$new' is not MAJOR.MINOR.PATCH"
+fi
+emit "version=$new"
+
+old=""
+if [ -n "$base" ]; then
+    if ! old=$(version_of "$base"); then
+        fail "cannot read Cargo.toml at $base"
+    fi
+
+    # Cargo.toml changed for another reason, a dependency most likely.
+    # Not a release, not a failure.
+    if [ "$new" = "$old" ]; then
+        emit "release=false"
+        note "version stays $new; nothing to release"
+        exit 0
+    fi
+
+    # exactly one bump from the previous version, which catches typos such
+    # as 0.1.0 to 0.10.0 before they become a permanent tag
+    if [[ ! $old =~ $semver ]]; then
+        fail "previous version '$old' at $base is not MAJOR.MINOR.PATCH"
+    fi
+    IFS=. read -r major minor patch <<<"$old"
+    patch_next="$major.$minor.$((patch + 1))"
+    minor_next="$major.$((minor + 1)).0"
+    major_next="$((major + 1)).0.0"
+    case $new in
+    "$patch_next" | "$minor_next" | "$major_next") ;;
+    *) fail "$old to $new is not one bump; expected $patch_next, $minor_next, or $major_next" ;;
+    esac
+fi
+
+if git rev-parse -q --verify "refs/tags/v$new" >/dev/null; then
+    fail "tag v$new already exists"
+fi
+
+# tags that are not plain MAJOR.MINOR.PATCH are ignored rather than compared
+latest=$(git tag --list 'v*' | sed 's/^v//' | { grep -E "$semver" || true; } | sort -V | tail -1)
+if [ -n "$latest" ]; then
+    highest=$(printf '%s\n%s\n' "$latest" "$new" | sort -V | tail -1)
+    if [ "$highest" != "$new" ]; then
+        fail "$new does not move forward from the latest tag v$latest"
+    fi
+fi
+
+emit "release=true"
+note "v$new is ready to release; latest tag ${latest:+v}${latest:-none}"
