@@ -16,6 +16,8 @@ pub(crate) struct Keymap {
     pub octave_down: Vec<KeyCode>,
     pub stop: Vec<KeyCode>,
     pub help: Vec<KeyCode>,
+    /// How long a note lasts in `Fixed` gating, from `gateMS`.
+    pub gate: Duration,
 }
 
 /// Parses a binding from the keymap. A single character is that key; anything
@@ -44,9 +46,6 @@ pub(crate) fn binding(name: &str) -> Option<KeyCode> {
     })
 }
 
-/// Default note duration when input device cannot (or will not) report key release.
-pub const FIXED_NOTE: Duration = Duration::from_millis(200);
-
 /// A key has no depth to time, so there is no velocity to measure. MIDI
 /// hardware supplies a real one.
 const VELOCITY: u8 = 100;
@@ -56,11 +55,12 @@ const INSTRUMENT: usize = 0;
 
 /// How a note ends. Only the keyboard needs this: a terminal may not report
 /// key release, so in `Fixed` mode the poll loop schedules the note-off
-/// itself. MIDI has real note-off and never comes through here.
+/// itself, after the keymap's `gate`. MIDI has real note-off and never comes
+/// through here.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Gating {
     Held,
-    Fixed(Duration),
+    Fixed,
 }
 
 /// What the view should do about a key the keyboard has seen. Dispatch stays
@@ -206,8 +206,8 @@ impl Keyboard {
         });
 
         // a retrigger replaces its pitch's deadline rather than adding one
-        if let Gating::Fixed(length) = self.gating {
-            self.release_at.insert(note, Instant::now() + length);
+        if let Gating::Fixed = self.gating {
+            self.release_at.insert(note, Instant::now() + self.keymap.gate);
         }
     }
 
@@ -272,7 +272,7 @@ fn shift(note: u8, octave: i32) -> Option<u8> {
 mod tests {
     use super::*;
 
-    fn keyboard(gating: Gating) -> (Keyboard, rtrb::Consumer<Event>) {
+    fn keyboard(gating: Gating, gate: Duration) -> (Keyboard, rtrb::Consumer<Event>) {
         let keymap = Keymap {
             notes: HashMap::from([('a', 60), ('s', 62)]),
             template: None,
@@ -281,6 +281,7 @@ mod tests {
             octave_down: vec![],
             stop: vec![KeyCode::Backspace],
             help: vec![],
+            gate,
         };
         let (tx, rx) = rtrb::RingBuffer::new(16);
         (Keyboard::new(keymap, gating, tx), rx)
@@ -296,7 +297,7 @@ mod tests {
 
     #[test]
     fn fixed_gating_ends_every_note_in_a_chord() {
-        let (mut keyboard, mut rx) = keyboard(Gating::Fixed(Duration::ZERO));
+        let (mut keyboard, mut rx) = keyboard(Gating::Fixed, Duration::ZERO);
         press(&mut keyboard, KeyCode::Char('a'));
         press(&mut keyboard, KeyCode::Char('s'));
         drain(&mut rx);
@@ -317,7 +318,7 @@ mod tests {
 
     #[test]
     fn fixed_gating_waits_for_the_deadline() {
-        let (mut keyboard, mut rx) = keyboard(Gating::Fixed(Duration::from_secs(60)));
+        let (mut keyboard, mut rx) = keyboard(Gating::Fixed, Duration::from_secs(60));
         press(&mut keyboard, KeyCode::Char('a'));
         drain(&mut rx);
 
@@ -327,7 +328,7 @@ mod tests {
 
     #[test]
     fn panic_releases_everything_once() {
-        let (mut keyboard, mut rx) = keyboard(Gating::Held);
+        let (mut keyboard, mut rx) = keyboard(Gating::Held, Duration::ZERO);
         press(&mut keyboard, KeyCode::Char('a'));
         press(&mut keyboard, KeyCode::Char('s'));
         drain(&mut rx);

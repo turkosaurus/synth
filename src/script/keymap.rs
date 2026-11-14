@@ -12,6 +12,10 @@ struct KeyboardConfig {
     octave_down: Vec<String>,
     stop: Vec<String>,
     help: Vec<String>,
+    // camelCase alone would make this `gateMs`; the Lua side spells unit
+    // suffixes in capitals, as envelope's `attackMS` does
+    #[serde(rename = "gateMS")]
+    gate_ms: f64,
 }
 
 /// The physical grid, kept nested because rows and their shifted forms are
@@ -108,6 +112,13 @@ pub(super) fn keymap(
         "keyboard.stop must name at least one key to silence with"
     );
 
+    // a zero gate would end each note on the poll after it starts
+    anyhow::ensure!(
+        config.gate_ms.is_finite() && config.gate_ms > 0.0,
+        "keyboard.gateMS must be a positive number of milliseconds, got {}",
+        config.gate_ms
+    );
+
     Ok(crate::input::keyboard::Keymap {
         notes,
         template: config.template.name,
@@ -118,5 +129,6 @@ pub(super) fn keymap(
         // may be empty: a layout that would rather not spend a key on it
         // just leaves help unreachable
         help: bindings(config.help, "help")?,
+        gate: std::time::Duration::from_secs_f64(config.gate_ms / 1000.0),
     })
 }

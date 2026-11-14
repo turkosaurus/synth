@@ -18,6 +18,8 @@ local defaults = {
 	octaveDown = { "-", "_" },
 	stop = { "escape" }, -- silence everything; must not be empty
 	help = { "/", "?" },
+	-- note length when the terminal cannot report key release
+	gateMS = 200,
 }
 
 -- Grid of character keys in their lowercase and shifted forms.
