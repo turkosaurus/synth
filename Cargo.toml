@@ -28,3 +28,12 @@ features = ["derive"]
 [dependencies.tracing-subscriber]
 version = "0.3.23"
 features = ["env-filter"]
+
+# `pub` should mean "used outside the library", so anything marked pub that
+# main.rs and tests/ cannot reach is flagged
+[lints.rust]
+unreachable_pub = "warn"
+
+# modules live in `name.rs` beside a `name/` directory, never `name/mod.rs`
+[lints.clippy]
+mod_module_files = "warn"

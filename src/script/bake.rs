@@ -221,14 +221,14 @@ pub(super) fn bake_instrument(
 /// decides whether to log them, print them, or fail on them.
 #[derive(Debug)]
 pub struct Report {
-    pub peak: f32,
-    pub dc: f32,
-    pub seam: f32,
-    pub clamped: usize,
-    pub attack: usize,
-    pub decay: usize,
-    pub release: usize,
-    pub sustain_level: f32,
+    pub(crate) peak: f32,
+    pub(crate) dc: f32,
+    pub(crate) seam: f32,
+    pub(crate) clamped: usize,
+    pub(crate) attack: usize,
+    pub(crate) decay: usize,
+    pub(crate) release: usize,
+    pub(crate) sustain_level: f32,
     pub warnings: Vec<String>,
 }
 

@@ -8,7 +8,7 @@ description = "lua stays in script/, cpal stays in audio/device.rs"
 run = '''
 set -eu
 failed=0
-for rule in "mlua:src/script/" "cpal:src/audio/device.rs"; do
+for rule in "mlua:src/script" "cpal:src/audio/device.rs"; do
   name=${rule%%:*}
   allowed=${rule#*:}
   if offenders=$(grep -rln "use $name\|$name::" src/ | grep -v "^$allowed"); then
@@ -23,6 +23,14 @@ exit $failed
 [tasks.test]
 depends = ["test:rust", "test:separation", "test:example"]
 description = "run all tests: cargo tests and the example patch lint"
+
+[tasks.lint]
+description = "clippy on every target; any warning fails"
+run = "cargo clippy --all-targets -- -D warnings"
+
+[tasks."lint:pedantic"]
+description = "clippy pedantic, for review; reports but never fails"
+run = "cargo clippy --all-targets -- -W clippy::pedantic"
 
 [tasks."test:rust"]
 description = "cargo tests"

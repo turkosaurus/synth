@@ -49,7 +49,7 @@ impl Stats {
     /// How long one callback has before the buffer it was handed is late.
     /// Polyphony needs this as a number to know what it can afford, and
     /// asking must not disturb the gauges, so this does not reset.
-    pub fn budget_us(&self) -> u32 {
+    pub(crate) fn budget_us(&self) -> u32 {
         self.budget_us.load(Ordering::Relaxed)
     }
 
@@ -89,8 +89,8 @@ pub struct Snapshot {
 
 /// A negotiated output device, ready to build a stream on.
 pub struct Output {
-    pub device: cpal::Device,
-    pub config: cpal::SupportedStreamConfig,
+    pub(crate) device: cpal::Device,
+    pub(crate) config: cpal::SupportedStreamConfig,
     pub sample_rate: u32,
     pub channels: usize,
 }

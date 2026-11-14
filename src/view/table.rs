@@ -18,7 +18,7 @@ fn styled() -> Table {
 /// Headerless key/value table. The section label above it does the job a
 /// header row would, without spending a line on it. `numeric` right-aligns
 /// the value column, which reads well for figures and badly for text.
-pub fn pairs(label: &str, rows: &[(&str, String)], numeric: bool) {
+pub(crate) fn pairs(label: &str, rows: &[(&str, String)], numeric: bool) {
     let mut table = styled();
     for (key, value) in rows {
         let value = Cell::new(value);
@@ -36,7 +36,7 @@ pub fn pairs(label: &str, rows: &[(&str, String)], numeric: bool) {
 }
 
 /// Column table. First column stays left-aligned; the rest are numeric and right-aligned.
-pub fn columns(label: &str, headers: &[&str], rows: Vec<Vec<String>>) {
+pub(crate) fn columns(label: &str, headers: &[&str], rows: Vec<Vec<String>>) {
     let mut table = styled();
     table.set_header(headers.iter().map(Cell::new).collect::<Vec<_>>());
     for row in rows {
@@ -58,7 +58,7 @@ pub fn columns(label: &str, headers: &[&str], rows: Vec<Vec<String>>) {
     println!("{table}");
 }
 
-pub fn commas(n: usize) -> String {
+pub(crate) fn commas(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (index, digit) in digits.char_indices() {

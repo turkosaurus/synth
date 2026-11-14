@@ -158,7 +158,7 @@ impl Player {
         }
     }
 
-    pub fn live(
+    pub(crate) fn live(
         instruments: Vec<Arc<Instrument>>,
         freqs: Freqs,
         events: rtrb::Consumer<Event>,
@@ -176,7 +176,7 @@ impl Player {
         }
     }
 
-    pub fn sounding(&self) -> Option<u8> {
+    pub(crate) fn sounding(&self) -> Option<u8> {
         self.sounding
     }
 
@@ -261,7 +261,7 @@ impl Player {
 /// What one callback produced. Accumulated in locals so the atomics are
 /// touched once per callback instead of once per sample.
 #[derive(Debug, Default, PartialEq)]
-pub struct Tally {
+pub(super) struct Tally {
     pub frames: u32,
     pub clips: u64,
     pub peak: f32,

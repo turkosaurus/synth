@@ -1,4 +1,4 @@
-pub mod meter;
+pub(crate) mod meter;
 pub mod report;
-pub mod table;
+pub(crate) mod table;
 pub mod tui;
