@@ -86,6 +86,12 @@ fn update(
     let mut help = false;
 
     loop {
+        // SIGTERM and SIGHUP only set a flag; leaving here restores the
+        // terminal through the same path as the quit key
+        if crate::terminal::interrupted() {
+            return Ok(());
+        }
+
         // one snapshot() per frame gauges reset,
         // so widgets must share one capture
         let snap = stats.snapshot();
@@ -248,7 +254,11 @@ fn draw(frame: &mut Frame, view: &View) {
     // peak is logarithmic, so the thresholds are dB
     frame.render_widget(
         bar(
-            format!("gain {} dB", meter::db_label(peak.level())),
+            format!(
+                "gain {} dB  hold {} dB",
+                meter::db_label(peak.level()),
+                meter::db_label(peak.hold()),
+            ),
             peak.level(),
             0.8,
             0.99,
