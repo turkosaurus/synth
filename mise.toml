@@ -4,14 +4,15 @@ rust = "1.98"
 yq = "4"
 
 [tasks."test:separation"]
-description = "lua stays in script/, cpal stays in audio/device.rs"
+description = "lua stays in script.rs and script/, cpal stays in audio/device.rs"
 run = '''
 set -eu
 failed=0
-for rule in "mlua:src/script" "cpal:src/audio/device.rs"; do
+# allowed paths are extended regexes, anchored at the start
+for rule in 'mlua:src/script(\.rs|/)' 'cpal:src/audio/device\.rs'; do
   name=${rule%%:*}
   allowed=${rule#*:}
-  if offenders=$(grep -rln "use $name\|$name::" src/ | grep -v "^$allowed"); then
+  if offenders=$(grep -rln "use $name\|$name::" src/ | grep -vE "^($allowed)"); then
     echo "$name must stay in $allowed, found in:" >&2
     echo "$offenders" >&2
     failed=1

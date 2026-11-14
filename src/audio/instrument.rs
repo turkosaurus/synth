@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 // timbre and envelope
 pub struct Instrument {
-    pub wave: Vec<f32>,     // full waveform cycle, -1.0..1.0
+    pub wave: Vec<f32>,            // full waveform cycle, -1.0..1.0
     pub(crate) attack: Vec<f32>,   // 0.0..1.0
     pub(crate) decay: Vec<f32>,    // 1.0..sustain_level
     pub(crate) sustain_level: f32, // 0.0..1.0

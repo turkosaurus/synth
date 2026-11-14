@@ -58,37 +58,37 @@ mod module {
     pub(super) const KEYBOARD: &str = "synth.keyboard";
 }
 
-pub(super) mod field {
-    pub(crate) const REQUIRE: &str = "require";
-    pub(crate) const NEW: &str = "new";
+mod field {
+    pub(super) const REQUIRE: &str = "require";
+    pub(super) const NEW: &str = "new";
 
-    pub(crate) const WAVEFORM: &str = "waveform";
-    pub(crate) const ENVELOPE: &str = "envelope";
-    pub(crate) const KEYBOARD: &str = "keyboard";
+    pub(super) const WAVEFORM: &str = "waveform";
+    pub(super) const ENVELOPE: &str = "envelope";
+    pub(super) const KEYBOARD: &str = "keyboard";
 
-    pub(crate) const ATTACK_MS: &str = "attackMS";
-    pub(crate) const ATTACK_FUNC: &str = "attackFunc";
-    pub(crate) const DECAY_MS: &str = "decayMS";
-    pub(crate) const DECAY_FUNC: &str = "decayFunc";
-    pub(crate) const SUSTAIN_LEVEL: &str = "sustainLevel";
-    pub(crate) const RELEASE_MS: &str = "releaseMS";
-    pub(crate) const RELEASE_FUNC: &str = "releaseFunc";
+    pub(super) const ATTACK_MS: &str = "attackMS";
+    pub(super) const ATTACK_FUNC: &str = "attackFunc";
+    pub(super) const DECAY_MS: &str = "decayMS";
+    pub(super) const DECAY_FUNC: &str = "decayFunc";
+    pub(super) const SUSTAIN_LEVEL: &str = "sustainLevel";
+    pub(super) const RELEASE_MS: &str = "releaseMS";
+    pub(super) const RELEASE_FUNC: &str = "releaseFunc";
 
-    pub(crate) const BPM: &str = "bpm";
-    pub(crate) const DIVISION: &str = "division";
-    pub(crate) const INSTRUMENTS: &str = "instruments";
-    pub(crate) const STEPS: &str = "steps";
-    pub(crate) const PATTERNS: &str = "patterns";
-    pub(crate) const CHAIN: &str = "chain";
-    pub(crate) const LOOP: &str = "loop";
+    pub(super) const BPM: &str = "bpm";
+    pub(super) const DIVISION: &str = "division";
+    pub(super) const INSTRUMENTS: &str = "instruments";
+    pub(super) const STEPS: &str = "steps";
+    pub(super) const PATTERNS: &str = "patterns";
+    pub(super) const CHAIN: &str = "chain";
+    pub(super) const LOOP: &str = "loop";
 
-    pub(crate) const FREQUENCY: &str = "frequency";
+    pub(super) const FREQUENCY: &str = "frequency";
 
     // Lua's own, not ours: these can never be renamed, but a typo breaks
     // identically, and `PATH` is also written to
-    pub(crate) const PACKAGE: &str = "package";
-    pub(crate) const PRELOAD: &str = "preload";
-    pub(crate) const PATH: &str = "path";
+    pub(super) const PACKAGE: &str = "package";
+    pub(super) const PRELOAD: &str = "preload";
+    pub(super) const PATH: &str = "path";
 }
 
 /// A loaded file: a playable timeline plus one report per instrument in it.
