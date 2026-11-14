@@ -1,7 +1,14 @@
 [tools]
-rust = "1.98"
+# clippy is not in every rustup profile; CI's minimal install lacks it
+rust = { version = "1.98", components = "clippy" }
 # the release workflow reads Cargo.toml's version with it
 yq = "4"
+
+# cargo-edit compiles for minutes, so it is fetched here on first use rather
+# than listed in [tools], where every CI run would install it
+[tasks.bump]
+description = "bump the crate version in Cargo.toml and Cargo.lock: mise run bump <patch|minor|major>"
+run = "mise exec cargo:cargo-edit@0.13 -- cargo set-version --bump"
 
 [tasks."test:separation"]
 description = "lua stays in script.rs and script/, cpal stays in audio/device.rs"

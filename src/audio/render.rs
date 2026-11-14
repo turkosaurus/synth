@@ -134,8 +134,7 @@ pub struct Player {
     feed: Feed,
     sample_rate: f32,
     note: Option<Note>,
-    /// which note is sounding, so NoteOff can be matched and a view can
-    /// report it
+    /// which note is sounding, so NoteOff can be matched
     sounding: Option<u8>,
     clock: u64,
     total_samples: u64,
@@ -176,7 +175,10 @@ impl Player {
         }
     }
 
-    pub(crate) fn sounding(&self) -> Option<u8> {
+    // the player lives on the audio thread, so only tests can ask it; the
+    // TUI reports the keyboard's view of the sounding note instead
+    #[cfg(test)]
+    fn sounding(&self) -> Option<u8> {
         self.sounding
     }
 
