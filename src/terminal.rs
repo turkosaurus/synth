@@ -15,7 +15,7 @@ static INTERRUPTED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
 /// Whether a termination signal has arrived. False on a platform with no
 /// handler registered, which leaves the old behaviour untouched.
-pub fn interrupted() -> bool {
+pub(crate) fn interrupted() -> bool {
     INTERRUPTED
         .get()
         .is_some_and(|flag| flag.load(Ordering::Relaxed))
@@ -23,7 +23,7 @@ pub fn interrupted() -> bool {
 
 /// Put the terminal into the state an interactive view needs, and report
 /// whether gating ended up Held.
-pub fn enter(gating: Gating) -> io::Result<()> {
+pub(crate) fn enter(gating: Gating) -> io::Result<()> {
     watch_signals()?;
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), terminal::EnterAlternateScreen)?;
@@ -56,7 +56,7 @@ fn watch_signals() -> io::Result<()> {
 
 /// Reverse of [`enter`], in reverse order. Errors are discarded: on the way
 /// out there is nothing useful to do about them.
-pub fn leave(gating: Gating) {
+pub(crate) fn leave(gating: Gating) {
     let _ = disable_gating(gating);
     let _ = execute!(io::stdout(), terminal::LeaveAlternateScreen);
     let _ = terminal::disable_raw_mode();

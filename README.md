@@ -20,7 +20,7 @@ mise run tui
 
 Except where necessary to preserve a non-blocking, non-allocating audio pipeline, care is taken to implement [the ELM architecture](https://guide.elm-lang.org/architecture/), separating data, mutation, and presentation.
 
-That exception is held by the module layout rather than by discipline, and `mise run test` enforces it: `mlua` may appear only under [`script/`](./src/script/), and `cpal` only in [`device.rs`](./src/audio/device.rs). [`render.rs`](./src/audio/render.rs) is therefore exactly what the audio callback executes, with no language runtime and no device within reach.
+That exception is held by the module layout rather than by discipline, and `mise run test` enforces it: `mlua` may appear only in [`script.rs`](./src/script.rs) and under [`script/`](./src/script/), and `cpal` only in [`device.rs`](./src/audio/device.rs). [`render.rs`](./src/audio/render.rs) is therefore exactly what the audio callback executes, with no language runtime and no device within reach.
 
 Goals:
 - fast: bad fidelity sounds cool, bad timing sounds *wrong*

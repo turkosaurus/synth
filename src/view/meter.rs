@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 /// Bottom of the scale. Amplitudes at or below this read as empty.
-pub const FLOOR_DB: f32 = -60.0;
+pub(crate) const FLOOR_DB: f32 = -60.0;
 
 /// How long a new maximum holds before the marker starts to fall.
 const HOLD: Duration = Duration::from_millis(560);
@@ -17,7 +17,7 @@ const FALL: Duration = Duration::from_millis(280);
 ///
 /// Meters on real gear are logarithmic because hearing is: -20 dBFS is a
 /// healthy signal that a linear bar would draw one tenth full.
-pub fn scale(amplitude: f32) -> f32 {
+pub(crate) fn scale(amplitude: f32) -> f32 {
     if amplitude <= 0.0 {
         return 0.0;
     }
@@ -26,7 +26,7 @@ pub fn scale(amplitude: f32) -> f32 {
 }
 
 /// Inverse of [`scale`], for labelling a bar in the units it is drawn in.
-pub fn db(scaled: f32) -> f32 {
+pub(crate) fn db(scaled: f32) -> f32 {
     FLOOR_DB + scaled.clamp(0.0, 1.0) * -FLOOR_DB
 }
 
@@ -35,7 +35,7 @@ pub fn db(scaled: f32) -> f32 {
 /// An empty bar reads -∞ rather than [`FLOOR_DB`]: everything from silence
 /// up to a thousandth of full scale lands on 0.0, and printing -60.0 would
 /// claim the quietest audible signal when there may be none at all.
-pub fn db_label(scaled: f32) -> String {
+pub(crate) fn db_label(scaled: f32) -> String {
     if scaled <= 0.0 {
         return format!("{:>5}", "-∞");
     }
@@ -51,7 +51,7 @@ const HISTORY: usize = 240;
 /// A fixed ceiling, so bars are absolute: a given height always means the
 /// same level. Letting the chart scale to its own contents would draw a
 /// quiet passage as tall as a loud one.
-pub const STEPS: u64 = 100;
+pub(crate) const STEPS: u64 = 100;
 
 /// Per-frame level, newest first, with the frames that clipped marked.
 ///
@@ -62,14 +62,14 @@ pub const STEPS: u64 = 100;
 /// `RenderDirection::RightToLeft`, which draws index 0 at the right edge
 /// and drops whatever does not fit from the far end.
 #[derive(Debug, Default)]
-pub struct Activity {
+pub(crate) struct Activity {
     seen: u64,
     history: std::collections::VecDeque<(u64, bool)>,
 }
 
 impl Activity {
     /// Fold in one frame: a scale position, and the cumulative clip count.
-    pub fn update(&mut self, scaled: f32, clips: u64) {
+    pub(crate) fn update(&mut self, scaled: f32, clips: u64) {
         // saturating, so a counter that somehow went backwards reads as a
         // clean frame rather than wrapping to a vast spike
         let clipped = clips.saturating_sub(self.seen) > 0;
@@ -81,13 +81,13 @@ impl Activity {
     }
 
     /// Clips since the stream started.
-    pub fn clips(&self) -> u64 {
+    pub(crate) fn clips(&self) -> u64 {
         self.seen
     }
 
     /// Newest first, as (height, clipped) pairs. Deliberately not a
     /// ratatui type: the arithmetic here stays testable without a terminal.
-    pub fn history(&self) -> impl Iterator<Item = (u64, bool)> + '_ {
+    pub(crate) fn history(&self) -> impl Iterator<Item = (u64, bool)> + '_ {
         self.history.iter().copied()
     }
 }
@@ -98,7 +98,7 @@ impl Activity {
 /// Both positions are scale fractions, not amplitudes: the ballistics run
 /// in the decibel domain, which is how a PPM's decay is specified.
 #[derive(Debug, Default, PartialEq)]
-pub struct Meter {
+pub(crate) struct Meter {
     level: f32,
     hold: f32,
     /// time left before the marker begins to fall
@@ -107,7 +107,7 @@ pub struct Meter {
 
 impl Meter {
     /// Fold in one reading, `dt` after the last.
-    pub fn update(&mut self, scaled: f32, dt: Duration) {
+    pub(crate) fn update(&mut self, scaled: f32, dt: Duration) {
         let scaled = scaled.clamp(0.0, 1.0);
         let fall = dt.as_secs_f32() / FALL.as_secs_f32();
 
@@ -136,11 +136,11 @@ impl Meter {
         }
     }
 
-    pub fn level(&self) -> f32 {
+    pub(crate) fn level(&self) -> f32 {
         self.level
     }
 
-    pub fn hold(&self) -> f32 {
+    pub(crate) fn hold(&self) -> f32 {
         self.hold
     }
 }

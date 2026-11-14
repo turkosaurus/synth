@@ -13,13 +13,13 @@ use keymap::keymap;
 #[cfg(test)]
 mod tests;
 
-const LUA_SLOPE: &str = include_str!("../../lua/slope.lua");
-const LUA_WAVE: &str = include_str!("../../lua/wave.lua");
-const LUA_ENVELOPE: &str = include_str!("../../lua/envelope.lua");
-const LUA_TUNING: &str = include_str!("../../lua/tuning.lua");
-const LUA_INSTRUMENT: &str = include_str!("../../lua/instrument.lua");
-const LUA_SEQUENCE: &str = include_str!("../../lua/sequence.lua");
-const LUA_KEYBOARD: &str = include_str!("../../lua/keyboard.lua");
+const LUA_SLOPE: &str = include_str!("../lua/slope.lua");
+const LUA_WAVE: &str = include_str!("../lua/wave.lua");
+const LUA_ENVELOPE: &str = include_str!("../lua/envelope.lua");
+const LUA_TUNING: &str = include_str!("../lua/tuning.lua");
+const LUA_INSTRUMENT: &str = include_str!("../lua/instrument.lua");
+const LUA_SEQUENCE: &str = include_str!("../lua/sequence.lua");
+const LUA_KEYBOARD: &str = include_str!("../lua/keyboard.lua");
 
 // require checks package.preload before any filesystem search, so the
 // embedded libraries resolve with no cwd dependency
@@ -49,46 +49,46 @@ fn lua_register(lua: &mlua::Lua) -> anyhow::Result<()> {
 /// Names the embedded modules are registered under. Used both to register
 /// them and to require them, so the two cannot drift.
 mod module {
-    pub const SLOPE: &str = "synth.slope";
-    pub const WAVE: &str = "synth.wave";
-    pub const ENVELOPE: &str = "synth.envelope";
-    pub const TUNING: &str = "synth.tuning";
-    pub const INSTRUMENT: &str = "synth.instrument";
-    pub const SEQUENCE: &str = "synth.sequence";
-    pub const KEYBOARD: &str = "synth.keyboard";
+    pub(super) const SLOPE: &str = "synth.slope";
+    pub(super) const WAVE: &str = "synth.wave";
+    pub(super) const ENVELOPE: &str = "synth.envelope";
+    pub(super) const TUNING: &str = "synth.tuning";
+    pub(super) const INSTRUMENT: &str = "synth.instrument";
+    pub(super) const SEQUENCE: &str = "synth.sequence";
+    pub(super) const KEYBOARD: &str = "synth.keyboard";
 }
 
-pub(super) mod field {
-    pub const REQUIRE: &str = "require";
-    pub const NEW: &str = "new";
+mod field {
+    pub(super) const REQUIRE: &str = "require";
+    pub(super) const NEW: &str = "new";
 
-    pub const WAVEFORM: &str = "waveform";
-    pub const ENVELOPE: &str = "envelope";
-    pub const KEYBOARD: &str = "keyboard";
+    pub(super) const WAVEFORM: &str = "waveform";
+    pub(super) const ENVELOPE: &str = "envelope";
+    pub(super) const KEYBOARD: &str = "keyboard";
 
-    pub const ATTACK_MS: &str = "attackMS";
-    pub const ATTACK_FUNC: &str = "attackFunc";
-    pub const DECAY_MS: &str = "decayMS";
-    pub const DECAY_FUNC: &str = "decayFunc";
-    pub const SUSTAIN_LEVEL: &str = "sustainLevel";
-    pub const RELEASE_MS: &str = "releaseMS";
-    pub const RELEASE_FUNC: &str = "releaseFunc";
+    pub(super) const ATTACK_MS: &str = "attackMS";
+    pub(super) const ATTACK_FUNC: &str = "attackFunc";
+    pub(super) const DECAY_MS: &str = "decayMS";
+    pub(super) const DECAY_FUNC: &str = "decayFunc";
+    pub(super) const SUSTAIN_LEVEL: &str = "sustainLevel";
+    pub(super) const RELEASE_MS: &str = "releaseMS";
+    pub(super) const RELEASE_FUNC: &str = "releaseFunc";
 
-    pub const BPM: &str = "bpm";
-    pub const DIVISION: &str = "division";
-    pub const INSTRUMENTS: &str = "instruments";
-    pub const STEPS: &str = "steps";
-    pub const PATTERNS: &str = "patterns";
-    pub const CHAIN: &str = "chain";
-    pub const LOOP: &str = "loop";
+    pub(super) const BPM: &str = "bpm";
+    pub(super) const DIVISION: &str = "division";
+    pub(super) const INSTRUMENTS: &str = "instruments";
+    pub(super) const STEPS: &str = "steps";
+    pub(super) const PATTERNS: &str = "patterns";
+    pub(super) const CHAIN: &str = "chain";
+    pub(super) const LOOP: &str = "loop";
 
-    pub const FREQUENCY: &str = "frequency";
+    pub(super) const FREQUENCY: &str = "frequency";
 
     // Lua's own, not ours: these can never be renamed, but a typo breaks
     // identically, and `PATH` is also written to
-    pub const PACKAGE: &str = "package";
-    pub const PRELOAD: &str = "preload";
-    pub const PATH: &str = "path";
+    pub(super) const PACKAGE: &str = "package";
+    pub(super) const PRELOAD: &str = "preload";
+    pub(super) const PATH: &str = "path";
 }
 
 /// A loaded file: a playable timeline plus one report per instrument in it.
@@ -96,14 +96,14 @@ pub struct Patch {
     pub timeline: crate::audio::Timeline,
     /// hz for every midi note, baked from Lua so temperament stays there
     pub freqs: Vec<f32>,
-    pub keymap: crate::input::keyboard::Keymap,
+    pub(crate) keymap: crate::input::keyboard::Keymap,
     pub bpm: f32,
-    pub division: f32,
+    pub(crate) division: f32,
     pub step_ms: f32,
-    pub steps: usize,
-    pub patterns: usize,
-    pub chain: usize,
-    pub loops: usize,
+    pub(crate) steps: usize,
+    pub(crate) patterns: usize,
+    pub(crate) chain: usize,
+    pub(crate) loops: usize,
     pub reports: Vec<(String, Report)>,
 }
 
@@ -123,7 +123,7 @@ return instrument.new({})
 "#;
 
 #[instrument]
-pub fn load_default(sample_rate: u32) -> anyhow::Result<Patch> {
+pub(crate) fn load_default(sample_rate: u32) -> anyhow::Result<Patch> {
     load_source(DEFAULT, "(default)", sample_rate)
 }
 
@@ -141,7 +141,7 @@ pub fn load(path: &std::path::Path, sample_rate: u32) -> anyhow::Result<Patch> {
 
 /// Same as [`load`] but from a string, so sequences can be tested without
 /// fixture files on disk.
-pub fn load_source(source: &str, name: &str, sample_rate: u32) -> anyhow::Result<Patch> {
+pub(crate) fn load_source(source: &str, name: &str, sample_rate: u32) -> anyhow::Result<Patch> {
     load_in(source, name, sample_rate, None)
 }
 
