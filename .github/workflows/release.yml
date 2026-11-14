@@ -2,6 +2,12 @@ name: release
 
 on:
   workflow_dispatch:
+    inputs:
+      bump:
+        description: "part of the version to bump and commit to main first; none releases Cargo.toml as it stands"
+        type: choice
+        options: [none, patch, minor, major]
+        default: none
   push:
     branches: [main]
     paths: ["Cargo.toml"]
@@ -9,18 +15,51 @@ on:
 permissions:
   contents: write
 
+# a bump commits to main, so two releases at once would race to push
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   version:
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.check.outputs.release }}
       version: ${{ steps.check.outputs.version }}
+      sha: ${{ steps.check.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # parent commit
 
       - uses: jdx/mise-action@v5
+
+      # pushed with the workflow token, which by design starts no other
+      # workflow, so this run carries the release through itself
+      - if: github.event_name == 'workflow_dispatch' && inputs.bump != 'none'
+        shell: bash
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::a bump commits to main, so run it from main, not $GITHUB_REF"
+            exit 1
+          fi
+
+          from=$(yq -p toml -r '.package.version' Cargo.toml)
+          mise run bump "$BUMP"
+          to=$(yq -p toml -r '.package.version' Cargo.toml)
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "release v$to"
+          if ! git push origin HEAD:main; then
+            echo "::error::could not push the v$to bump to main; it may have moved since this run started"
+            exit 1
+          fi
+          echo "::notice::bumped $BUMP from $from to $to and pushed to main"
 
       - id: check
         shell: bash
@@ -32,6 +71,9 @@ jobs:
           version_of() {
             git show "$1:Cargo.toml" | yq -p toml -r '.package.version'
           }
+
+          # HEAD is the bump commit when one was made above
+          echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
 
           new=$(version_of HEAD)
           # a manual run has no bump to compare against, so it releases the
@@ -78,6 +120,8 @@ jobs:
     needs: version
     if: needs.version.outputs.release == 'true'
     uses: ./.github/workflows/test.yml
+    with:
+      ref: ${{ needs.version.outputs.sha }}
 
   build:
     needs: [version, test]
@@ -91,6 +135,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
 
       # cpal links the system audio API.
       # macOS and Windows ship their audio APIs;
@@ -124,8 +170,9 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
+          SHA: ${{ needs.version.outputs.sha }}
         run: |
           gh release create "v$VERSION" dist/* \
-            --target "$GITHUB_SHA" \
+            --target "$SHA" \
             --generate-notes \
             --repo "$GITHUB_REPOSITORY"

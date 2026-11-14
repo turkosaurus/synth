@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_call:
+    inputs:
+      # a release that bumped the version tests the bump commit, which is
+      # newer than the commit the run started from
+      ref:
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -14,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
       - uses: jdx/mise-action@v5
