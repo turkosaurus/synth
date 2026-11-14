@@ -6,7 +6,7 @@ use std::time::Duration;
 use tracing::debug;
 use tracing_subscriber::fmt::format::FmtSpan;
 
-use synth::input::keyboard::Gating;
+use synth::input::{Gating, FIXED_NOTE};
 use synth::{audio, script, terminal, view};
 
 /// synth | rust+luaJIT terminal synthesizer
@@ -65,7 +65,7 @@ fn run() -> anyhow::Result<ExitCode> {
     let gating = if terminal::reports_key_release() {
         Gating::Held
     } else {
-        Gating::Fixed(synth::input::keyboard::FIXED_NOTE)
+        Gating::Fixed(FIXED_NOTE)
     };
     match args.command {
         Commands::Doctor { path, rate } => {

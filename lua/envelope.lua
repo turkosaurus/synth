@@ -10,7 +10,7 @@ local envelopeDefaults = {
 	decayMS = 0,
 	decayFunc = slope.linear(),
 	sustainLevel = 1, -- 0.0 to 1.0
-	releaseMS = 15,
+	releaseMS = 300,
 	releaseFunc = slope.linear(),
 }
 

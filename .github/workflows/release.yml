@@ -1,68 +1,103 @@
 name: release
 
+# Versions are bumped only by PR (mise run bump <part>), where test.yml checks
+# them. Merging such a PR releases it: the tag follows Cargo.toml.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: ["Cargo.toml"]
+  # retries a failed release of the version Cargo.toml has now
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the parent commit and every tag
+
+      - name: Install tools
+        uses: jdx/mise-action@v5
+
+      # a push compares with the commit before it; a manual retry has nothing
+      # to compare with, and releases the version as it stands
+      - name: Check version
+        id: check
+        env:
+          VERSION_BASE: ${{ github.event_name == 'push' && 'HEAD^' || '' }}
+        run: mise run version
+
+  test:
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    uses: ./.github/workflows/test.yml
+
   build:
+    needs: [version, test]
     strategy:
-      # one leg failing should not hide whether the others work
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { os: macos-latest, target: aarch64-apple-darwin }
-          - { os: macos-13, target: x86_64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out
+        uses: actions/checkout@v7
 
-      # cpal links the system audio api. macos and windows ship theirs;
-      # only linux needs the headers installed.
-      - if: runner.os == 'Linux'
+      # cpal links the system audio API.
+      # macOS and Windows ship their audio APIs;
+      # only Linux needs the headers installed.
+      - name: Install ALSA headers
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
-      # cargo resolves semver for dependencies, but nothing bumps our own
-      # version, so the tag and Cargo.toml can drift. check them once.
-      - if: runner.os == 'Linux'
+      - name: Build ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package ${{ matrix.target }}
         shell: bash
-        run: |
-          set -euo pipefail
-          crate=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
-          if [ "v$crate" != "$GITHUB_REF_NAME" ]; then
-            echo "tag $GITHUB_REF_NAME does not match Cargo.toml $crate" >&2
-            exit 1
-          fi
-
-      - run: cargo build --release --target ${{ matrix.target }}
-
-      - shell: bash
         run: |
           set -euo pipefail
           dir=target/${{ matrix.target }}/release
           if [ "$RUNNER_OS" = Windows ]; then bin=synth.exe; else bin=synth; fi
           tar -czf synth-${{ matrix.target }}.tar.gz -C "$dir" "$bin"
 
-      - uses: actions/upload-artifact@v7
+      - name: Upload ${{ matrix.target }}
+        uses: actions/upload-artifact@v7
         with:
           name: synth-${{ matrix.target }}
           path: synth-${{ matrix.target }}.tar.gz
 
   release:
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
+      - name: Download builds
+        uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           path: dist
 
-      # gh is preinstalled on the runner, so no third party action is needed
-      - env:
+      - name: Create release v${{ needs.version.outputs.version }}
+        env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --repo "$GITHUB_REPOSITORY"
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" dist/* \
+            --target "$GITHUB_SHA" \
+            --generate-notes \
+            --repo "$GITHUB_REPOSITORY"

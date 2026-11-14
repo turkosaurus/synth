@@ -302,7 +302,7 @@ impl Player {
         }
     }
 
-    pub fn live(
+    pub(crate) fn live(
         instruments: Vec<Arc<Instrument>>,
         freqs: Freqs,
         events: rtrb::Consumer<Event>,
@@ -406,11 +406,18 @@ impl Player {
 /// What one callback produced. Accumulated in locals so the atomics are
 /// touched once per callback instead of once per sample.
 #[derive(Debug, Default, PartialEq)]
-pub struct Tally {
+pub(super) struct Tally {
     pub frames: u32,
     pub clips: u64,
     pub peak: f32,
 }
+
+/// Full scale. A sample beyond this cannot be represented and is clipped.
+///
+/// One mono voice can reach this but not pass it: the wavetable is clamped
+/// at bake, and envelope and velocity only ever scale it down. Summed
+/// voices are what will cross it.
+const CLIP: f32 = 1.0;
 
 /// Lay one sample per frame across every channel. Split out of the callback
 /// so the interleaving can be tested without an audio device.
@@ -419,7 +426,7 @@ pub(super) fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tal
 
     for frame in out.chunks_mut(channels) {
         let sample = player.next();
-        if sample.abs() > 1.0 {
+        if sample.abs() > CLIP {
             tally.clips += 1;
         }
         tally.peak = tally.peak.max(sample.abs());

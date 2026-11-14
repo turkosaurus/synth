@@ -41,14 +41,16 @@ impl Stats {
         self.load_bits.fetch_max(load.to_bits(), Ordering::Relaxed);
     }
 
-    fn peak(&self) -> f32 {
-        f32::from_bits(self.peak_bits.load(Ordering::Relaxed))
+    // a gauge like the others: a lifetime max would pin at the loudest
+    // moment of the session and never fall, which no meter can read
+    fn take_peak(&self) -> f32 {
+        f32::from_bits(self.peak_bits.swap(0, Ordering::Relaxed))
     }
 
     /// How long one callback has before the buffer it was handed is late.
     /// Polyphony needs this as a number to know what it can afford, and
     /// asking must not disturb the gauges, so this does not reset.
-    pub fn budget_us(&self) -> u32 {
+    pub(crate) fn budget_us(&self) -> u32 {
         self.budget_us.load(Ordering::Relaxed)
     }
 
@@ -63,7 +65,7 @@ impl Stats {
             clips: self.clips.load(Ordering::Relaxed),
             overruns: self.overruns.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
-            peak: self.peak(),
+            peak: self.take_peak(),
             budget_us: self.budget_us(),
             callback_us_max: self.callback_us_max.swap(0, Ordering::Relaxed),
             load: f32::from_bits(self.load_bits.swap(0, Ordering::Relaxed)),
@@ -88,8 +90,8 @@ pub struct Snapshot {
 
 /// A negotiated output device, ready to build a stream on.
 pub struct Output {
-    pub device: cpal::Device,
-    pub config: cpal::SupportedStreamConfig,
+    pub(crate) device: cpal::Device,
+    pub(crate) config: cpal::SupportedStreamConfig,
     pub sample_rate: u32,
     pub channels: usize,
 }

@@ -11,6 +11,7 @@ struct KeyboardConfig {
     octave_up: Vec<String>,
     octave_down: Vec<String>,
     stop: Vec<String>,
+    help: Vec<String>,
 }
 
 /// The physical grid, kept nested because rows and their shifted forms are
@@ -18,6 +19,10 @@ struct KeyboardConfig {
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Template {
+    /// Absent when a patch supplies its own rows rather than naming one of
+    /// the built-in layouts.
+    #[serde(default)]
+    name: Option<String>,
     rows: Vec<String>,
     shifted: Vec<String>,
 }
@@ -105,8 +110,13 @@ pub(super) fn keymap(
 
     Ok(crate::input::keyboard::Keymap {
         notes,
+        template: config.template.name,
+        offset: config.offset,
         octave_up: bindings(config.octave_up, "octaveUp")?,
         octave_down: bindings(config.octave_down, "octaveDown")?,
         stop,
+        // may be empty: a layout that would rather not spend a key on it
+        // just leaves help unreachable
+        help: bindings(config.help, "help")?,
     })
 }

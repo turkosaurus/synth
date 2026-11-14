@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 // timbre and envelope
 pub struct Instrument {
-    pub wave: Vec<f32>,     // full waveform cycle, -1.0..1.0
-    pub attack: Vec<f32>,   // 0.0..1.0
-    pub decay: Vec<f32>,    // 1.0..sustain_level
-    pub sustain_level: f32, // 0.0..1.0
-    pub release: Vec<f32>,  // sustain_level..0.0
-    pub voice_count: usize, // notes sounding at once; 1 is mono
+    pub wave: Vec<f32>,             // full waveform cycle, -1.0..1.0
+    pub(crate) attack: Vec<f32>,    // 0.0..1.0
+    pub(crate) decay: Vec<f32>,     // 1.0..sustain_level
+    pub(crate) sustain_level: f32,  // 0.0..1.0
+    pub(crate) release: Vec<f32>,   // sustain_level..0.0
+    pub(crate) voice_count: usize,  // notes sounding at once; 1 is mono
 }
 
 /// MIDI-shaped on purpose: note numbers rather than frequencies, and an
@@ -37,7 +37,7 @@ pub enum Event {
 pub struct Timeline {
     pub instruments: Vec<Arc<Instrument>>,
     pub events: Vec<(u64, Event)>,
-    pub total_samples: u64,
+    pub(crate) total_samples: u64,
 }
 
 /// Hz per MIDI note, baked from Lua so temperament lives there and every

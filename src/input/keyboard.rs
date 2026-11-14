@@ -6,16 +6,21 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crate::audio::Event;
 
 /// An isomorphic grid resolved to MIDI notes, built from `lua/keyboard.lua`,
-pub struct Keymap {
+pub(crate) struct Keymap {
     pub notes: HashMap<char, u8>,
+    /// Which built-in layout this came from, if it was one.
+    pub template: Option<String>,
+    /// Semitones between rows of the grid.
+    pub offset: i32,
     pub octave_up: Vec<KeyCode>,
     pub octave_down: Vec<KeyCode>,
     pub stop: Vec<KeyCode>,
+    pub help: Vec<KeyCode>,
 }
 
 /// Parses a binding from the keymap. A single character is that key; anything
 /// longer is a name, because keys like backspace have no character to write.
-pub fn binding(name: &str) -> Option<KeyCode> {
+pub(crate) fn binding(name: &str) -> Option<KeyCode> {
     let mut chars = name.chars();
     if let (Some(ch), None) = (chars.next(), chars.next()) {
         return Some(KeyCode::Char(ch));
@@ -58,13 +63,17 @@ pub enum Gating {
     Fixed(Duration),
 }
 
+/// What the view should do about a key the keyboard has seen. Dispatch stays
+/// here rather than in the view sniffing key codes, so the keymap remains the
+/// one place a binding is decided.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Outcome {
+pub(crate) enum Outcome {
     Continue,
     Quit,
+    Help,
 }
 
-pub struct Keyboard {
+pub(crate) struct Keyboard {
     keymap: Keymap,
     gating: Gating,
     tx: rtrb::Producer<Event>,
@@ -81,7 +90,7 @@ pub struct Keyboard {
 }
 
 impl Keyboard {
-    pub fn new(keymap: Keymap, gating: Gating, tx: rtrb::Producer<Event>) -> Self {
+    pub(crate) fn new(keymap: Keymap, gating: Gating, tx: rtrb::Producer<Event>) -> Self {
         Self {
             keymap,
             gating,
@@ -94,19 +103,44 @@ impl Keyboard {
         }
     }
 
-    pub fn octave(&self) -> i32 {
+    pub(crate) fn octave(&self) -> i32 {
         self.octave
     }
 
-    pub fn sounding(&self) -> Option<u8> {
+    pub(crate) fn sounding(&self) -> Option<u8> {
         self.sounding
     }
 
-    pub fn last_key(&self) -> Option<char> {
+    pub(crate) fn last_key(&self) -> Option<char> {
         self.last_key
     }
 
-    pub fn handle(&mut self, key: KeyEvent) -> Outcome {
+    /// The resolved layout, so a view can show what the bindings are rather
+    /// than restate them in prose that drifts.
+    pub(crate) fn keymap(&self) -> &Keymap {
+        &self.keymap
+    }
+
+    /// Dispatch for a view that is showing something modal: only bindings
+    /// that must work everywhere are honoured, and nothing sounds. Releases
+    /// report `Continue`, so the press that opened an overlay is not undone
+    /// by its own key coming back up.
+    pub(crate) fn global(&self, key: KeyEvent) -> Outcome {
+        if key.kind != KeyEventKind::Press {
+            return Outcome::Continue;
+        }
+        if matches!(key.code, KeyCode::Char('c' | 'd'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            return Outcome::Quit;
+        }
+        if self.keymap.help.contains(&key.code) {
+            return Outcome::Help;
+        }
+        Outcome::Continue
+    }
+
+    pub(crate) fn handle(&mut self, key: KeyEvent) -> Outcome {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
         // quit is ctrl-c/d only, hardcoded to survive an invalid keymap.
@@ -116,7 +150,14 @@ impl Keyboard {
         }
 
         match key.kind {
-            KeyEventKind::Press => self.press(key.code),
+            KeyEventKind::Press => {
+                // tested before press(), so a layout that puts the help key
+                // somewhere in the note grid cannot also sound it
+                if self.keymap.help.contains(&key.code) {
+                    return Outcome::Help;
+                }
+                self.press(key.code)
+            }
             // release only arrives when gating is Held;
             // in Fixed mode, `tick` ends the note
             KeyEventKind::Release => {
@@ -177,7 +218,7 @@ impl Keyboard {
     }
 
     /// Call once per poll iteration. Ends every `Fixed` note whose time is up.
-    pub fn tick(&mut self) {
+    pub(crate) fn tick(&mut self) {
         let now = Instant::now();
         let due: Vec<u8> = self
             .release_at
@@ -192,7 +233,7 @@ impl Keyboard {
 
     /// Emergency silence, bound to whatever the keymap's `stop` list names.
     /// Releases every voice, not only the latest, so nothing is left held.
-    pub fn panic(&mut self) {
+    pub(crate) fn panic(&mut self) {
         self.held.clear();
         self.sounding = None;
         self.release_at.clear();
@@ -234,9 +275,12 @@ mod tests {
     fn keyboard(gating: Gating) -> (Keyboard, rtrb::Consumer<Event>) {
         let keymap = Keymap {
             notes: HashMap::from([('a', 60), ('s', 62)]),
+            template: None,
+            offset: 5,
             octave_up: vec![],
             octave_down: vec![],
             stop: vec![KeyCode::Backspace],
+            help: vec![],
         };
         let (tx, rx) = rtrb::RingBuffer::new(16);
         (Keyboard::new(keymap, gating, tx), rx)

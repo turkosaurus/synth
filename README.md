@@ -1,6 +1,8 @@
 # synth
+[![test](https://github.com/turkosaurus/synth/actions/workflows/test.yml/badge.svg)](https://github.com/turkosaurus/synth/actions/workflows/test.yml)
+![GitHub Release](https://img.shields.io/github/v/release/turkosaurus/synth)
 
-_Lua defined, Rust synthesizer and sequencer_
+_Lua defined Rust synthesizer and sequencer_
 
 ## requirements
 
@@ -9,17 +11,60 @@ _Lua defined, Rust synthesizer and sequencer_
 sudo apt install libasound2-dev pkg-config build-essential
 ```
 
+Run TUI:
+```sh
+mise run tui
+```
+
 ## architecture 
 
 Except where necessary to preserve a non-blocking, non-allocating audio pipeline, care is taken to implement [the ELM architecture](https://guide.elm-lang.org/architecture/), separating data, mutation, and presentation.
 
-That exception is held by the module layout rather than by discipline, and `mise run test` enforces it: `mlua` may appear only under [`script/`](./src/script/), and `cpal` only in [`device.rs`](./src/audio/device.rs). [`render.rs`](./src/audio/render.rs) is therefore exactly what the audio callback executes, with no language runtime and no device within reach.
+That exception is held by the module layout rather than by discipline, and `mise run test` enforces it: `mlua` may appear only in [`script.rs`](./src/script.rs) and under [`script/`](./src/script/), and `cpal` only in [`device.rs`](./src/audio/device.rs). [`render.rs`](./src/audio/render.rs) is therefore exactly what the audio callback executes, with no language runtime and no device within reach.
 
 Goals:
 - fast: bad fidelity sounds cool, bad timing sounds *wrong*
 - extendable: anything not required to support speed should be extendable with Lua 
 
 Views are assembled from data, and presentation layers never do additional work.
+
+### diagram
+
+```mermaid
+sequenceDiagram
+    participant lua
+    participant input
+    box rust
+        participant producer
+        participant consumer
+        participant instruments@{ "type" : "database" }
+        participant timeline@{ "type" : "database" }
+    end
+
+    participant output
+
+    producer->>+lua: load scripts
+    lua->>-producer: return funcs/tables
+
+    producer->>instruments: bake waves and envelopes
+    producer->>consumer: bake freqs, midi to hz
+    producer->>producer: bake keymap
+
+    alt live
+        note over producer: listening
+        input->>producer: keypress
+        note over producer: key to midi note, plus octave
+        producer->>consumer: note on/off, real-time ring buffer
+    else sequenced
+        producer->>timeline: schedule note events
+        timeline->>consumer: note events due on the sample clock
+    end
+
+    consumer->>+instruments: fetch
+    note over consumer: pitch, phase, envelope: produce samples
+    instruments->>-consumer: wave and envelope
+    consumer->>output: to OS API
+```
 
 ## backend
 
