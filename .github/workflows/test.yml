@@ -5,12 +5,6 @@ on:
     branches: [main]
   pull_request:
   workflow_call:
-    inputs:
-      # a release that bumped the version tests the bump commit, which is
-      # newer than the commit the run started from
-      ref:
-        type: string
-        default: ""
 
 permissions:
   contents: read
@@ -19,11 +13,28 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out
+        uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.ref }}
-      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+          fetch-depth: 0 # the base branch and every tag, for the version check
 
-      - uses: jdx/mise-action@v5
-      - run: mise run test
-      - run: mise run lint
+      - name: Install ALSA headers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - name: Install tools
+        uses: jdx/mise-action@v5
+
+      # a PR that changes the version is checked here, before merge, so a bad
+      # bump never reaches main. Only on PRs: after merge, release.yml runs
+      # the same check and may already have created the tag.
+      - name: Check version
+        if: github.event_name == 'pull_request'
+        env:
+          VERSION_BASE: origin/${{ github.base_ref }}
+        run: mise run version
+
+      - name: Test
+        run: mise run test
+
+      - name: Lint
+        run: mise run lint

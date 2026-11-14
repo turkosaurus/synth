@@ -1,21 +1,17 @@
 name: release
 
+# Versions are bumped only by PR (mise run bump <part>), where test.yml checks
+# them. Merging such a PR releases it: the tag follows Cargo.toml.
 on:
-  workflow_dispatch:
-    inputs:
-      bump:
-        description: "part of the version to bump and commit to main first; none releases Cargo.toml as it stands"
-        type: choice
-        options: [none, patch, minor, major]
-        default: none
   push:
     branches: [main]
     paths: ["Cargo.toml"]
+  # retries a failed release of the version Cargo.toml has now
+  workflow_dispatch:
 
 permissions:
   contents: write
 
-# a bump commits to main, so two releases at once would race to push
 concurrency:
   group: release
   cancel-in-progress: false
@@ -26,102 +22,27 @@ jobs:
     outputs:
       release: ${{ steps.check.outputs.release }}
       version: ${{ steps.check.outputs.version }}
-      sha: ${{ steps.check.outputs.sha }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out
+        uses: actions/checkout@v7
         with:
-          fetch-depth: 0 # parent commit
+          fetch-depth: 0 # the parent commit and every tag
 
-      - uses: jdx/mise-action@v5
+      - name: Install tools
+        uses: jdx/mise-action@v5
 
-      # pushed with the workflow token, which by design starts no other
-      # workflow, so this run carries the release through itself
-      - if: github.event_name == 'workflow_dispatch' && inputs.bump != 'none'
-        shell: bash
+      # a push compares with the commit before it; a manual retry has nothing
+      # to compare with, and releases the version as it stands
+      - name: Check version
+        id: check
         env:
-          BUMP: ${{ inputs.bump }}
-        run: |
-          set -euo pipefail
-
-          if [ "$GITHUB_REF" != refs/heads/main ]; then
-            echo "::error::a bump commits to main, so run it from main, not $GITHUB_REF"
-            exit 1
-          fi
-
-          from=$(yq -p toml -r '.package.version' Cargo.toml)
-          mise run bump "$BUMP"
-          to=$(yq -p toml -r '.package.version' Cargo.toml)
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "release v$to"
-          if ! git push origin HEAD:main; then
-            echo "::error::could not push the v$to bump to main; it may have moved since this run started"
-            exit 1
-          fi
-          echo "::notice::bumped $BUMP from $from to $to and pushed to main"
-
-      - id: check
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # from the revision, not the working tree, so the parent commit's
-          # version is readable without checkout
-          version_of() {
-            git show "$1:Cargo.toml" | yq -p toml -r '.package.version'
-          }
-
-          # HEAD is the bump commit when one was made above
-          echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
-
-          new=$(version_of HEAD)
-          # a manual run has no bump to compare against, so it releases the
-          # version as it stands. The tag and forward checks below still apply.
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            old=""
-          else
-            old=$(version_of 'HEAD^' || true)
-          fi
-          echo "version=$new" >>"$GITHUB_OUTPUT"
-
-          if [ -z "$new" ]; then
-            echo "::error::no version found in [package]"
-            exit 1
-          fi
-
-          # Cargo.toml changed for another reason, a dependency most likely.
-          # Not a release, not a failure.
-          if [ "$new" = "$old" ]; then
-            echo "release=false" >>"$GITHUB_OUTPUT"
-            echo "::notice::Cargo.toml changed, but version stayed $new; nothing to release"
-            exit 0
-          fi
-
-          if git rev-parse -q --verify "refs/tags/v$new" >/dev/null; then
-            echo "::error::tag v$new already exists"
-            exit 1
-          fi
-
-          # require forward
-          latest=$(git tag --list 'v*' | sed 's/^v//' | sort -V | tail -1)
-          if [ -n "$latest" ]; then
-            highest=$(printf '%s\n%s\n' "$latest" "$new" | sort -V | tail -1)
-            if [ "$highest" != "$new" ] || [ "$new" = "$latest" ]; then
-              echo "::error::$new does not move forward from $latest"
-              exit 1
-            fi
-          fi
-
-          echo "release=true" >>"$GITHUB_OUTPUT"
-          echo "::notice::releasing v$new, previous tag ${latest:-none}"
+          VERSION_BASE: ${{ github.event_name == 'push' && 'HEAD^' || '' }}
+        run: mise run version
 
   test:
     needs: version
     if: needs.version.outputs.release == 'true'
     uses: ./.github/workflows/test.yml
-    with:
-      ref: ${{ needs.version.outputs.sha }}
 
   build:
     needs: [version, test]
@@ -134,26 +55,29 @@ jobs:
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.version.outputs.sha }}
+      - name: Check out
+        uses: actions/checkout@v7
 
       # cpal links the system audio API.
       # macOS and Windows ship their audio APIs;
       # only Linux needs the headers installed.
-      - if: runner.os == 'Linux'
+      - name: Install ALSA headers
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
-      - run: cargo build --release --target ${{ matrix.target }}
+      - name: Build ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
 
-      - shell: bash
+      - name: Package ${{ matrix.target }}
+        shell: bash
         run: |
           set -euo pipefail
           dir=target/${{ matrix.target }}/release
           if [ "$RUNNER_OS" = Windows ]; then bin=synth.exe; else bin=synth; fi
           tar -czf synth-${{ matrix.target }}.tar.gz -C "$dir" "$bin"
 
-      - uses: actions/upload-artifact@v7
+      - name: Upload ${{ matrix.target }}
+        uses: actions/upload-artifact@v7
         with:
           name: synth-${{ matrix.target }}
           path: synth-${{ matrix.target }}.tar.gz
@@ -162,17 +86,18 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
+      - name: Download builds
+        uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           path: dist
 
-      - env:
+      - name: Create release v${{ needs.version.outputs.version }}
+        env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
-          SHA: ${{ needs.version.outputs.sha }}
         run: |
           gh release create "v$VERSION" dist/* \
-            --target "$SHA" \
+            --target "$GITHUB_SHA" \
             --generate-notes \
             --repo "$GITHUB_REPOSITORY"
