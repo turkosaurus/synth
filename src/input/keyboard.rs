@@ -18,6 +18,11 @@ pub(crate) struct Keymap {
     pub help: Vec<KeyCode>,
     /// How long a note lasts in `Fixed` gating, from `gateMS`.
     pub gate: Duration,
+    /// Every note's velocity: a key has no depth to time, so there is none
+    /// to measure. MIDI hardware supplies a real one.
+    pub velocity: u8,
+    /// How far, in octaves, the octave keys may move from the start.
+    pub octave_range: i32,
 }
 
 /// Parses a binding from the keymap. A single character is that key; anything
@@ -45,10 +50,6 @@ pub(crate) fn binding(name: &str) -> Option<KeyCode> {
         _ => return None,
     })
 }
-
-/// A key has no depth to time, so there is no velocity to measure. MIDI
-/// hardware supplies a real one.
-const VELOCITY: u8 = 100;
 
 /// The keyboard plays the patch's first instrument.
 const INSTRUMENT: usize = 0;
@@ -178,11 +179,11 @@ impl Keyboard {
             return;
         }
         if self.keymap.octave_up.contains(&code) {
-            self.octave = (self.octave + 1).min(4);
+            self.octave = (self.octave + 1).min(self.keymap.octave_range);
             return;
         }
         if self.keymap.octave_down.contains(&code) {
-            self.octave = (self.octave - 1).max(-4);
+            self.octave = (self.octave - 1).max(-self.keymap.octave_range);
             return;
         }
 
@@ -202,7 +203,7 @@ impl Keyboard {
         self.send(Event::NoteOn {
             instrument: INSTRUMENT,
             note,
-            velocity: VELOCITY,
+            velocity: self.keymap.velocity,
         });
 
         // a retrigger replaces its pitch's deadline rather than adding one
@@ -282,6 +283,8 @@ mod tests {
             stop: vec![KeyCode::Backspace],
             help: vec![],
             gate,
+            velocity: 100,
+            octave_range: 4,
         };
         let (tx, rx) = rtrb::RingBuffer::new(16);
         (Keyboard::new(keymap, gating, tx), rx)

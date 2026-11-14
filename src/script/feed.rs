@@ -17,6 +17,8 @@ struct Step {
     off: bool,
     instrument: Option<String>,
     duration: f64,
+    /// defaulted in `sequence.lua`, so every resolved step carries one
+    velocity: u8,
 }
 
 const SINGLE_HOLD: Duration = Duration::from_millis(1200);
@@ -137,12 +139,19 @@ pub(super) fn sequence(
             )
         })?;
 
+        // 0 would be MIDI's note-off spelled as a note-on
+        anyhow::ensure!(
+            (1..=127).contains(&step.velocity),
+            "step {} has velocity {}; must be 1 to 127",
+            i + 1,
+            step.velocity
+        );
         events.push((
             start,
             crate::audio::Event::NoteOn {
                 instrument,
                 note,
-                velocity: 127,
+                velocity: step.velocity,
             },
         ));
 

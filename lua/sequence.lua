@@ -21,6 +21,7 @@ local function resolve(pattern, into, default_instrument)
 		end
 		out.instrument = instrument
 		out.duration = step.duration or 0.5 -- steps to sound; may exceed 1
+		out.velocity = step.velocity or 127 -- 1 to 127
 		into[#into + 1] = out
 	end
 end
