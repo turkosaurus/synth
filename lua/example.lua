@@ -4,6 +4,7 @@ return synth.sequence({
 	bpm = 140,
 	division = 4, -- subdivisions per beat; 4 = 16th notes, 8 = 32nd notes, etc.
 	instrument = "tri", -- default for every pattern; stickiness resets per pattern
+	filter = synth.filter.lowpass({ cutoff = 2000, resonance = 0.3 }), -- on the summed output
 
 	instruments = {
 		tri = synth.instrument({

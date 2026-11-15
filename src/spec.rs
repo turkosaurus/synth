@@ -6,10 +6,12 @@
 //! Runtime sharing, such as the `Arc` a sounding note holds, is added by
 //! the consumer.
 
+mod filter;
 mod instrument;
 mod keymap;
 mod patch;
 
+pub use filter::{Filter, FilterReport, Kind, MAX_CUTOFF, MIN_CUTOFF, MIN_DAMPING};
 pub use instrument::{Event, Freqs, Instrument, Timeline};
 pub(crate) use keymap::{Key, Keymap};
 pub use patch::{Patch, Report};

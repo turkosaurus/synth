@@ -48,7 +48,8 @@ impl Session {
             patch.freqs,
             rx,
             output.sample_rate as f32,
-        );
+        )
+        .with_filter(patch.filter);
 
         let stats = Arc::new(Stats::default());
         let stream = audio::stream(&output, player, Arc::clone(&stats))?;

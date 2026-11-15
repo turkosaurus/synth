@@ -3,6 +3,7 @@
 -- never means overriding this file too.
 return {
 	envelope = require("synth.envelope"),
+	filter = require("synth.filter"),
 	instrument = require("synth.instrument"),
 	keyboard = require("synth.keyboard"),
 	sequence = require("synth.sequence"),

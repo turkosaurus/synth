@@ -2,6 +2,7 @@
 name = "synth"
 version = "0.3.1"
 edition = "2021"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow = "1.0.104"
@@ -37,3 +38,6 @@ unreachable_pub = "warn"
 # modules live in `name.rs` beside a `name/` directory, never `name/mod.rs`
 [lints.clippy]
 mod_module_files = "warn"
+
+[dev-dependencies]
+realfft = "3.5.1"

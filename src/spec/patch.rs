@@ -1,4 +1,4 @@
-use super::{Keymap, Timeline};
+use super::{Filter, FilterReport, Keymap, Timeline};
 
 /// A loaded file: a playable timeline plus one report per instrument in it.
 pub struct Patch {
@@ -14,14 +14,22 @@ pub struct Patch {
     pub(crate) chain: usize,
     pub(crate) loops: usize,
     pub reports: Vec<(String, Report)>,
+    /// runs on the summed output of every voice
+    pub filter: Option<Filter>,
+    /// what `check` shows about `filter`
+    pub filter_report: Option<FilterReport>,
 }
 
 impl Patch {
-    /// No instrument raised a warning, so the patch is safe to play as written.
+    /// Neither an instrument nor the filter raised a warning, so the patch is safe to play as written.
     pub fn clean(&self) -> bool {
         self.reports
             .iter()
             .all(|(_, report)| report.warnings.is_empty())
+            && self
+                .filter_report
+                .as_ref()
+                .is_none_or(|report| report.warnings.is_empty())
     }
 }
 

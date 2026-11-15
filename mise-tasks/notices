@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="write third-party license notices for a release: mise run notices <file>"
+
+# cargo-about renders every dependency's license through about.hbs.
+# The release workflow ships the result beside the binary.
+set -euo pipefail
+
+out=${1:?usage: mise run notices <file>}
+if ! cargo about generate about.hbs --fail -o "$out"; then
+  echo "::error title=notices::cargo-about could not resolve every license; see about.toml"
+  exit 1
+fi

@@ -30,6 +30,34 @@
 | aliasing | | harmonics above nyquist folding back as false low frequencies |
 | headroom | `0.0` - `1.0` | margin between peak and clipping at 1.0 |
 | dc offset | `-1.0` - `1.0` | oscillation mean; rests the speaker cone off-centre |
+| decibel | dB | `20 × log10` of an amplitude ratio; +6 dB is about double, -6 dB about half |
+
+## filters
+
+| term | type | definition |
+| ---  | ---  | ---        |
+| filter | | processor that changes the level of some frequencies more than others |
+| cutoff | hz | where a filter acts: the -3 dB point of a lowpass or highpass, the centre of a bandpass, notch, or bell, the midpoint of a shelf |
+| resonance | `0.0` - `1.0` | emphasis around the cutoff; 0 is flat, 1 rings hard without self-oscillating |
+| damping | `MIN_DAMPING` - `√2` | resonance as the filter computes it (`k`, or 1/Q); lower rings more |
+| gain | dB | boost (+) or cut (-) applied by a bell or shelf |
+| rolloff | dB/octave | how fast level falls past the cutoff; 12 for the state-variable filter, 6 for a one-pole |
+| passband | | frequencies a filter keeps at full level |
+| stopband | | frequencies a filter removes |
+| lowpass | | keeps frequencies below the cutoff, rolls off above it |
+| highpass | | keeps frequencies above the cutoff, rolls off below it |
+| bandpass | | keeps a band around the cutoff, rolls off both sides; peaks at 0 dB |
+| notch | | removes a narrow band at the cutoff, keeps the rest |
+| bell | | boosts or cuts a band around the cutoff by its gain, flat elsewhere; one band of a parametric EQ |
+| low shelf | | boosts or cuts everything below the cutoff by its gain, then levels off; a bass knob |
+| high shelf | | boosts or cuts everything above the cutoff by its gain, then levels off; a treble knob |
+| one-pole | | simplest filter: one value of memory, 6 dB/octave, no resonance; smooths parameters |
+| state-variable filter | `svf` | two integrators in a loop, giving lowpass, bandpass, and highpass from shared state; every kind above is a mix of those, and it stays stable when the cutoff moves every sample |
+| smoothing | ms | gliding a parameter to a new value rather than jumping to it |
+| zipper noise | | audible stepping when a parameter jumps instead of gliding |
+| denormal | | float so close to zero that arithmetic on it is very slow; filter state snaps to 0 below `1e-20` |
+| impulse response | `[]f32` | a filter's output for one sample of 1.0 followed by silence |
+| frequency response | dB per hz | level change at each frequency; the FFT of the impulse response |
 
 ## playing
 

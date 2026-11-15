@@ -57,6 +57,7 @@ local known = {
 	loop = true,
 	steps = true,
 	keyboard = true,
+	filter = true,
 	tuning = true,
 }
 
@@ -101,6 +102,7 @@ new = function(opts)
 		loop = loop,
 		keyboard = opts.keyboard, -- a sequence may ship its own layout
 		tuning = opts.tuning, -- and its own tuning
+		filter = opts.filter, -- runs on the summed output
 	}
 end
 

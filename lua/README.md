@@ -12,6 +12,7 @@ Lua defines not only configuration, but provides functions to the Rust audio eng
 | [`tuning.lua`](./tuning.lua) | tunings: MIDI note to Hz, equal temperament by default |
 | [`instrument.lua`](./instrument.lua) | default mono instrument |
 | [`keyboard.lua`](./keyboard.lua) | mapping character keyboards to MIDI |
+| [`filter.lua`](./filter.lua) | filters for the summed output |
 | [`sequence.lua`](./sequence.lua) | sequencer blocks composed with chains |
 | [`default.lua`](./default.lua) | what plays when no file is given |
 | [`example.lua`](./example.lua) | test validator and example |
