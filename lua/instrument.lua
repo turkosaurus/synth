@@ -3,11 +3,14 @@ local envelope = require("synth.envelope")
 
 local new -- the constructor, defined below
 
+-- `file:line` of whoever called the constructor, read by Rust
+local site = require("synth.site")
+
 ---@class synth.instrument
 ---@overload fun(opts?: table): table
 local instrument = setmetatable({}, {
 	__call = function(_, opts)
-		return new(opts)
+		return setmetatable(new(opts), { kind = "instrument", at = site() })
 	end,
 })
 

@@ -12,7 +12,7 @@ fn example_patch_bakes_clean() {
     assert!(patch.bpm > 0.0);
     assert!(patch.step_ms > 0.0);
     assert_eq!(patch.timeline.instruments[0].wave.len(), 2048);
-    assert!(patch.reports.iter().all(|(_, r)| r.warnings.is_empty()));
+    assert!(patch.reports.iter().all(|(_, r)| r.diagnostics.is_empty()));
 }
 
 #[test]

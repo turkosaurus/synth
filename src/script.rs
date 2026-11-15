@@ -5,9 +5,10 @@ mod bake;
 mod feed;
 mod filter;
 mod keymap;
+mod structure;
 
 use crate::spec::Patch;
-use feed::{sequence, single};
+use feed::{sequence, single, SINGLE};
 use keymap::keymap;
 
 #[cfg(test)]
@@ -48,7 +49,36 @@ fn lua_register(lua: &mlua::Lua) -> anyhow::Result<()> {
         })?;
         preload.set(name, loader)?;
     }
+
+    // `synth.site` is a Rust function, not Lua: it names the line that
+    // called a constructor by reading the call stack directly, so no patch
+    // ever needs Lua's debug library, which mlua leaves out anyway
+    let loaded: mlua::Table = package.get(field::LOADED)?;
+    loaded.set(module::SITE, lua.create_function(|lua, ()| Ok(site(lua)))?)?;
     Ok(())
+}
+
+/// Where a value was made when no Lua line called its constructor.
+const BUILT_IN: &str = "built in";
+
+/// `file:line` of the code that called a constructor. Level 0 is this
+/// function, 1 the constructor, 2 whoever called the constructor.
+fn site(lua: &mlua::Lua) -> String {
+    lua.inspect_stack(2, |debug| {
+        let source = debug.source().short_src.unwrap_or_default();
+        // chunks named by mlua show as [string "lua/example.lua"]
+        let file = source
+            .strip_prefix("[string \"")
+            .and_then(|rest| rest.strip_suffix("\"]"))
+            .unwrap_or(&source)
+            .to_string();
+        match debug.current_line() {
+            Some(line) => format!("{file}:{line}"),
+            None => file,
+        }
+    })
+    // called from Rust, as the default keyboard is
+    .unwrap_or_else(|| BUILT_IN.to_string())
 }
 
 // Every name crossing the Lua/Rust boundary, in one place.
@@ -66,6 +96,8 @@ mod module {
     pub(super) const FILTER: &str = "synth.filter";
     /// Re-exports every other module, so a patch needs one `require`.
     pub(super) const ROOT: &str = "synth";
+    /// a Rust function, set straight into `package.loaded`
+    pub(super) const SITE: &str = "synth.site";
 }
 
 mod field {
@@ -98,6 +130,10 @@ mod field {
     pub(super) const FILTER: &str = "filter";
     // reserved: stamped by the synth.filter constructors, never by users
     pub(super) const KIND: &str = "_kind";
+
+    // what constructors stamp on the metatable of the table they return
+    pub(super) const STAMP_KIND: &str = "kind";
+    pub(super) const STAMP_AT: &str = "at";
     pub(super) const CUTOFF: &str = "cutoff";
     pub(super) const RESONANCE: &str = "resonance";
     pub(super) const GAIN: &str = "gain";
@@ -107,6 +143,7 @@ mod field {
     pub(super) const CALL: &str = "__call";
     pub(super) const PACKAGE: &str = "package";
     pub(super) const PRELOAD: &str = "preload";
+    pub(super) const LOADED: &str = "loaded";
     pub(super) const PATH: &str = "path";
 }
 
@@ -166,6 +203,10 @@ fn load_in(
         other => anyhow::bail!("file must return a table, got {}", other.type_name()),
     };
 
+    // checked before anything is read, so a wrong value is named by its place
+    // in the patch and the line that built it, not by the field that tripped
+    let structure = structure::walk(&table, name)?;
+
     let require: mlua::Function = lua.globals().get(field::REQUIRE)?;
 
     // a patch may ship its own tuning; otherwise equal temperament at A440
@@ -223,9 +264,41 @@ fn load_in(
             keys,
         ),
     };
-    Ok(Patch {
+    let mut patch = Patch {
+        structure,
         filter_report: filter.as_ref().map(|spec| spec.report(sample_rate)),
         filter: filter.map(|spec| spec.filter),
         ..patch?
-    })
+    };
+    locate(&mut patch);
+    Ok(patch)
+}
+
+/// Gives every diagnostic the `file:line` of the constructor that built the
+/// value it is about, from the structure walk.
+fn locate(patch: &mut Patch) {
+    let structure = &patch.structure;
+    let at = |path: &str| {
+        structure
+            .iter()
+            .find(|node| node.path == path)
+            .map(|node| node.at.clone())
+    };
+    for (name, report) in &mut patch.reports {
+        let path = if name == SINGLE {
+            String::new()
+        } else {
+            format!("instruments.{name}")
+        };
+        let place = at(&path);
+        for diagnostic in &mut report.diagnostics {
+            diagnostic.at = diagnostic.at.take().or_else(|| place.clone());
+        }
+    }
+    if let Some(report) = &mut patch.filter_report {
+        let place = at("filter");
+        for diagnostic in &mut report.diagnostics {
+            diagnostic.at = diagnostic.at.take().or_else(|| place.clone());
+        }
+    }
 }

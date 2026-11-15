@@ -105,8 +105,8 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
             ],
         );
 
-        for warning in &report.warnings {
-            println!("  warn  {name}: {warning}");
+        for diagnostic in &report.diagnostics {
+            println!("  warn  {name}: {diagnostic}");
         }
         println!();
     }
@@ -123,11 +123,28 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
             rows.push(("gain", format!("{gain:+.1} dB")));
         }
         table::pairs("filter  (summed output)", &rows, true);
-        for warning in &report.warnings {
-            println!("  warn  filter: {warning}");
+        for diagnostic in &report.diagnostics {
+            println!("  warn  filter: {diagnostic}");
         }
         println!();
     }
+
+    // where every value came from: the path is what a reload will match on,
+    // and the line is where to look when a value is wrong
+    let rows = patch
+        .structure
+        .iter()
+        .map(|node| {
+            let path = if node.path.is_empty() {
+                "(root)".to_string()
+            } else {
+                node.path.clone()
+            };
+            vec![path, node.kind.clone(), node.at.clone()]
+        })
+        .collect();
+    table::columns("structure", &["path", "kind", "made at"], rows);
+    println!();
 
     if patch.clean() {
         println!("  ok");

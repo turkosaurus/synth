@@ -1,10 +1,13 @@
 local new -- the constructor, defined below
 
+-- `file:line` of whoever called the constructor, read by Rust
+local site = require("synth.site")
+
 ---@class synth.keyboard
 ---@overload fun(opts?: table): table
 local keyboard = setmetatable({}, {
 	__call = function(_, opts)
-		return new(opts)
+		return setmetatable(new(opts), { kind = "keyboard", at = site() })
 	end,
 })
 
