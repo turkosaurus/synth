@@ -20,10 +20,17 @@ struct Args {
 #[derive(Subcommand)]
 enum Commands {
     /// Diagnose the environment, and a patch if one is given
-    #[command(alias = "check")]
     Doctor {
         /// optional patch to lint
         path: Option<PathBuf>,
+        /// sample rate to bake at; envelope lengths depend on it
+        #[arg(long, default_value_t = 48000)]
+        rate: u32,
+    },
+    /// Lint a patch without touching the terminal, for scripts and CI
+    Check {
+        /// patch to lint
+        path: PathBuf,
         /// sample rate to bake at; envelope lengths depend on it
         #[arg(long, default_value_t = 48000)]
         rate: u32,
@@ -62,32 +69,46 @@ fn tracing_init() -> anyhow::Result<()> {
 fn run() -> anyhow::Result<ExitCode> {
     tracing_init()?;
     let args = Args::parse();
-    // the terminal reports a capability; the keyboard decides the policy
-    let gating = if terminal::reports_key_release() {
-        Gating::Held
-    } else {
-        Gating::Fixed
-    };
     match args.command {
         Commands::Doctor { path, rate } => {
-            view::report::environment(gating);
+            view::report::environment(gating());
             // only patch problems fail; being in tmux is a fact, not an error
             if let Some(path) = path {
                 println!();
-                let patch = script::load(&path, rate)?;
-                view::report::patch(&path, &patch, rate);
-                if !patch.clean() {
-                    return Ok(ExitCode::FAILURE);
-                }
+                return lint(&path, rate);
             }
         }
+        Commands::Check { path, rate } => return lint(&path, rate),
         Commands::Play { path } => play(&path)?,
         Commands::Tui { path } => {
-            let mut session = Session::open(path.as_deref(), gating)?;
+            let mut session = Session::open(path.as_deref(), gating())?;
             view::tui::run(&mut session)?;
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The terminal reports a capability; the keyboard decides the policy.
+/// Probing switches the terminal to raw mode, which stops the process when
+/// it runs in a background job, as under `mise test`, so only the commands
+/// that need it ask.
+fn gating() -> Gating {
+    if terminal::reports_key_release() {
+        Gating::Held
+    } else {
+        Gating::Fixed
+    }
+}
+
+/// Bakes a patch and reports it; fails when the patch has warnings.
+fn lint(path: &std::path::Path, rate: u32) -> anyhow::Result<ExitCode> {
+    let patch = script::load(path, rate)?;
+    view::report::patch(path, &patch, rate);
+    if patch.clean() {
+        Ok(ExitCode::SUCCESS)
+    } else {
+        Ok(ExitCode::FAILURE)
+    }
 }
 
 fn play(path: &std::path::Path) -> anyhow::Result<()> {
