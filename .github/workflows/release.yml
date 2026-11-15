@@ -77,7 +77,8 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          # fully static, so it runs on any distro's glibc, or none
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
@@ -85,15 +86,19 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
 
-      # cpal links the system audio API.
-      # macOS and Windows ship their audio APIs;
-      # only Linux needs the headers installed.
-      - name: Install ALSA headers
+      # the musl build runs in an Alpine container that build:musl starts
+      - name: Install tools
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        uses: jdx/mise-action@v5
 
       - name: Build ${{ matrix.target }}
-        run: cargo build --release --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            mise run build:musl
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
 
       - name: Download notices
         uses: actions/download-artifact@v8
@@ -106,6 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           dir=target/${{ matrix.target }}/release
+          if [ "$RUNNER_OS" = Linux ]; then dir=target/musl/${{ matrix.target }}/release; fi
           if [ "$RUNNER_OS" = Windows ]; then bin=synth.exe; else bin=synth; fi
           mkdir pkg
           cp "$dir/$bin" LICENSE THIRD-PARTY-NOTICES.txt pkg/

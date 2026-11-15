@@ -103,15 +103,34 @@ pub struct Output {
 /// Open the default output device. Separated from playback so every view and
 /// command negotiates the device the same way.
 pub fn open() -> anyhow::Result<Output> {
-    let device = cpal::default_host()
+    // PulseAudio when a sound server is running, else ALSA
+    let host = cpal::default_host();
+    debug!(host = host.id().name(), "audio host");
+    let device = host
         .default_output_device()
         .context("no default output device")?;
-    let config = device.default_output_config()?;
-    anyhow::ensure!(
-        config.sample_format() == cpal::SampleFormat::F32,
-        "device wants {:?}, only f32 is wired up",
-        config.sample_format()
-    );
+    let default = device.default_output_config()?;
+    // the PulseAudio host defaults to an integer format but offers f32 too,
+    // so ask for f32 at the default rate and channel count before giving up
+    let config = if default.sample_format() == cpal::SampleFormat::F32 {
+        default
+    } else {
+        let rate = default.sample_rate();
+        device
+            .supported_output_configs()?
+            .find(|range| {
+                range.sample_format() == cpal::SampleFormat::F32
+                    && range.channels() == default.channels()
+                    && (range.min_sample_rate()..=range.max_sample_rate()).contains(&rate)
+            })
+            .map(|range| range.with_sample_rate(rate))
+            .with_context(|| {
+                format!(
+                    "device wants {:?} and offers no f32 at {rate} Hz; only f32 is wired up",
+                    default.sample_format()
+                )
+            })?
+    };
 
     let sample_rate = config.sample_rate();
     let channels = config.channels() as usize;
