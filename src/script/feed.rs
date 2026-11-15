@@ -21,6 +21,10 @@ struct Step {
     velocity: u8,
 }
 
+/// The report name of a bare instrument file's one instrument, which sits
+/// at the root of the patch rather than under `instruments`.
+pub(super) const SINGLE: &str = "(single note)";
+
 const SINGLE_HOLD: Duration = Duration::from_millis(1200);
 
 /// A4, for a bare instrument file with no sequence to say otherwise
@@ -67,7 +71,7 @@ pub(super) fn single(
         patterns: 0,
         chain: 0,
         loops: 0,
-        reports: vec![("(single note)".to_string(), report)],
+        reports: vec![(SINGLE.to_string(), report)],
         filter: None,
         filter_report: None,
         structure: Vec::new(),

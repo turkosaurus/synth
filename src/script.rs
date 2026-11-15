@@ -8,7 +8,7 @@ mod keymap;
 mod structure;
 
 use crate::spec::Patch;
-use feed::{sequence, single};
+use feed::{sequence, single, SINGLE};
 use keymap::keymap;
 
 #[cfg(test)]
@@ -264,10 +264,41 @@ fn load_in(
             keys,
         ),
     };
-    Ok(Patch {
+    let mut patch = Patch {
         structure,
         filter_report: filter.as_ref().map(|spec| spec.report(sample_rate)),
         filter: filter.map(|spec| spec.filter),
         ..patch?
-    })
+    };
+    locate(&mut patch);
+    Ok(patch)
+}
+
+/// Gives every diagnostic the `file:line` of the constructor that built the
+/// value it is about, from the structure walk.
+fn locate(patch: &mut Patch) {
+    let structure = &patch.structure;
+    let at = |path: &str| {
+        structure
+            .iter()
+            .find(|node| node.path == path)
+            .map(|node| node.at.clone())
+    };
+    for (name, report) in &mut patch.reports {
+        let path = if name == SINGLE {
+            String::new()
+        } else {
+            format!("instruments.{name}")
+        };
+        let place = at(&path);
+        for diagnostic in &mut report.diagnostics {
+            diagnostic.at = diagnostic.at.take().or_else(|| place.clone());
+        }
+    }
+    if let Some(report) = &mut patch.filter_report {
+        let place = at("filter");
+        for diagnostic in &mut report.diagnostics {
+            diagnostic.at = diagnostic.at.take().or_else(|| place.clone());
+        }
+    }
 }

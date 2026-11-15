@@ -49,11 +49,11 @@ pub const MAX_CUTOFF: f32 = 0.49;
 pub struct FilterReport {
     /// the constructor's name, e.g. `low_shelf`
     pub kind: &'static str,
-    /// Hz, as written; the audio side may clamp it, which `warnings` says
+    /// Hz, as written; the audio side may clamp it, which `diagnostics` says
     pub cutoff: f64,
     /// 0 to 1; `None` on shelves, which have none
     pub resonance: Option<f64>,
     /// dB; `None` on kinds without gain
     pub gain: Option<f64>,
-    pub warnings: Vec<String>,
+    pub diagnostics: Vec<super::Diagnostic>,
 }

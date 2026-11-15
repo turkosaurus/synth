@@ -1,7 +1,7 @@
 use anyhow::Context;
 use tracing::{debug_span, instrument};
 
-use crate::spec::{Instrument, Report};
+use crate::spec::{Diagnostic, DiagnosticKind, Instrument, Report};
 
 use super::field;
 
@@ -242,30 +242,33 @@ pub(super) fn inspect(instrument: &Instrument, clamped: usize) -> Report {
     let seam = (wave[wave.len() - 1] - wave[0]).abs();
     let expected_step = 2.0 / wave.len() as f32;
 
-    let mut warnings = Vec::new();
+    let shape = |message: String| Diagnostic::new(DiagnosticKind::Shape, message);
+    let mut diagnostics = Vec::new();
     if clamped > 0 {
-        warnings.push(format!(
+        diagnostics.push(shape(format!(
             "waveform exceeded -1.0..1.0 at {clamped} points and was flattened"
-        ));
+        )));
     }
     if seam > expected_step * 4.0 {
-        warnings.push(format!(
+        diagnostics.push(shape(format!(
             "waveform does not wrap smoothly (seam {seam:.4}); expect a buzz"
-        ));
+        )));
     }
     if dc.abs() > 0.01 {
-        warnings.push(format!("waveform has a DC offset of {dc:.4}"));
+        diagnostics.push(shape(format!("waveform has a DC offset of {dc:.4}")));
     }
     if peak < 0.5 {
-        warnings.push(format!("waveform peaks at only {peak:.3}"));
+        diagnostics.push(shape(format!("waveform peaks at only {peak:.3}")));
     }
     if instrument.release.is_empty() {
-        warnings.push("release = 0 cuts the note mid-cycle and will click".to_string());
+        diagnostics.push(shape(
+            "release = 0 cuts the note mid-cycle and will click".to_string(),
+        ));
     }
     if !(0.0..=1.0).contains(&instrument.sustain_level) {
-        warnings.push(format!(
-            "sustain {} is outside 0.0..1.0",
-            instrument.sustain_level
+        diagnostics.push(Diagnostic::new(
+            DiagnosticKind::Range,
+            format!("sustain {} is outside 0.0..1.0", instrument.sustain_level),
         ));
     }
 
@@ -278,6 +281,6 @@ pub(super) fn inspect(instrument: &Instrument, clamped: usize) -> Report {
         decay: instrument.decay.len(),
         release: instrument.release.len(),
         sustain_level: instrument.sustain_level,
-        warnings,
+        diagnostics,
     }
 }

@@ -105,8 +105,8 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
             ],
         );
 
-        for warning in &report.warnings {
-            println!("  warn  {name}: {warning}");
+        for diagnostic in &report.diagnostics {
+            println!("  warn  {name}: {diagnostic}");
         }
         println!();
     }
@@ -123,8 +123,8 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
             rows.push(("gain", format!("{gain:+.1} dB")));
         }
         table::pairs("filter  (summed output)", &rows, true);
-        for warning in &report.warnings {
-            println!("  warn  filter: {warning}");
+        for diagnostic in &report.diagnostics {
+            println!("  warn  filter: {diagnostic}");
         }
         println!();
     }

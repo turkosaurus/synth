@@ -4,7 +4,9 @@
 
 use std::f32::consts::SQRT_2;
 
-use crate::spec::{Filter, FilterReport, Kind, MAX_CUTOFF, MIN_CUTOFF, MIN_DAMPING};
+use crate::spec::{
+    Diagnostic, DiagnosticKind, Filter, FilterReport, Kind, MAX_CUTOFF, MIN_CUTOFF, MIN_DAMPING,
+};
 
 use super::bake::{expect_only, spec_entry, spec_error, spec_table};
 use super::field;
@@ -26,25 +28,26 @@ impl FilterSpec {
     pub(super) fn report(&self, sample_rate: u32) -> FilterReport {
         let ceiling = f64::from(MAX_CUTOFF) * f64::from(sample_rate);
         let floor = f64::from(MIN_CUTOFF);
-        let mut warnings = Vec::new();
+        let range = |message: String| Diagnostic::new(DiagnosticKind::Range, message);
+        let mut diagnostics = Vec::new();
         if self.cutoff > ceiling {
-            warnings.push(format!(
+            diagnostics.push(range(format!(
                 "cutoff {} Hz is above the {ceiling:.0} Hz ceiling at {sample_rate} Hz \
                  and plays as {ceiling:.0} Hz",
                 self.cutoff
-            ));
+            )));
         } else if self.cutoff < floor {
-            warnings.push(format!(
+            diagnostics.push(range(format!(
                 "cutoff {} Hz is below the {floor} Hz floor and plays as {floor} Hz",
                 self.cutoff
-            ));
+            )));
         }
         FilterReport {
             kind: self.name,
             cutoff: self.cutoff,
             resonance: self.resonance,
             gain: self.gain,
-            warnings,
+            diagnostics,
         }
     }
 }
