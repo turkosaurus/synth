@@ -15,6 +15,6 @@ return synth.instrument.new({
 	}),
 	voiceCount = 4,
 	keyboard = synth.keyboard.new({
-		gateMS = 400, -- note length when the terminal cannot report key release
+		gate = 400, -- ms; note length when the terminal cannot report key release
 	}),
 })
