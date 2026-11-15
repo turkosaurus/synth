@@ -1,4 +1,4 @@
-use super::{Filter, FilterReport, Keymap, Timeline};
+use super::{Diagnostic, Filter, FilterReport, Keymap, Timeline};
 
 /// A loaded file: a playable timeline plus one report per instrument in it.
 pub struct Patch {
@@ -40,11 +40,11 @@ impl Patch {
     pub fn clean(&self) -> bool {
         self.reports
             .iter()
-            .all(|(_, report)| report.warnings.is_empty())
+            .all(|(_, report)| report.diagnostics.is_empty())
             && self
                 .filter_report
                 .as_ref()
-                .is_none_or(|report| report.warnings.is_empty())
+                .is_none_or(|report| report.diagnostics.is_empty())
     }
 }
 
@@ -60,5 +60,5 @@ pub struct Report {
     pub(crate) decay: usize,
     pub(crate) release: usize,
     pub(crate) sustain_level: f32,
-    pub warnings: Vec<String>,
+    pub diagnostics: Vec<Diagnostic>,
 }

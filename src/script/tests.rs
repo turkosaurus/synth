@@ -34,7 +34,7 @@ fn instrument_with(wave: Vec<f32>) -> Instrument {
 #[test]
 fn clean_triangle_raises_nothing() {
     let report = inspect(&instrument_with(wave_from(triangle, 2048)), 0);
-    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     assert_eq!(report.peak, 1.0);
     assert!(report.dc.abs() < 1e-6);
 }
@@ -42,7 +42,7 @@ fn clean_triangle_raises_nothing() {
 #[test]
 fn flags_clamping() {
     let report = inspect(&instrument_with(wave_from(triangle, 2048)), 17);
-    assert!(report.warnings.iter().any(|w| w.contains("17 points")));
+    assert!(report.diagnostics.iter().any(|d| d.message.contains("17 points")));
 }
 
 #[test]
@@ -52,20 +52,20 @@ fn flags_dc_offset() {
         &instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)),
         0,
     );
-    assert!(report.warnings.iter().any(|w| w.contains("DC offset")));
+    assert!(report.diagnostics.iter().any(|d| d.message.contains("DC offset")));
 }
 
 #[test]
 fn flags_wrap_discontinuity() {
     // a saw ends at +1 and restarts at -1: a step of 2.0 every cycle
     let report = inspect(&instrument_with(wave_from(|p| 2.0 * p - 1.0, 2048)), 0);
-    assert!(report.warnings.iter().any(|w| w.contains("wrap smoothly")));
+    assert!(report.diagnostics.iter().any(|d| d.message.contains("wrap smoothly")));
 }
 
 #[test]
 fn flags_weak_peak() {
     let report = inspect(&instrument_with(wave_from(|p| triangle(p) * 0.2, 2048)), 0);
-    assert!(report.warnings.iter().any(|w| w.contains("peaks at only")));
+    assert!(report.diagnostics.iter().any(|d| d.message.contains("peaks at only")));
 }
 
 #[test]
@@ -74,11 +74,11 @@ fn flags_zero_release_and_bad_sustain() {
     instrument.release = vec![];
     instrument.sustain_level = 1.5;
     let report = inspect(&instrument, 0);
-    assert!(report.warnings.iter().any(|w| w.contains("release = 0")));
+    assert!(report.diagnostics.iter().any(|d| d.message.contains("release = 0")));
     assert!(report
-        .warnings
+        .diagnostics
         .iter()
-        .any(|w| w.contains("outside 0.0..1.0")));
+        .any(|d| d.message.contains("outside 0.0..1.0")));
 }
 
 // 48000 Hz at 60 bpm makes one beat exactly 48000 samples
@@ -669,9 +669,9 @@ fn the_shipped_example_loads_clean() {
     assert!(!patch.timeline.events.is_empty());
     for (name, report) in &patch.reports {
         assert!(
-            report.warnings.is_empty(),
+            report.diagnostics.is_empty(),
             "instrument {name}: {:?}",
-            report.warnings
+            report.diagnostics
         );
     }
 }
@@ -779,7 +779,7 @@ fn filter_report_keeps_written_values() {
     assert_eq!(report.cutoff, 1000.0);
     assert_eq!(report.resonance, Some(0.5));
     assert_eq!(report.gain, Some(6.0));
-    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     assert!(patch.clean());
 }
 
@@ -795,16 +795,16 @@ fn shelf_report_has_no_resonance() {
 fn cutoff_above_ceiling_warns() {
     // the ceiling at 48 kHz is 0.49 × 48000 = 23520 Hz
     let patch = with_filter("filter.lowpass({ cutoff = 30000 })").unwrap();
-    let warnings = &patch.filter_report.as_ref().unwrap().warnings;
+    let warnings = &patch.filter_report.as_ref().unwrap().diagnostics;
     assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(warnings[0].contains("23520"), "{}", warnings[0]);
+    assert!(warnings[0].message.contains("23520"), "{}", warnings[0]);
     assert!(!patch.clean());
 }
 
 #[test]
 fn cutoff_below_floor_warns() {
     let patch = with_filter("filter.highpass({ cutoff = 5 })").unwrap();
-    let warnings = &patch.filter_report.as_ref().unwrap().warnings;
+    let warnings = &patch.filter_report.as_ref().unwrap().diagnostics;
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(!patch.clean());
 }
@@ -908,4 +908,28 @@ fn the_default_patch_loads_clean() {
     let patch = load_default(48000).unwrap();
     assert!(patch.clean(), "default.lua raised warnings");
     assert_eq!(patch.structure[0].kind, "instrument");
+}
+
+#[test]
+fn diagnostics_name_the_line_that_built_the_value() {
+    let source = r#"
+        local synth = require("synth")
+        local quiet = function(phase) return 0.2 * math.sin(phase * 2 * math.pi) end
+        return synth.sequence({
+            instruments = { soft = synth.instrument({ waveform = quiet }) },
+            instrument = "soft",
+            steps = { { note = 60 } },
+            filter = synth.filter.lowpass({ cutoff = 5 }),
+        })
+    "#;
+    let patch = load_source(source, "song.lua", 48000).unwrap();
+    let (_, report) = &patch.reports[0];
+    let peak = report
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("peaks at only"))
+        .expect("a quiet waveform warns");
+    assert_eq!(peak.at.as_deref(), Some("song.lua:5"));
+    let cutoff = &patch.filter_report.as_ref().unwrap().diagnostics[0];
+    assert_eq!(cutoff.at.as_deref(), Some("song.lua:8"));
 }
