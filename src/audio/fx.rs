@@ -5,6 +5,10 @@
 //! `no_std` core from #33 unchanged. `mise run test:core` checks that.
 
 mod approx;
+mod svf;
+
+pub use svf::{Filter, Kind, MIN_DAMPING};
+pub(crate) use svf::Svf;
 
 #[cfg(test)]
 mod tests;
