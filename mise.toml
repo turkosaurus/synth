@@ -6,6 +6,10 @@ yq = "4"
 # `mise run lint` checks lua/ with both
 lua-language-server = "3"
 stylua = "2"
+# `mise run lint:licenses` checks every dependency's license and source
+cargo-deny = "0.20"
+# `mise run notices` writes the release archive's third-party notices
+"ubi:EmbarkStudios/cargo-about" = "0.9"
 
 # cargo-edit compiles for minutes, so it is fetched here on first use rather
 # than listed in [tools], where every CI run would install it
@@ -43,7 +47,7 @@ depends = ["test:rust", "test:separation", "test:example"]
 description = "run all tests: cargo tests and the example patch lint"
 
 [tasks.lint]
-depends = ["lint:rust", "lint:pedantic", "lint:lua", "lint:stylua"]
+depends = ["lint:rust", "lint:pedantic", "lint:lua", "lint:stylua", "lint:licenses"]
 description = "run all linters; any warning fails, except pedantic"
 
 [tasks."lint:rust"]
@@ -54,7 +58,7 @@ run = "cargo clippy --all-targets -- -D warnings || { echo '::error title=lint:r
 description = "clippy pedantic, for review; reports but never fails"
 run = "cargo clippy --all-targets -- -W clippy::pedantic"
 
-# lint:lua is a file task: mise-tasks/lint/lua
+# lint:lua and lint:licenses are file tasks: mise-tasks/lint/
 
 [tasks."lint:stylua"]
 description = "stylua formatting check on lua/; any difference fails"

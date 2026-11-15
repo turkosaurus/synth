@@ -49,8 +49,30 @@ jobs:
     if: needs.version.outputs.release == 'true'
     uses: ./.github/workflows/test.yml
 
+  # one notices file covers every target: about.toml lists all three, so
+  # each archive carries the licenses of everything any build links
+  notices:
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Install tools
+        uses: jdx/mise-action@v5
+
+      - name: Write notices
+        run: mise run notices THIRD-PARTY-NOTICES.txt
+
+      - name: Upload notices
+        uses: actions/upload-artifact@v7
+        with:
+          name: notices
+          path: THIRD-PARTY-NOTICES.txt
+
   build:
-    needs: [version, test]
+    needs: [version, test, notices]
     strategy:
       fail-fast: true
       matrix:
@@ -73,13 +95,21 @@ jobs:
       - name: Build ${{ matrix.target }}
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Download notices
+        uses: actions/download-artifact@v8
+        with:
+          name: notices
+
+      # GPL-3.0 and the dependencies' licenses travel with the binary
       - name: Package ${{ matrix.target }}
         shell: bash
         run: |
           set -euo pipefail
           dir=target/${{ matrix.target }}/release
           if [ "$RUNNER_OS" = Windows ]; then bin=synth.exe; else bin=synth; fi
-          tar -czf synth-${{ matrix.target }}.tar.gz -C "$dir" "$bin"
+          mkdir pkg
+          cp "$dir/$bin" LICENSE THIRD-PARTY-NOTICES.txt pkg/
+          tar -czf synth-${{ matrix.target }}.tar.gz -C pkg .
 
       - name: Upload ${{ matrix.target }}
         uses: actions/upload-artifact@v7

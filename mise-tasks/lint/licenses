@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="cargo-deny: every dependency is GPLv3-compatible and from crates.io"
+
+# Allowed licenses live in deny.toml; keep about.toml's in step.
+set -euo pipefail
+
+if ! cargo deny --log-level error check licenses sources; then
+  echo "::error title=lint:licenses::a dependency has a license or source deny.toml does not allow"
+  exit 1
+fi
