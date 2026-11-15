@@ -1,6 +1,6 @@
 use crate::audio::Snapshot;
 use crate::input::keyboard::Gating;
-use crate::script::Patch;
+use crate::spec::Patch;
 
 use super::table;
 

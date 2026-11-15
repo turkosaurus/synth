@@ -5,8 +5,7 @@ mod bake;
 mod feed;
 mod keymap;
 
-pub use bake::Report;
-
+use crate::spec::Patch;
 use feed::{sequence, single};
 use keymap::keymap;
 
@@ -90,31 +89,6 @@ mod field {
     pub(super) const PACKAGE: &str = "package";
     pub(super) const PRELOAD: &str = "preload";
     pub(super) const PATH: &str = "path";
-}
-
-/// A loaded file: a playable timeline plus one report per instrument in it.
-pub struct Patch {
-    pub timeline: crate::spec::Timeline,
-    /// hz for every midi note, baked from Lua so temperament stays there
-    pub freqs: Vec<f32>,
-    pub(crate) keymap: crate::input::keyboard::Keymap,
-    pub bpm: f32,
-    pub(crate) division: f32,
-    pub step_ms: f32,
-    pub(crate) steps: usize,
-    pub(crate) patterns: usize,
-    pub(crate) chain: usize,
-    pub(crate) loops: usize,
-    pub reports: Vec<(String, Report)>,
-}
-
-impl Patch {
-    /// No instrument raised a warning, so the patch is safe to play as written.
-    pub fn clean(&self) -> bool {
-        self.reports
-            .iter()
-            .all(|(_, report)| report.warnings.is_empty())
-    }
 }
 
 /// What plays when no file is given.

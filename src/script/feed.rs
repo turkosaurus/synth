@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use super::bake::{bake_instrument, InstrumentSpec};
 use super::field;
-use super::Patch;
+use crate::spec::Patch;
 
 /// One resolved step. The struct is the schema: field names come from here,
 /// and `deny_unknown_fields` turns a misspelling in a patch into a named
@@ -30,7 +30,7 @@ pub(super) fn single(
     spec: InstrumentSpec,
     sample_rate: u32,
     freqs: Vec<f32>,
-    keymap: crate::input::keyboard::Keymap,
+    keymap: crate::spec::Keymap,
 ) -> anyhow::Result<Patch> {
     let (instrument, report) = bake_instrument(spec, sample_rate)?;
     let tail = instrument.release.len() as u64;
@@ -78,7 +78,7 @@ pub(super) fn sequence(
     steps: &mlua::Table,
     sample_rate: u32,
     freqs: Vec<f32>,
-    keymap: crate::input::keyboard::Keymap,
+    keymap: crate::spec::Keymap,
 ) -> anyhow::Result<Patch> {
     let bpm: f64 = table.get(field::BPM).context("sequence.bpm is missing")?;
     anyhow::ensure!(bpm > 0.0, "sequence.bpm must be positive, got {bpm}");

@@ -7,5 +7,9 @@
 //! the consumer.
 
 mod instrument;
+mod keymap;
+mod patch;
 
 pub use instrument::{Event, Freqs, Instrument, Timeline};
+pub(crate) use keymap::{Key, Keymap};
+pub use patch::{Patch, Report};

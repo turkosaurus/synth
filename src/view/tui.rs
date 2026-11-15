@@ -14,8 +14,9 @@ use ratatui::widgets::{
 use ratatui::{Frame, Terminal};
 
 use crate::audio::{Snapshot, Stats};
-use crate::input::keyboard::{Gating, Keyboard, Outcome};
+use crate::input::keyboard::{code, Gating, Keyboard, Outcome};
 use crate::session::Session;
+use crate::spec::Key;
 
 use super::meter::{self, Activity, Meter};
 
@@ -339,10 +340,9 @@ fn shadow(frame: &mut Frame, area: Rect) {
 /// width the popup has instead of pinning them left.
 fn bindings(keyboard: &Keyboard) -> Table<'static> {
     let keymap = keyboard.keymap();
-    let keys = |codes: &[crossterm::event::KeyCode]| {
-        codes
-            .iter()
-            .map(|code| code.to_string())
+    let keys = |keys: &[Key]| {
+        keys.iter()
+            .map(|&key| code(key).to_string())
             .collect::<Vec<_>>()
             .join(" or ")
     };
