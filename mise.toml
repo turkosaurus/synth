@@ -76,6 +76,8 @@ run = "cargo test --verbose -- --show-output || { echo '::error title=test:rust:
 
 [tasks.play]
 description = "play the example patch, then show the debug log"
+# synth writes synth.log only when RUST_LOG is set
+env = { RUST_LOG = "synth=debug" }
 run = "cargo run -- play lua/example.lua; cat synth.log"
 
 [tasks.log]
