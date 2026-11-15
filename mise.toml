@@ -38,22 +38,7 @@ fi
 exit $failed
 '''
 
-[tasks."test:core"]
-description = "src/audio/fx/ builds with core alone: no std, no std-only float methods"
-run = '''
-set -eu
-# a text check, not a compiler guarantee; #33's no_std crate replaces it.
-# tests.rs may use std to compare against.
-methods='floor|ceil|round|trunc|fract|sqrt|powf|powi|exp|exp2|ln|log|log2|log10'
-methods="$methods|sin|cos|tan|tanh|sinh|cosh|asin|acos|atan|atan2|hypot|cbrt|mul_add"
-if offenders=$(grep -rnE "std::|\.($methods)\(" src/audio/fx/ src/audio/fx.rs \
-  | grep -v '^src/audio/fx/tests\.rs:'); then
-  echo "::error title=test:core::src/audio/fx/ must build with core alone"
-  echo "src/audio/fx/ must build with core alone, found:" >&2
-  echo "$offenders" >&2
-  exit 1
-fi
-'''
+# test:core is a file task: mise-tasks/test/core
 
 [tasks.test]
 depends = ["test:rust", "test:separation", "test:core", "test:example"]
