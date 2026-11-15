@@ -828,3 +828,76 @@ fn the_root_reexports_every_module() {
         assert!(same, "synth.{short} is not re-exported by the root");
     }
 }
+
+// expects `load_source` to fail with a message containing `needle`
+fn rejects_patch(source: &str, needle: &str) {
+    let error = load_source(source, "test", 48000)
+        .err()
+        .unwrap_or_else(|| panic!("expected an error containing {needle:?}"));
+    assert!(format!("{error:#}").contains(needle), "unexpected: {error:#}");
+}
+
+#[test]
+fn structure_records_every_constructed_table_by_path() {
+    let source = r#"
+        local synth = require("synth")
+        local tri = synth.instrument({ envelope = synth.envelope({}) })
+        return synth.sequence({ instruments = { tri = tri }, instrument = "tri", steps = { { note = 60 } } })
+    "#;
+    let patch = load_source(source, "song.lua", 48000).unwrap();
+    let found: Vec<(&str, &str, &str)> = patch
+        .structure
+        .iter()
+        .map(|node| (node.path.as_str(), node.kind.as_str(), node.at.as_str()))
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            // the root is a tail call, so it is named by its file
+            ("", "sequence", "song.lua"),
+            ("instruments.tri", "instrument", "song.lua:3"),
+            ("instruments.tri.envelope", "envelope", "song.lua:3"),
+        ]
+    );
+}
+
+#[test]
+fn a_plain_root_is_rejected() {
+    rejects_patch("return {}", "a patch must return synth.instrument");
+}
+
+#[test]
+fn a_plain_table_where_a_kind_belongs_names_the_constructor() {
+    rejects_patch(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({ envelope = { attack = 5 } })
+        "#,
+        "envelope: expected an envelope, got a plain table; build it with synth.envelope({…})",
+    );
+}
+
+#[test]
+fn the_wrong_kind_names_where_it_was_made() {
+    rejects_patch(
+        r#"
+        local synth = require("synth")
+        local keys = synth.keyboard({})
+        return synth.instrument({ envelope = keys })
+        "#,
+        "envelope: expected an envelope, got a keyboard made at test:3",
+    );
+}
+
+#[test]
+fn a_cycle_is_rejected() {
+    rejects_patch(
+        r#"
+        local synth = require("synth")
+        local loop = {}
+        loop.self = loop
+        return synth.instrument({ extra = loop })
+        "#,
+        "contains itself",
+    );
+}

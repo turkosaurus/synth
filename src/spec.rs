@@ -14,4 +14,5 @@ mod patch;
 pub use filter::{Filter, FilterReport, Kind, MAX_CUTOFF, MIN_CUTOFF, MIN_DAMPING};
 pub use instrument::{Event, Freqs, Instrument, Timeline};
 pub(crate) use keymap::{Key, Keymap};
+pub(crate) use patch::Node;
 pub use patch::{Patch, Report};

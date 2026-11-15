@@ -70,6 +70,7 @@ pub(super) fn single(
         reports: vec![("(single note)".to_string(), report)],
         filter: None,
         filter_report: None,
+        structure: Vec::new(),
     })
 }
 
@@ -224,5 +225,6 @@ pub(super) fn sequence(
         reports,
         filter: None,
         filter_report: None,
+        structure: Vec::new(),
     })
 }
