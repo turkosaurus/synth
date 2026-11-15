@@ -3,6 +3,9 @@
 rust = { version = "1.98", components = "clippy" }
 # the release workflow reads Cargo.toml's version with it
 yq = "4"
+# `mise run lint` checks lua/ with both
+lua-language-server = "3"
+stylua = "2"
 
 # cargo-edit compiles for minutes, so it is fetched here on first use rather
 # than listed in [tools], where every CI run would install it
@@ -33,12 +36,38 @@ depends = ["test:rust", "test:separation", "test:example"]
 description = "run all tests: cargo tests and the example patch lint"
 
 [tasks.lint]
+depends = ["lint:rust", "lint:pedantic", "lint:lua", "lint:stylua"]
+description = "run all linters; any warning fails, except pedantic"
+
+[tasks."lint:rust"]
 description = "clippy on every target; any warning fails"
 run = "cargo clippy --all-targets -- -D warnings"
 
 [tasks."lint:pedantic"]
 description = "clippy pedantic, for review; reports but never fails"
 run = "cargo clippy --all-targets -- -W clippy::pedantic"
+
+[tasks."lint:lua"]
+description = "lua-language-server on lua/, once per runtime; any warning fails"
+run = '''
+set -eu
+# patches run on LuaJIT on desktop and on Lua 5.4 on a device (#33)
+config=$(mktemp)
+trap 'rm -f "$config"' EXIT
+failed=0
+for runtime in LuaJIT 'Lua 5.4'; do
+  printf '{"runtime.version": "%s"}' "$runtime" > "$config"
+  echo "lua-language-server: $runtime"
+  if ! lua-language-server --check lua --configpath="$config"; then
+    failed=1
+  fi
+done
+exit $failed
+'''
+
+[tasks."lint:stylua"]
+description = "stylua formatting check on lua/; any difference fails"
+run = "stylua --check lua"
 
 [tasks."test:rust"]
 description = "cargo tests"
