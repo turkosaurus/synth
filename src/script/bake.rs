@@ -39,6 +39,7 @@ impl mlua::FromLua for InstrumentSpec {
                 field::WAVEFORM,
                 field::ENVELOPE,
                 field::KEYBOARD,
+                field::TUNING,
                 field::VOICE_COUNT,
             ],
         )?;

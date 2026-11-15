@@ -403,7 +403,7 @@ fn state(keyboard: &Keyboard, freqs: &[f32], gating: Gating) -> Table<'static> {
     let dim = Style::new().fg(Color::DarkGray);
 
     let note = match keyboard.sounding() {
-        // tuning.lua defines frequency
+        // the patch's tuning defines frequency
         Some(note) => {
             let hz = freqs.get(note as usize).copied().unwrap_or(0.0);
             (
