@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::audio::Event;
+use crate::spec::Event;
 
 /// An isomorphic grid resolved to MIDI notes, built from `lua/keyboard.lua`,
 pub(crate) struct Keymap {

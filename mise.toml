@@ -11,7 +11,7 @@ description = "bump the crate version in Cargo.toml and Cargo.lock: mise run bum
 run = "mise exec cargo:cargo-edit@0.13 -- cargo set-version --bump"
 
 [tasks."test:separation"]
-description = "lua stays in script.rs and script/, cpal stays in audio/device.rs"
+description = "lua stays in script.rs and script/, cpal stays in audio/device.rs, spec/ depends on neither"
 run = '''
 set -eu
 failed=0
@@ -25,6 +25,12 @@ for rule in 'mlua:src/script(\.rs|/)' 'cpal:src/audio/device\.rs'; do
     failed=1
   fi
 done
+# spec is plain data between script and audio, so it names neither
+if offenders=$(grep -rlE "(crate|mlua|cpal)::" src/spec.rs src/spec/); then
+  echo "spec must not depend on the rest of the crate, found in:" >&2
+  echo "$offenders" >&2
+  failed=1
+fi
 exit $failed
 '''
 

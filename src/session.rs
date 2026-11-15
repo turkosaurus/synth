@@ -7,9 +7,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::audio::{self, Event, Player, Stats};
+use crate::audio::{self, Player, Stats};
 use crate::input::keyboard::{Gating, Keyboard};
 use crate::script;
+use crate::spec::Event;
 
 /// Key events the UI thread can queue before the audio callback drains them.
 const QUEUE: usize = 256;

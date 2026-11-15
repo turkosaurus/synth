@@ -94,7 +94,7 @@ mod field {
 
 /// A loaded file: a playable timeline plus one report per instrument in it.
 pub struct Patch {
-    pub timeline: crate::audio::Timeline,
+    pub timeline: crate::spec::Timeline,
     /// hz for every midi note, baked from Lua so temperament stays there
     pub freqs: Vec<f32>,
     pub(crate) keymap: crate::input::keyboard::Keymap,

@@ -1,7 +1,7 @@
 use anyhow::Context;
 use tracing::{debug_span, instrument};
 
-use crate::audio::Instrument;
+use crate::spec::Instrument;
 
 use super::field;
 
