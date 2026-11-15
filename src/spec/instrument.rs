@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 // timbre and envelope
 pub struct Instrument {
     pub wave: Vec<f32>,             // full waveform cycle, -1.0..1.0
@@ -35,7 +33,7 @@ pub enum Event {
 /// Events stamped with the sample they fire on. A single sustained note is
 /// just a two-event timeline, so playback has one code path.
 pub struct Timeline {
-    pub instruments: Vec<Arc<Instrument>>,
+    pub instruments: Vec<Instrument>,
     pub events: Vec<(u64, Event)>,
     pub(crate) total_samples: u64,
 }

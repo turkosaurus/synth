@@ -1,5 +1,7 @@
 use anyhow::Context;
 
+use crate::spec::{Key, Keymap};
+
 /// The raw keyboard layout as written in Lua. Field names live here, and
 /// camelCase renaming keeps the Lua side idiomatic without string literals.
 #[derive(serde::Deserialize)]
@@ -40,10 +42,7 @@ struct Anchor {
     note: i32,
 }
 
-pub(super) fn keymap(
-    lua: &mlua::Lua,
-    table: &mlua::Table,
-) -> anyhow::Result<crate::input::keyboard::Keymap> {
+pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Keymap> {
     let config: KeyboardConfig =
         mlua::LuaSerdeExt::from_value(lua, mlua::Value::Table(table.clone()))
             .context("keyboard layout")?;
@@ -100,8 +99,7 @@ pub(super) fn keymap(
     let bindings = |list: Vec<String>, what: &str| -> anyhow::Result<Vec<_>> {
         list.iter()
             .map(|name| {
-                crate::input::keyboard::binding(name)
-                    .with_context(|| format!("keyboard.{what}: unknown key '{name}'"))
+                binding(name).with_context(|| format!("keyboard.{what}: unknown key '{name}'"))
             })
             .collect()
     };
@@ -135,7 +133,7 @@ pub(super) fn keymap(
         config.octave_range
     );
 
-    Ok(crate::input::keyboard::Keymap {
+    Ok(Keymap {
         notes,
         template: config.template.name,
         offset: config.offset,
@@ -148,5 +146,31 @@ pub(super) fn keymap(
         gate: std::time::Duration::from_secs_f64(config.gate_ms / 1000.0),
         velocity: config.velocity,
         octave_range: config.octave_range,
+    })
+}
+
+/// Parses a binding from the keymap. A single character is that key; anything
+/// longer is a name, because keys like backspace have no character to write.
+fn binding(name: &str) -> Option<Key> {
+    let mut chars = name.chars();
+    if let (Some(ch), None) = (chars.next(), chars.next()) {
+        return Some(Key::Char(ch));
+    }
+    Some(match name.to_ascii_lowercase().as_str() {
+        "backspace" => Key::Backspace,
+        "delete" => Key::Delete,
+        "enter" | "return" => Key::Enter,
+        "tab" => Key::Tab,
+        "space" => Key::Char(' '),
+        "esc" | "escape" => Key::Esc,
+        "up" => Key::Up,
+        "down" => Key::Down,
+        "left" => Key::Left,
+        "right" => Key::Right,
+        "home" => Key::Home,
+        "end" => Key::End,
+        "pageup" => Key::PageUp,
+        "pagedown" => Key::PageDown,
+        _ => return None,
     })
 }

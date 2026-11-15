@@ -36,6 +36,7 @@
 | term | type | definition |
 | ---  | ---  | ---        |
 | patch | | baked result of one lua file: instruments, timeline, keymap |
+| session | | one live run of a patch on the output device, from open until drop: device, stream, rings, input |
 | instrument | | lua-defined sound: one waveform, one envelope, baked |
 | note | | one sounding instance of an instrument at a pitch |
 | voice | | one slot that can sound one note at a time |

@@ -1,54 +1,34 @@
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::audio::Event;
+use crate::spec::{Event, Key, Keymap};
 
-/// An isomorphic grid resolved to MIDI notes, built from `lua/keyboard.lua`,
-pub(crate) struct Keymap {
-    pub notes: HashMap<char, u8>,
-    /// Which built-in layout this came from, if it was one.
-    pub template: Option<String>,
-    /// Semitones between rows of the grid.
-    pub offset: i32,
-    pub octave_up: Vec<KeyCode>,
-    pub octave_down: Vec<KeyCode>,
-    pub stop: Vec<KeyCode>,
-    pub help: Vec<KeyCode>,
-    /// How long a note lasts in `Fixed` gating, from `gateMS`.
-    pub gate: Duration,
-    /// Every note's velocity: a key has no depth to time, so there is none
-    /// to measure. MIDI hardware supplies a real one.
-    pub velocity: u8,
-    /// How far, in octaves, the octave keys may move from the start.
-    pub octave_range: i32,
+/// The terminal key a binding names, for matching events and for showing
+/// the binding the way the terminal names it.
+pub(crate) fn code(key: Key) -> KeyCode {
+    match key {
+        Key::Char(ch) => KeyCode::Char(ch),
+        Key::Backspace => KeyCode::Backspace,
+        Key::Delete => KeyCode::Delete,
+        Key::Enter => KeyCode::Enter,
+        Key::Tab => KeyCode::Tab,
+        Key::Esc => KeyCode::Esc,
+        Key::Up => KeyCode::Up,
+        Key::Down => KeyCode::Down,
+        Key::Left => KeyCode::Left,
+        Key::Right => KeyCode::Right,
+        Key::Home => KeyCode::Home,
+        Key::End => KeyCode::End,
+        Key::PageUp => KeyCode::PageUp,
+        Key::PageDown => KeyCode::PageDown,
+    }
 }
 
-/// Parses a binding from the keymap. A single character is that key; anything
-/// longer is a name, because keys like backspace have no character to write.
-pub(crate) fn binding(name: &str) -> Option<KeyCode> {
-    let mut chars = name.chars();
-    if let (Some(ch), None) = (chars.next(), chars.next()) {
-        return Some(KeyCode::Char(ch));
-    }
-    Some(match name.to_ascii_lowercase().as_str() {
-        "backspace" => KeyCode::Backspace,
-        "delete" => KeyCode::Delete,
-        "enter" | "return" => KeyCode::Enter,
-        "tab" => KeyCode::Tab,
-        "space" => KeyCode::Char(' '),
-        "esc" | "escape" => KeyCode::Esc,
-        "up" => KeyCode::Up,
-        "down" => KeyCode::Down,
-        "left" => KeyCode::Left,
-        "right" => KeyCode::Right,
-        "home" => KeyCode::Home,
-        "end" => KeyCode::End,
-        "pageup" => KeyCode::PageUp,
-        "pagedown" => KeyCode::PageDown,
-        _ => return None,
-    })
+/// Whether `code` is one of `keys`.
+fn bound(keys: &[Key], code: KeyCode) -> bool {
+    keys.iter().any(|&key| self::code(key) == code)
 }
 
 /// The keyboard plays the patch's first instrument.
@@ -104,6 +84,10 @@ impl Keyboard {
         }
     }
 
+    pub(crate) fn gating(&self) -> Gating {
+        self.gating
+    }
+
     pub(crate) fn octave(&self) -> i32 {
         self.octave
     }
@@ -135,7 +119,7 @@ impl Keyboard {
         {
             return Outcome::Quit;
         }
-        if self.keymap.help.contains(&key.code) {
+        if bound(&self.keymap.help, key.code) {
             return Outcome::Help;
         }
         Outcome::Continue
@@ -154,7 +138,7 @@ impl Keyboard {
             KeyEventKind::Press => {
                 // tested before press(), so a layout that puts the help key
                 // somewhere in the note grid cannot also sound it
-                if self.keymap.help.contains(&key.code) {
+                if bound(&self.keymap.help, key.code) {
                     return Outcome::Help;
                 }
                 self.press(key.code)
@@ -174,15 +158,15 @@ impl Keyboard {
     fn press(&mut self, code: KeyCode) {
         // control bindings are matched as key codes,
         // so "backspace" works alongside "="
-        if self.keymap.stop.contains(&code) {
+        if bound(&self.keymap.stop, code) {
             self.panic();
             return;
         }
-        if self.keymap.octave_up.contains(&code) {
+        if bound(&self.keymap.octave_up, code) {
             self.octave = (self.octave + 1).min(self.keymap.octave_range);
             return;
         }
-        if self.keymap.octave_down.contains(&code) {
+        if bound(&self.keymap.octave_down, code) {
             self.octave = (self.octave - 1).max(-self.keymap.octave_range);
             return;
         }
@@ -208,7 +192,8 @@ impl Keyboard {
 
         // a retrigger replaces its pitch's deadline rather than adding one
         if let Gating::Fixed = self.gating {
-            self.release_at.insert(note, Instant::now() + self.keymap.gate);
+            self.release_at
+                .insert(note, Instant::now() + self.keymap.gate);
         }
     }
 
@@ -271,6 +256,8 @@ fn shift(note: u8, octave: i32) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     fn keyboard(gating: Gating, gate: Duration) -> (Keyboard, rtrb::Consumer<Event>) {
@@ -280,7 +267,7 @@ mod tests {
             offset: 5,
             octave_up: vec![],
             octave_down: vec![],
-            stop: vec![KeyCode::Backspace],
+            stop: vec![Key::Backspace],
             help: vec![],
             gate,
             velocity: 100,
