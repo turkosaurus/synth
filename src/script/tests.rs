@@ -901,3 +901,11 @@ fn a_cycle_is_rejected() {
         "contains itself",
     );
 }
+
+#[test]
+fn the_default_patch_loads_clean() {
+    // what `synth tui` plays with no file; nothing else exercises it
+    let patch = load_default(48000).unwrap();
+    assert!(patch.clean(), "default.lua raised warnings");
+    assert_eq!(patch.structure[0].kind, "instrument");
+}
