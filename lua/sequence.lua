@@ -1,10 +1,13 @@
 local new -- the constructor, defined below
 
+-- `file:line` of whoever called the constructor, read by Rust
+local site = require("synth.site")
+
 ---@class synth.sequence
 ---@overload fun(opts: table): table
 local sequence = setmetatable({}, {
 	__call = function(_, opts)
-		return new(opts)
+		return setmetatable(new(opts), { kind = "sequence", at = site() })
 	end,
 })
 

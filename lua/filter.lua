@@ -10,6 +10,9 @@
 
 local filter = {}
 
+-- `file:line` of whoever called the constructor, read by Rust
+local site = require("synth.site")
+
 local defaults = {
 	lowpass = { resonance = 0 },
 	highpass = { resonance = 0 },
@@ -23,6 +26,7 @@ local defaults = {
 -- a fresh table: the caller's table and the defaults are never modified
 local function constructor(kind)
 	return function(opts)
+		local at = site()
 		local out = { _kind = kind }
 		for key, value in pairs(defaults[kind]) do
 			out[key] = value
@@ -30,7 +34,9 @@ local function constructor(kind)
 		for key, value in pairs(opts or {}) do
 			out[key] = value
 		end
-		return out
+		-- `_kind` above is the filter type Rust reads; the stamp marks what
+		-- built the table, as every constructor's does
+		return setmetatable(out, { kind = "filter", at = at })
 	end
 end
 

@@ -2,11 +2,14 @@ local slope = require("synth.slope")
 
 local new -- the constructor, defined below
 
+-- `file:line` of whoever called the constructor, read by Rust
+local site = require("synth.site")
+
 ---@class synth.envelope
 ---@overload fun(opts?: table): table
 local envelope = setmetatable({}, {
 	__call = function(_, opts)
-		return new(opts)
+		return setmetatable(new(opts), { kind = "envelope", at = site() })
 	end,
 })
 

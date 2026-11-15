@@ -18,6 +18,21 @@ pub struct Patch {
     pub filter: Option<Filter>,
     /// what `check` shows about `filter`
     pub filter_report: Option<FilterReport>,
+    /// every table a constructor built, by where it sits in the patch
+    pub(crate) structure: Vec<Node>,
+}
+
+/// One table a constructor built, located in the patch. The path is the
+/// identity a later reload matches values by, so it never depends on where
+/// a table sits in memory.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Node {
+    /// where it sits, for example `instruments.tri.envelope`; empty for the root
+    pub(crate) path: String,
+    /// which constructor built it: `instrument`, `envelope`, ...
+    pub(crate) kind: String,
+    /// the `file:line` that called the constructor
+    pub(crate) at: String,
 }
 
 impl Patch {
