@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::fx::{Filter, Svf};
 use super::instrument::{Event, Freqs, Instrument, Timeline};
 
 /// How long a stolen voice's velocity takes to ease to the new note's own.
@@ -285,6 +286,8 @@ pub struct Player {
     sample_rate: f32,
     clock: u64,
     total_samples: u64,
+    /// runs on the sum of every voice
+    filter: Option<Svf>,
 }
 
 impl Player {
@@ -299,6 +302,7 @@ impl Player {
             sample_rate,
             clock: 0,
             total_samples: timeline.total_samples,
+            filter: None,
         }
     }
 
@@ -315,7 +319,15 @@ impl Player {
             sample_rate,
             clock: 0,
             total_samples: u64::MAX,
+            filter: None,
         }
+    }
+
+    /// Run the summed output through `filter`. Built here, at load, so
+    /// the audio callback never allocates one.
+    pub fn with_filter(mut self, filter: Option<Filter>) -> Self {
+        self.filter = filter.map(|f| Svf::new(f, self.sample_rate));
+        self
     }
 
     pub fn total_samples(&self) -> u64 {
@@ -399,7 +411,11 @@ impl Player {
         }
 
         self.clock += 1;
-        self.pools.iter_mut().map(Pool::next).sum()
+        let sum: f32 = self.pools.iter_mut().map(Pool::next).sum();
+        match &mut self.filter {
+            Some(filter) => filter.next(sum),
+            None => sum,
+        }
     }
 }
 
@@ -441,6 +457,7 @@ pub(super) fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tal
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::fx::Kind;
 
     // 4-entry wave so interpolation is checkable by hand
     fn instrument() -> Instrument {
@@ -573,6 +590,25 @@ mod tests {
             freqs(),
             4.0,
         )
+    }
+
+    // the flat instrument's wave sits above zero, so a highpass, which
+    // removes that offset, must leave the output quieter on average
+    #[test]
+    fn filter_shapes_player_output() {
+        let level = |filter: Option<Filter>| {
+            let mut player = player(flat_instrument()).with_filter(filter);
+            let out: Vec<f32> = (0..64).map(|_| player.next()).collect();
+            out[32..].iter().map(|y| y.abs()).sum::<f32>()
+        };
+        let highpass = Filter {
+            kind: Kind::Highpass,
+            cutoff: 20000.0, // clamps just below Nyquist
+            damping: core::f32::consts::SQRT_2,
+            root: 1.0,
+        };
+        let (dry, wet) = (level(None), level(Some(highpass)));
+        assert!(wet < dry, "filtered {wet} is not below unfiltered {dry}");
     }
 
     #[test]

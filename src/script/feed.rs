@@ -68,6 +68,7 @@ pub(super) fn single(
         chain: 0,
         loops: 0,
         reports: vec![("(single note)".to_string(), report)],
+        filter: None,
     })
 }
 
@@ -220,5 +221,6 @@ pub(super) fn sequence(
         chain: table.get(field::CHAIN).unwrap_or(0),
         loops: table.get(field::LOOP).unwrap_or(1),
         reports,
+        filter: None,
     })
 }

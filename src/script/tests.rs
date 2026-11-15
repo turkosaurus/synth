@@ -623,3 +623,98 @@ fn the_shipped_example_loads_clean() {
         );
     }
 }
+
+// a bare instrument file with `filter = <expr>`, or no filter for ""
+fn with_filter(filter: &str) -> anyhow::Result<Patch> {
+    let field = if filter.is_empty() {
+        String::new()
+    } else {
+        format!("filter = {filter},")
+    };
+    let source = format!(
+        r#"
+        local instrument = require("synth.instrument")
+        local filter = require("synth.filter")
+        return instrument.new({{ {field} }})
+        "#
+    );
+    load_source(&source, "test", 48000)
+}
+
+#[track_caller]
+fn rejects(filter: &str, needle: &str) {
+    let error = with_filter(filter).err().expect("should be rejected");
+    assert!(
+        format!("{error:#}").contains(needle),
+        "expected `{needle}` in: {error:#}"
+    );
+}
+
+#[test]
+fn no_filter_means_none() {
+    assert_eq!(with_filter("").unwrap().filter, None);
+}
+
+#[test]
+fn lowpass_reads_into_filter() {
+    let patch = with_filter("filter.lowpass({ cutoff = 800 })").unwrap();
+    assert_eq!(
+        patch.filter,
+        Some(crate::audio::Filter {
+            kind: crate::audio::Kind::Lowpass,
+            cutoff: 800.0,
+            damping: std::f32::consts::SQRT_2,
+            root: 1.0,
+        })
+    );
+}
+
+#[test]
+fn bell_gain_converts_from_db() {
+    let patch = with_filter("filter.bell({ cutoff = 1000, gain = 6 })").unwrap();
+    let root = patch.filter.unwrap().root;
+    assert!((root - 10f32.powf(6.0 / 80.0)).abs() < 1e-4, "root {root}");
+}
+
+#[test]
+fn full_resonance_reaches_min_damping() {
+    let patch = with_filter("filter.lowpass({ cutoff = 800, resonance = 1 })").unwrap();
+    assert_eq!(patch.filter.unwrap().damping, crate::audio::MIN_DAMPING);
+}
+
+#[test]
+fn filter_in_sequence_file() {
+    let source = r#"
+        local sequence = require("synth.sequence")
+        local instrument = require("synth.instrument")
+        local filter = require("synth.filter")
+        return sequence.new({
+            bpm = 60,
+            instruments = { a = instrument.new({}) },
+            steps = { { note = 69, instrument = "a" } },
+            filter = filter.highpass({ cutoff = 200 }),
+        })
+    "#;
+    let patch = load_source(source, "test", 48000).unwrap();
+    assert_eq!(patch.filter.unwrap().kind, crate::audio::Kind::Highpass);
+}
+
+#[test]
+fn misspelled_filter_field_is_named() {
+    rejects("filter.lowpass({ cutoff = 800, cutof = 900 })", "cutof");
+}
+
+#[test]
+fn gain_on_lowpass_is_rejected() {
+    rejects("filter.lowpass({ cutoff = 800, gain = 3 })", "gain");
+}
+
+#[test]
+fn resonance_out_of_range_is_rejected() {
+    rejects("filter.lowpass({ cutoff = 800, resonance = 1.5 })", "resonance");
+}
+
+#[test]
+fn cutoff_must_be_positive() {
+    rejects("filter.lowpass({ cutoff = 0 })", "cutoff");
+}

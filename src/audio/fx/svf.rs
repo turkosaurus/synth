@@ -107,10 +107,14 @@ impl Svf {
 
     /// Glide toward a new cutoff in Hz, clamped to the valid range.
     pub(crate) fn set_cutoff(&mut self, hz: f32) {
-        self.target = hz.clamp(MIN_CUTOFF, MAX_CUTOFF * self.sample_rate);
+        // max then min rather than clamp: at a sample rate so low that the
+        // ceiling falls under MIN_CUTOFF, the ceiling wins instead of panicking
+        self.target = hz.max(MIN_CUTOFF).min(MAX_CUTOFF * self.sample_rate);
     }
 
     /// The cutoff in Hz as it currently stands, partway through any glide.
+    /// Only tests read it today; #49 modulation will.
+    #[cfg(test)]
     pub(crate) fn cutoff(&self) -> f32 {
         self.cutoff
     }

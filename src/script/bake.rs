@@ -31,7 +31,7 @@ pub(super) struct EnvelopeSpec {
 impl mlua::FromLua for InstrumentSpec {
     fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
         let table = spec_table(value, "instrument")?;
-        // keyboard is read by load_in, not here, but is still allowed
+        // keyboard and filter are read by load_in, not here, but are allowed
         expect_only(
             &table,
             "instrument",
@@ -40,6 +40,7 @@ impl mlua::FromLua for InstrumentSpec {
                 field::ENVELOPE,
                 field::KEYBOARD,
                 field::VOICE_COUNT,
+                field::FILTER,
             ],
         )?;
         Ok(Self {
@@ -80,7 +81,7 @@ impl mlua::FromLua for EnvelopeSpec {
     }
 }
 
-fn spec_error(from: &'static str, what: &str, message: String) -> mlua::Error {
+pub(super) fn spec_error(from: &'static str, what: &str, message: String) -> mlua::Error {
     mlua::Error::FromLuaConversionError {
         from,
         to: what.to_string(),
@@ -88,7 +89,7 @@ fn spec_error(from: &'static str, what: &str, message: String) -> mlua::Error {
     }
 }
 
-fn spec_table(value: mlua::Value, what: &str) -> mlua::Result<mlua::Table> {
+pub(super) fn spec_table(value: mlua::Value, what: &str) -> mlua::Result<mlua::Table> {
     match value {
         mlua::Value::Table(table) => Ok(table),
         other => Err(spec_error(
@@ -100,7 +101,7 @@ fn spec_table(value: mlua::Value, what: &str) -> mlua::Result<mlua::Table> {
 }
 
 // Lua validation
-fn spec_entry<T: mlua::FromLua>(
+pub(super) fn spec_entry<T: mlua::FromLua>(
     table: &mlua::Table,
     what: &str,
     name: &str,
@@ -117,7 +118,7 @@ fn spec_entry<T: mlua::FromLua>(
 
 // Lua constructors pass unknown fields through rather than discarding them,
 // so a misspelling arrives here and gets named instead of taking a default.
-fn expect_only(table: &mlua::Table, what: &str, allowed: &[&str]) -> mlua::Result<()> {
+pub(super) fn expect_only(table: &mlua::Table, what: &str, allowed: &[&str]) -> mlua::Result<()> {
     for pair in table.pairs::<mlua::Value, mlua::Value>() {
         let (key, _) = pair?;
         // non-string keys are array indices, which these tables never use

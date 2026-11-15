@@ -9,5 +9,6 @@ mod instrument;
 mod render;
 
 pub use device::{open, stream, Output, Snapshot, Stats};
+pub use fx::{Filter, Kind, MIN_DAMPING};
 pub use instrument::{Event, Freqs, Instrument, Timeline};
 pub use render::Player;

@@ -3,6 +3,7 @@ use tracing::instrument;
 
 mod bake;
 mod feed;
+mod filter;
 mod keymap;
 
 pub use bake::Report;
@@ -20,6 +21,7 @@ const LUA_TUNING: &str = include_str!("../lua/tuning.lua");
 const LUA_INSTRUMENT: &str = include_str!("../lua/instrument.lua");
 const LUA_SEQUENCE: &str = include_str!("../lua/sequence.lua");
 const LUA_KEYBOARD: &str = include_str!("../lua/keyboard.lua");
+const LUA_FILTER: &str = include_str!("../lua/filter.lua");
 
 // require checks package.preload before any filesystem search, so the
 // embedded libraries resolve with no cwd dependency
@@ -35,6 +37,7 @@ fn lua_register(lua: &mlua::Lua) -> anyhow::Result<()> {
         (module::INSTRUMENT, LUA_INSTRUMENT),
         (module::SEQUENCE, LUA_SEQUENCE),
         (module::KEYBOARD, LUA_KEYBOARD),
+        (module::FILTER, LUA_FILTER),
     ] {
         let loader = lua.create_function(move |lua, _: mlua::Value| {
             lua.load(src).set_name(name).eval::<mlua::Value>()
@@ -56,6 +59,7 @@ mod module {
     pub(super) const INSTRUMENT: &str = "synth.instrument";
     pub(super) const SEQUENCE: &str = "synth.sequence";
     pub(super) const KEYBOARD: &str = "synth.keyboard";
+    pub(super) const FILTER: &str = "synth.filter";
 }
 
 mod field {
@@ -85,6 +89,13 @@ mod field {
 
     pub(super) const FREQUENCY: &str = "frequency";
 
+    pub(super) const FILTER: &str = "filter";
+    // reserved: stamped by the synth.filter constructors, never by users
+    pub(super) const KIND: &str = "_kind";
+    pub(super) const CUTOFF: &str = "cutoff";
+    pub(super) const RESONANCE: &str = "resonance";
+    pub(super) const GAIN: &str = "gain";
+
     // Lua's own, not ours: these can never be renamed, but a typo breaks
     // identically, and `PATH` is also written to
     pub(super) const PACKAGE: &str = "package";
@@ -106,6 +117,8 @@ pub struct Patch {
     pub(crate) chain: usize,
     pub(crate) loops: usize,
     pub reports: Vec<(String, Report)>,
+    /// runs on the summed output of every voice
+    pub filter: Option<crate::audio::Filter>,
 }
 
 impl Patch {
@@ -196,12 +209,15 @@ fn load_in(
     };
     let keys = keymap(&lua, &layout)?;
 
+    // read before the instrument, which only checks that the field is allowed
+    let filter: Option<filter::FilterSpec> = table.get(field::FILTER)?;
+
     let instrument_specs: Option<mlua::Table> = table.get(field::INSTRUMENTS)?;
     let steps: Option<mlua::Table> = table.get(field::STEPS)?;
 
     // bound rather than returned directly: the match tuple is a temporary
     // that would otherwise outlive `lua` and borrow it past its drop
-    match (instrument_specs, steps) {
+    let patch = match (instrument_specs, steps) {
         (Some(specs), Some(steps)) => {
             sequence(&lua, &table, &specs, &steps, sample_rate, freqs, keys)
         }
@@ -212,5 +228,9 @@ fn load_in(
             freqs,
             keys,
         ),
-    }
+    };
+    Ok(Patch {
+        filter: filter.map(|spec| spec.0),
+        ..patch?
+    })
 }

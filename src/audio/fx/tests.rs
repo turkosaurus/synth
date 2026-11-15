@@ -184,3 +184,10 @@ fn silence_decays_to_exact_zero() {
     }
     assert_eq!(last, 0.0);
 }
+
+// at a sample rate whose ceiling falls under MIN_CUTOFF, the ceiling wins
+#[test]
+fn tiny_sample_rate_takes_the_ceiling() {
+    let svf = Svf::new(lowpass(1000.0, SQRT_2), 4.0);
+    assert_eq!(svf.cutoff(), 0.49 * 4.0);
+}

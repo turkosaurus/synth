@@ -53,7 +53,8 @@ pub fn run(path: Option<&std::path::Path>, gating: Gating) -> anyhow::Result<()>
         patch.freqs,
         rx,
         output.sample_rate as f32,
-    );
+    )
+    .with_filter(patch.filter);
 
     let stats = Arc::new(Stats::default());
     let _stream = audio::stream(&output, player, Arc::clone(&stats))?;
