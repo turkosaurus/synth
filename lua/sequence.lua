@@ -1,5 +1,3 @@
-#!/usr/bin/env luajit
-
 local sequence = {}
 
 -- `note` and `instrument` stick until a later step changes them,

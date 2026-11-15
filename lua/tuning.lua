@@ -1,5 +1,3 @@
-#!/usr/bin/env luajit
-
 local tuning = {
 	tones = 12, -- notes per octave
 	A4 = 440, -- Hz

@@ -1,0 +1,3 @@
+# stylua's default already, pinned so a constructor call always reads
+# synth.envelope({ ... }) and a later default change cannot flip it
+call_parentheses = "Always"

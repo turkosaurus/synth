@@ -1,5 +1,3 @@
-#!/usr/bin/env luajit
-
 local synth = require("synth")
 
 return synth.sequence.new({

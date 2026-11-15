@@ -1,5 +1,3 @@
-#!/usr/bin/env luajit
-
 local slope = {}
 
 -- 0 is linear, higher is steeper, negative bends the other way

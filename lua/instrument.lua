@@ -1,5 +1,3 @@
-#!/usr/bin/env luajit
-
 local wave = require("synth.wave")
 local envelope = require("synth.envelope")
 
