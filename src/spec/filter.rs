@@ -4,12 +4,19 @@
 /// Which mix of the filter's outputs is heard.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Kind {
+    /// Keeps lows; rolls off above cutoff.
     Lowpass,
+    /// Keeps highs; rolls off below cutoff.
     Highpass,
+    /// Keeps a band at cutoff; peaks at 0 dB.
     Bandpass,
+    /// Removes a narrow band at cutoff.
     Notch,
+    /// Boosts or cuts a band at cutoff.
     Bell,
+    /// Boosts or cuts below cutoff.
     LowShelf,
+    /// Boosts or cuts above cutoff.
     HighShelf,
 }
 
