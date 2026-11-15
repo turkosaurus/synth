@@ -3,7 +3,7 @@ use tracing::{debug_span, instrument};
 
 use crate::spec::{Diagnostic, DiagnosticKind, Instrument, Report};
 
-use super::field;
+use super::{field, schema};
 
 // points per waveform cycle: enough that every note above 23.4 Hz
 // advances at least one entry per sample, small enough that 8 KB
@@ -31,19 +31,9 @@ pub(super) struct EnvelopeSpec {
 impl mlua::FromLua for InstrumentSpec {
     fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
         let table = spec_table(value, "instrument")?;
-        // keyboard and filter are read by load_in, not here, but are allowed
-        expect_only(
-            &table,
-            "instrument",
-            &[
-                field::WAVEFORM,
-                field::ENVELOPE,
-                field::KEYBOARD,
-                field::TUNING,
-                field::VOICE_COUNT,
-                field::FILTER,
-            ],
-        )?;
+        schema::INSTRUMENT
+            .check(&table, None)
+            .map_err(|error| mlua::Error::RuntimeError(format!("{error:#}")))?;
         Ok(Self {
             waveform: spec_entry(&table, "instrument", field::WAVEFORM, "function")?,
             // no wrapping: EnvelopeSpec names its own bad field
@@ -56,19 +46,9 @@ impl mlua::FromLua for InstrumentSpec {
 impl mlua::FromLua for EnvelopeSpec {
     fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
         let table = spec_table(value, "envelope")?;
-        expect_only(
-            &table,
-            "envelope",
-            &[
-                field::ATTACK,
-                field::ATTACK_CURVE,
-                field::DECAY,
-                field::DECAY_CURVE,
-                field::SUSTAIN,
-                field::RELEASE,
-                field::RELEASE_CURVE,
-            ],
-        )?;
+        schema::ENVELOPE
+            .check(&table, None)
+            .map_err(|error| mlua::Error::RuntimeError(format!("{error:#}")))?;
         let what = "envelope";
         Ok(Self {
             attack_ms: spec_entry(&table, what, field::ATTACK, "number")?,
@@ -144,12 +124,6 @@ pub(super) fn bake_instrument(
     spec: InstrumentSpec,
     sample_rate: u32,
 ) -> anyhow::Result<(Instrument, Report)> {
-    anyhow::ensure!(
-        spec.voice_count >= 1,
-        "{} must be at least 1, got {}",
-        field::VOICE_COUNT,
-        spec.voice_count
-    );
     let env = spec.envelope;
 
     let mut clamped = 0usize;
@@ -263,12 +237,6 @@ pub(super) fn inspect(instrument: &Instrument, clamped: usize) -> Report {
     if instrument.release.is_empty() {
         diagnostics.push(shape(
             "release = 0 cuts the note mid-cycle and will click".to_string(),
-        ));
-    }
-    if !(0.0..=1.0).contains(&instrument.sustain_level) {
-        diagnostics.push(Diagnostic::new(
-            DiagnosticKind::Range,
-            format!("sustain {} is outside 0.0..1.0", instrument.sustain_level),
         ));
     }
 
