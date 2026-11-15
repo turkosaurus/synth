@@ -41,10 +41,10 @@ pub struct Filter {
 pub const MIN_DAMPING: f32 = 0.05;
 
 /// Lowest cutoff, which keeps `g` above zero.
-const MIN_CUTOFF: f32 = 10.0;
+pub const MIN_CUTOFF: f32 = 10.0;
 
 /// Highest cutoff as a share of the sample rate. `tan` diverges at 0.5.
-const MAX_CUTOFF: f32 = 0.49;
+pub const MAX_CUTOFF: f32 = 0.49;
 
 /// How long the cutoff takes to glide to a new value, roughly.
 const SMOOTH_MS: f32 = 5.0;

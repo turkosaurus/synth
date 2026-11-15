@@ -718,3 +718,41 @@ fn resonance_out_of_range_is_rejected() {
 fn cutoff_must_be_positive() {
     rejects("filter.lowpass({ cutoff = 0 })", "cutoff");
 }
+
+#[test]
+fn filter_report_keeps_written_values() {
+    let patch = with_filter("filter.bell({ cutoff = 1000, resonance = 0.5, gain = 6 })").unwrap();
+    let report = patch.filter_report.as_ref().unwrap();
+    assert_eq!(report.kind, "bell");
+    assert_eq!(report.cutoff, 1000.0);
+    assert_eq!(report.resonance, Some(0.5));
+    assert_eq!(report.gain, Some(6.0));
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert!(patch.clean());
+}
+
+#[test]
+fn shelf_report_has_no_resonance() {
+    let patch = with_filter("filter.low_shelf({ cutoff = 200, gain = -3 })").unwrap();
+    let report = patch.filter_report.unwrap();
+    assert_eq!(report.resonance, None);
+    assert_eq!(report.gain, Some(-3.0));
+}
+
+#[test]
+fn cutoff_above_ceiling_warns() {
+    // the ceiling at 48 kHz is 0.49 × 48000 = 23520 Hz
+    let patch = with_filter("filter.lowpass({ cutoff = 30000 })").unwrap();
+    let warnings = &patch.filter_report.as_ref().unwrap().warnings;
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("23520"), "{}", warnings[0]);
+    assert!(!patch.clean());
+}
+
+#[test]
+fn cutoff_below_floor_warns() {
+    let patch = with_filter("filter.highpass({ cutoff = 5 })").unwrap();
+    let warnings = &patch.filter_report.as_ref().unwrap().warnings;
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(!patch.clean());
+}

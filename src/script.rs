@@ -7,6 +7,7 @@ mod filter;
 mod keymap;
 
 pub use bake::Report;
+pub use filter::FilterReport;
 
 use feed::{sequence, single};
 use keymap::keymap;
@@ -119,6 +120,8 @@ pub struct Patch {
     pub reports: Vec<(String, Report)>,
     /// runs on the summed output of every voice
     pub filter: Option<crate::audio::Filter>,
+    /// what `check` shows about `filter`
+    pub filter_report: Option<FilterReport>,
 }
 
 impl Patch {
@@ -127,6 +130,10 @@ impl Patch {
         self.reports
             .iter()
             .all(|(_, report)| report.warnings.is_empty())
+            && self
+                .filter_report
+                .as_ref()
+                .is_none_or(|report| report.warnings.is_empty())
     }
 }
 
@@ -230,7 +237,8 @@ fn load_in(
         ),
     };
     Ok(Patch {
-        filter: filter.map(|spec| spec.0),
+        filter_report: filter.as_ref().map(|spec| spec.report(sample_rate)),
+        filter: filter.map(|spec| spec.filter),
         ..patch?
     })
 }
