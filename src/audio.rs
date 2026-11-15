@@ -4,6 +4,7 @@
 //! `instrument` is baked, immutable data that both sides read.
 
 mod device;
+mod fx;
 mod instrument;
 mod render;
 
