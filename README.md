@@ -109,3 +109,7 @@ Non-blocking, pure Rust audio pipeline that consumes a real-time ring buffer.
 ### terminal
 
 Character keyboard and TUI can provide the most minimal input and output, respectively. 
+
+## license
+
+[GPL-3.0-or-later](./LICENSE)

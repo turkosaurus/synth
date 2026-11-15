@@ -1,0 +1,39 @@
+# cargo-about: `mise run notices` writes the third-party license notices
+# that ship beside the binary in every release archive.
+# Keep `accepted` in step with deny.toml's allow list.
+
+accepted = [
+    "GPL-3.0-or-later",
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+
+# build dependencies stay in: luajit-src compiles LuaJIT into the binary
+ignore-dev-dependencies = true
+
+# luajit-src's own LICENSE covers the build crate; LuaJIT, which is compiled
+# into the binary, carries its notice in a subdirectory
+[luajit-src.clarify]
+license = "MIT"
+
+[[luajit-src.clarify.files]]
+path = "LICENSE"
+license = "MIT"
+checksum = "dd595dee72a08369f1967ea7274989facb24ae126d4e6f4c834714ef10a22b11"
+
+[[luajit-src.clarify.files]]
+path = "luajit2/COPYRIGHT"
+license = "MIT"
+checksum = "6cda3076a8c09b31bb1f90da614ea89e7ee194589626eeac613e522849604e47"

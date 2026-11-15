@@ -1,0 +1,11 @@
+synth includes the following third-party software. Each is listed with
+the crates under it and the full text of its license.
+{{#each licenses}}
+
+================================================================================
+{{name}}
+Used by:{{#each used_by}} {{crate.name}} {{crate.version}}{{#unless @last}},{{/unless}}{{/each}}
+================================================================================
+
+{{text}}
+{{/each}}

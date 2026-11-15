@@ -1,0 +1,29 @@
+# cargo-deny: `mise run lint:licenses`. Every crate in the dependency tree,
+# for every release target, must carry a license synth may ship under
+# GPL-3.0-or-later, and come from crates.io.
+
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+
+[licenses]
+# GPLv3-compatible; an `A OR B` expression passes when either is listed
+allow = [
+    "GPL-3.0-or-later",
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
