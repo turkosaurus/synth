@@ -31,8 +31,8 @@ pub(crate) struct Svf {
 
     cutoff: f32,
     target: f32,
-    /// smoother step per sample
-    glide: f32,
+    /// share of the gap to `target` the cutoff closes each sample
+    step: f32,
 
     // coefficients, recomputed whenever the cutoff moves
     k: f32,
@@ -56,7 +56,7 @@ impl Svf {
             cutoff: 0.0,
             target: 0.0,
             // a one-pole smoother: c = 1 / (1 + time constant in samples)
-            glide: 1.0 / (1.0 + SMOOTH_MS / 1000.0 * sample_rate),
+            step: 1.0 / (1.0 + SMOOTH_MS / 1000.0 * sample_rate),
             k: 0.0,
             a1: 0.0,
             a2: 0.0,
@@ -114,7 +114,7 @@ impl Svf {
         if gap.abs() < SETTLED_HZ {
             self.cutoff = self.target;
         } else {
-            self.cutoff += gap * self.glide;
+            self.cutoff += gap * self.step;
         }
         self.coefficients();
     }
@@ -125,7 +125,8 @@ impl Svf {
             Kind::LowShelf => (g / self.root, self.damping),
             Kind::HighShelf => (g * self.root, self.damping),
             Kind::Bell => (g, self.damping / self.amp),
-            _ => (g, self.damping),
+            // listed rather than `_`, so a new kind must choose its own
+            Kind::Lowpass | Kind::Highpass | Kind::Bandpass | Kind::Notch => (g, self.damping),
         };
         self.k = k;
         self.a1 = 1.0 / (1.0 + g * (g + k));
