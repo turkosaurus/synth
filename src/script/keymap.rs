@@ -14,8 +14,8 @@ struct KeyboardConfig {
     octave_down: Vec<String>,
     stop: Vec<String>,
     help: Vec<String>,
-    // camelCase alone would make this `gateMs`; the Lua side spells unit
-    // suffixes in capitals, as envelope's `attackMS` does
+    // camelCase alone would make this `gateMs`; keyboard fields keep the
+    // capitalised unit suffix until they move to snake_case
     #[serde(rename = "gateMS")]
     gate_ms: f64,
     #[serde(rename = "repeatMS")]
