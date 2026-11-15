@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#MISE description="lua stays in script.rs and script/, cpal stays in audio/device.rs"
+
+# Inside Actions, each offending file becomes an error annotation.
+set -euo pipefail
+
+report() {
+    if [ "${GITHUB_ACTIONS:-}" = true ]; then
+        echo "::error file=$1,title=test:separation::$2"
+    else
+        echo "$1: $2" >&2
+    fi
+}
+
+failed=0
+# allowed paths are extended regexes, anchored at the start
+for rule in 'mlua:src/script(\.rs|/)' 'cpal:src/audio/device\.rs'; do
+    name=${rule%%:*}
+    allowed=${rule#*:}
+    if offenders=$(grep -rln "use $name\|$name::" src/ | grep -vE "^($allowed)"); then
+        while IFS= read -r file; do
+            report "$file" "$name must stay in $allowed"
+        done <<<"$offenders"
+        failed=1
+    fi
+done
+exit "$failed"

@@ -9,6 +9,13 @@ on:
 permissions:
   contents: read
 
+# mise prefixes parallel task output with the task's label, and Actions only
+# reads a workflow command such as ::error:: at the start of a line.
+# One task at a time, unprefixed, keeps every annotation.
+env:
+  MISE_JOBS: 1
+  MISE_TASK_OUTPUT: interleave
+
 jobs:
   test:
     runs-on: ubuntu-latest

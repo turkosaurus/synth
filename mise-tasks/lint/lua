@@ -2,18 +2,31 @@
 #MISE description="lua-language-server on lua/, once per runtime; any warning fails"
 
 # Patches run on LuaJIT on desktop and on Lua 5.4 on a device (#33).
+# Inside Actions, each diagnostic also becomes an annotation.
 set -euo pipefail
 
-# a temporary config keeps .luarc.json free for #31
+# temporary files keep .luarc.json free for #31
 config=$(mktemp)
-trap 'rm -f "$config"' EXIT
+report=$(mktemp)
+trap 'rm -f "$config" "$report"' EXIT
 
 failed=0
 for runtime in LuaJIT 'Lua 5.4'; do
-  printf '{"runtime.version": "%s"}' "$runtime" >"$config"
-  echo "lua-language-server: $runtime"
-  if ! lua-language-server --check lua --configpath="$config"; then
-    failed=1
-  fi
+    printf '{"runtime.version": "%s"}' "$runtime" >"$config"
+    echo "lua-language-server: $runtime"
+    if [ "${GITHUB_ACTIONS:-}" != true ]; then
+        if ! lua-language-server --check lua --configpath="$config"; then
+            failed=1
+        fi
+        continue
+    fi
+    : >"$report"
+    if ! lua-language-server --check lua --configpath="$config" \
+        --check_format=json --check_out_path="$report"; then
+        failed=1
+    fi
+    if [ -s "$report" ]; then
+        jq -r --arg root "file://$PWD/" -f .github/annotations/luals.jq "$report"
+    fi
 done
 exit "$failed"

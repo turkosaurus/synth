@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+#MISE description="lint example.lua; nonzero exit on warnings"
+
+# Inside Actions, each warning and error becomes an annotation on the patch.
+# Warnings carry no line yet; #25 adds locations.
+set -euo pipefail
+
+patch=lua/example.lua
+
+if [ "${GITHUB_ACTIONS:-}" != true ]; then
+    exec cargo run -- check "$patch"
+fi
+
+esc() {
+    local s=${1//%/%25}
+    s=${s//$'\r'/%0D}
+    echo "${s//$'\n'/%0A}"
+}
+
+# built first, so every error: line below comes from synth, not the compiler
+cargo build --quiet
+out=$(mktemp)
+trap 'rm -f "$out"' EXIT
+status=0
+cargo run --quiet -- check "$patch" 2>&1 | tee "$out" || status=$?
+
+while IFS= read -r line; do
+    case $line in
+    "  warn  "*) echo "::warning file=$patch,title=synth check::$(esc "${line#  warn  }")" ;;
+    "error: "*) echo "::error file=$patch,title=synth check::$(esc "${line#error: }")" ;;
+    esac
+done <"$out"
+exit "$status"
