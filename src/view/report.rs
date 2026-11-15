@@ -111,6 +111,24 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
         println!();
     }
 
+    if let Some(report) = &patch.filter_report {
+        let mut rows = vec![
+            ("kind", report.kind.to_string()),
+            ("cutoff", format!("{} Hz", report.cutoff)),
+        ];
+        if let Some(resonance) = report.resonance {
+            rows.push(("resonance", format!("{resonance:.2}")));
+        }
+        if let Some(gain) = report.gain {
+            rows.push(("gain", format!("{gain:+.1} dB")));
+        }
+        table::pairs("filter  (summed output)", &rows, true);
+        for warning in &report.warnings {
+            println!("  warn  filter: {warning}");
+        }
+        println!();
+    }
+
     if patch.clean() {
         println!("  ok");
     }

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="src/audio/fx/ builds with core alone: no std, no std-only float methods"
+
+# A text check, not a compiler guarantee; #33's no_std crate replaces it.
+# tests.rs may use std to compare against.
+set -euo pipefail
+
+methods=(
+  floor ceil round trunc fract sqrt powf powi
+  exp exp2 ln log log2 log10
+  sin cos tan tanh sinh cosh asin acos atan atan2
+  hypot cbrt mul_add
+)
+pattern="std::|\.($(IFS='|'; echo "${methods[*]}"))\("
+
+if offenders=$(grep -rnE "$pattern" src/audio/fx.rs src/audio/fx/ \
+  | grep -v '^src/audio/fx/tests\.rs:'); then
+  echo "::error title=test:core::src/audio/fx/ must build with core alone"
+  echo "src/audio/fx/ must build with core alone, found:" >&2
+  echo "$offenders" >&2
+  exit 1
+fi

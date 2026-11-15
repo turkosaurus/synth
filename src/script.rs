@@ -3,6 +3,7 @@ use tracing::instrument;
 
 mod bake;
 mod feed;
+mod filter;
 mod keymap;
 
 use crate::spec::Patch;
@@ -19,10 +20,11 @@ const LUA_TUNING: &str = include_str!("../lua/tuning.lua");
 const LUA_INSTRUMENT: &str = include_str!("../lua/instrument.lua");
 const LUA_SEQUENCE: &str = include_str!("../lua/sequence.lua");
 const LUA_KEYBOARD: &str = include_str!("../lua/keyboard.lua");
+const LUA_FILTER: &str = include_str!("../lua/filter.lua");
 const LUA_ROOT: &str = include_str!("../lua/synth.lua");
 
 /// Every embedded module, by the name `require` finds it under.
-const MODULES: [(&str, &str); 8] = [
+const MODULES: [(&str, &str); 9] = [
     (module::SLOPE, LUA_SLOPE),
     (module::WAVE, LUA_WAVE),
     (module::ENVELOPE, LUA_ENVELOPE),
@@ -30,6 +32,7 @@ const MODULES: [(&str, &str); 8] = [
     (module::INSTRUMENT, LUA_INSTRUMENT),
     (module::SEQUENCE, LUA_SEQUENCE),
     (module::KEYBOARD, LUA_KEYBOARD),
+    (module::FILTER, LUA_FILTER),
     (module::ROOT, LUA_ROOT),
 ];
 
@@ -60,6 +63,7 @@ mod module {
     pub(super) const INSTRUMENT: &str = "synth.instrument";
     pub(super) const SEQUENCE: &str = "synth.sequence";
     pub(super) const KEYBOARD: &str = "synth.keyboard";
+    pub(super) const FILTER: &str = "synth.filter";
     /// Re-exports every other module, so a patch needs one `require`.
     pub(super) const ROOT: &str = "synth";
 }
@@ -91,6 +95,13 @@ mod field {
 
     pub(super) const TUNING: &str = "tuning";
     pub(super) const EQUAL: &str = "equal";
+
+    pub(super) const FILTER: &str = "filter";
+    // reserved: stamped by the synth.filter constructors, never by users
+    pub(super) const KIND: &str = "_kind";
+    pub(super) const CUTOFF: &str = "cutoff";
+    pub(super) const RESONANCE: &str = "resonance";
+    pub(super) const GAIN: &str = "gain";
 
     // Lua's own, not ours: these can never be renamed, but a typo breaks
     // identically, and `PATH` is also written to
@@ -188,12 +199,15 @@ fn load_in(
     };
     let keys = keymap(&lua, &layout)?;
 
+    // read before the instrument, which only checks that the field is allowed
+    let filter: Option<filter::FilterSpec> = table.get(field::FILTER)?;
+
     let instrument_specs: Option<mlua::Table> = table.get(field::INSTRUMENTS)?;
     let steps: Option<mlua::Table> = table.get(field::STEPS)?;
 
     // bound rather than returned directly: the match tuple is a temporary
     // that would otherwise outlive `lua` and borrow it past its drop
-    match (instrument_specs, steps) {
+    let patch = match (instrument_specs, steps) {
         (Some(specs), Some(steps)) => {
             sequence(&lua, &table, &specs, &steps, sample_rate, freqs, keys)
         }
@@ -204,5 +218,10 @@ fn load_in(
             freqs,
             keys,
         ),
-    }
+    };
+    Ok(Patch {
+        filter_report: filter.as_ref().map(|spec| spec.report(sample_rate)),
+        filter: filter.map(|spec| spec.filter),
+        ..patch?
+    })
 }

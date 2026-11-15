@@ -4,6 +4,7 @@
 //! Both play [`crate::spec`] data, which `script` bakes.
 
 mod device;
+mod fx;
 mod render;
 
 pub use device::{open, stream, Output, Snapshot, Stats, Stream};

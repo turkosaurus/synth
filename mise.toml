@@ -42,8 +42,10 @@ fi
 exit $failed
 '''
 
+# test:core is a file task: mise-tasks/test/core
+
 [tasks.test]
-depends = ["test:rust", "test:separation", "test:example"]
+depends = ["test:rust", "test:separation", "test:core", "test:example"]
 description = "run all tests: cargo tests and the example patch lint"
 
 [tasks.lint]

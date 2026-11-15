@@ -38,3 +38,6 @@ unreachable_pub = "warn"
 # modules live in `name.rs` beside a `name/` directory, never `name/mod.rs`
 [lints.clippy]
 mod_module_files = "warn"
+
+[dev-dependencies]
+realfft = "3.5.1"
