@@ -17,6 +17,8 @@ struct KeyboardConfig {
     // ms, implied rather than spelled in the Lua name
     #[serde(rename = "gate")]
     gate_ms: f64,
+    #[serde(rename = "repeat_window")]
+    repeat_ms: f64,
     velocity: u8,
     octave_range: i32,
 }
@@ -118,6 +120,14 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
         config.gate_ms
     );
 
+    // zero is allowed: it turns repeat detection off for a terminal or OS
+    // that does not autorepeat
+    anyhow::ensure!(
+        config.repeat_ms.is_finite() && config.repeat_ms >= 0.0,
+        "keyboard.repeat_window must be zero or a positive number of milliseconds, got {}",
+        config.repeat_ms
+    );
+
     // 0 is MIDI's note-off spelled as a note-on, and above 127 is not MIDI
     anyhow::ensure!(
         (1..=127).contains(&config.velocity),
@@ -143,6 +153,7 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
         // just leaves help unreachable
         help: bindings(config.help, "help")?,
         gate: std::time::Duration::from_secs_f64(config.gate_ms / 1000.0),
+        repeat: std::time::Duration::from_secs_f64(config.repeat_ms / 1000.0),
         velocity: config.velocity,
         octave_range: config.octave_range,
     })

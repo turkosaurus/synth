@@ -18,6 +18,11 @@ local defaults = {
 	help = { "/", "?" },
 	-- note length when the terminal cannot report key release
 	gate = 200, -- ms
+	-- when the terminal cannot report key release, a press of a key this
+	-- soon after its last press is taken as OS autorepeat and ignored. It
+	-- must outlast the OS repeat delay (GNOME defaults to 500ms, X11 to
+	-- 660ms), and one key cannot retrigger faster than this. 0 turns it off.
+	repeat_window = 550, -- ms
 	-- a key has no depth to time, so every note gets this velocity; 1 to 127
 	velocity = 100,
 	-- how many octaves octave_up and octave_down may move from the start
