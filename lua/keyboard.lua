@@ -20,9 +20,9 @@ local defaults = {
 	gateMS = 200,
 	-- when the terminal cannot report key release, a press of a key this
 	-- soon after its last press is taken as OS autorepeat and ignored. It
-	-- must outlast the OS repeat delay (X11 defaults to 660ms), and one key
-	-- cannot retrigger faster than this. 0 turns it off.
-	repeatMS = 750,
+	-- must outlast the OS repeat delay (GNOME defaults to 500ms, X11 to
+	-- 660ms), and one key cannot retrigger faster than this. 0 turns it off.
+	repeatMS = 550,
 	-- a key has no depth to time, so every note gets this velocity; 1 to 127
 	velocity = 100,
 	-- how many octaves octaveUp and octaveDown may move from the start
