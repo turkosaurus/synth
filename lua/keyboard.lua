@@ -1,5 +1,3 @@
-#!/usr/bin/env luajit
-
 local keyboard = {}
 
 -- A fretboard like layout, where each row is a string.
