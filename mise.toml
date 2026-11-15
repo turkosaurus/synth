@@ -47,23 +47,7 @@ run = "cargo clippy --all-targets -- -D warnings"
 description = "clippy pedantic, for review; reports but never fails"
 run = "cargo clippy --all-targets -- -W clippy::pedantic"
 
-[tasks."lint:lua"]
-description = "lua-language-server on lua/, once per runtime; any warning fails"
-run = '''
-set -eu
-# patches run on LuaJIT on desktop and on Lua 5.4 on a device (#33)
-config=$(mktemp)
-trap 'rm -f "$config"' EXIT
-failed=0
-for runtime in LuaJIT 'Lua 5.4'; do
-  printf '{"runtime.version": "%s"}' "$runtime" > "$config"
-  echo "lua-language-server: $runtime"
-  if ! lua-language-server --check lua --configpath="$config"; then
-    failed=1
-  fi
-done
-exit $failed
-'''
+# lint:lua is a file task: mise-tasks/lint/lua
 
 [tasks."lint:stylua"]
 description = "stylua formatting check on lua/; any difference fails"

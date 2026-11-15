@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+#MISE description="lua-language-server on lua/, once per runtime; any warning fails"
+
+# Patches run on LuaJIT on desktop and on Lua 5.4 on a device (#33).
+set -euo pipefail
+
+# a temporary config keeps .luarc.json free for #31
+config=$(mktemp)
+trap 'rm -f "$config"' EXIT
+
+failed=0
+for runtime in LuaJIT 'Lua 5.4'; do
+  printf '{"runtime.version": "%s"}' "$runtime" >"$config"
+  echo "lua-language-server: $runtime"
+  if ! lua-language-server --check lua --configpath="$config"; then
+    failed=1
+  fi
+done
+exit "$failed"
