@@ -32,7 +32,7 @@ pub(crate) struct Keymap {
     pub octave_down: Vec<Key>,
     pub stop: Vec<Key>,
     pub help: Vec<Key>,
-    /// How long a note lasts in `Fixed` gating, from `gateMS`.
+    /// How long a note lasts in `Fixed` gating, from the keyboard's `gate`.
     pub gate: Duration,
     /// Every note's velocity: a key has no depth to time, so there is none
     /// to measure. MIDI hardware supplies a real one.
