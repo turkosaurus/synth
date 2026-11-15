@@ -67,6 +67,9 @@ pub(crate) struct Keyboard {
     sounding: Option<u8>,
     /// when each `Fixed` note ends; one per note, so a chord releases whole
     release_at: HashMap<u8, Instant>,
+    /// when each key last arrived as a press, repeats included, so a
+    /// `Fixed` key held down stays one note however long the repeats run
+    pressed_at: HashMap<char, Instant>,
     last_key: Option<char>,
 }
 
@@ -80,6 +83,7 @@ impl Keyboard {
             held: HashMap::new(),
             sounding: None,
             release_at: HashMap::new(),
+            pressed_at: HashMap::new(),
             last_key: None,
         }
     }
@@ -174,6 +178,9 @@ impl Keyboard {
         let KeyCode::Char(ch) = code else {
             return;
         };
+        if self.repeated(ch, Instant::now()) {
+            return;
+        }
         let Some(&base) = self.keymap.notes.get(&ch) else {
             return;
         };
@@ -194,6 +201,22 @@ impl Keyboard {
         if let Gating::Fixed = self.gating {
             self.release_at
                 .insert(note, Instant::now() + self.keymap.gate);
+        }
+    }
+
+    /// Whether a press of `ch` is an autorepeat rather than a new keystroke.
+    /// The terminal sends repeats as presses in both modes, so this decides
+    /// from what the keyboard already knows.
+    fn repeated(&mut self, ch: char, now: Instant) -> bool {
+        match self.gating {
+            // a key cannot go down twice without a release in between
+            Gating::Held => self.held.contains_key(&ch),
+            // no release ever arrives, so only timing tells them apart;
+            // the keymap's `repeat` is how close counts
+            Gating::Fixed => self
+                .pressed_at
+                .insert(ch, now)
+                .is_some_and(|last| now - last < self.keymap.repeat),
         }
     }
 
@@ -223,6 +246,7 @@ impl Keyboard {
         self.held.clear();
         self.sounding = None;
         self.release_at.clear();
+        self.pressed_at.clear();
         self.send(Event::AllNotesOff {
             instrument: INSTRUMENT,
         });
@@ -260,9 +284,11 @@ mod tests {
 
     use super::*;
 
+    const REPEAT: Duration = Duration::from_millis(750);
+
     fn keyboard(gating: Gating, gate: Duration) -> (Keyboard, rtrb::Consumer<Event>) {
         let keymap = Keymap {
-            notes: HashMap::from([('a', 60), ('s', 62)]),
+            notes: HashMap::from([('a', 60), ('s', 62), ('A', 72)]),
             template: None,
             offset: 5,
             octave_up: vec![],
@@ -270,6 +296,7 @@ mod tests {
             stop: vec![Key::Backspace],
             help: vec![],
             gate,
+            repeat: REPEAT,
             velocity: 100,
             octave_range: 4,
         };
@@ -279,6 +306,24 @@ mod tests {
 
     fn press(keyboard: &mut Keyboard, code: KeyCode) {
         keyboard.handle(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    fn release(keyboard: &mut Keyboard, code: KeyCode) {
+        keyboard.handle(KeyEvent::new_with_kind(
+            code,
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+    }
+
+    fn ons(rx: &mut rtrb::Consumer<Event>) -> Vec<u8> {
+        drain(rx)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::NoteOn { note, .. } => Some(note),
+                _ => None,
+            })
+            .collect()
     }
 
     fn drain(rx: &mut rtrb::Consumer<Event>) -> Vec<Event> {
@@ -332,5 +377,80 @@ mod tests {
         );
         assert!(keyboard.held.is_empty());
         assert_eq!(keyboard.sounding(), None);
+    }
+
+    #[test]
+    fn held_gating_ignores_autorepeat() {
+        let (mut keyboard, mut rx) = keyboard(Gating::Held, Duration::ZERO);
+        for _ in 0..3 {
+            press(&mut keyboard, KeyCode::Char('a'));
+        }
+        assert_eq!(ons(&mut rx), vec![60]);
+    }
+
+    #[test]
+    fn held_gating_retriggers_after_release() {
+        let (mut keyboard, mut rx) = keyboard(Gating::Held, Duration::ZERO);
+        press(&mut keyboard, KeyCode::Char('a'));
+        release(&mut keyboard, KeyCode::Char('a'));
+        press(&mut keyboard, KeyCode::Char('a'));
+        assert_eq!(ons(&mut rx), vec![60, 60]);
+    }
+
+    #[test]
+    fn held_gating_plays_and_releases_shifted_keys() {
+        let (mut keyboard, mut rx) = keyboard(Gating::Held, Duration::ZERO);
+        press(&mut keyboard, KeyCode::Char('A'));
+        press(&mut keyboard, KeyCode::Char('A'));
+        release(&mut keyboard, KeyCode::Char('A'));
+        assert_eq!(
+            drain(&mut rx),
+            vec![
+                Event::NoteOn {
+                    instrument: INSTRUMENT,
+                    note: 72,
+                    velocity: 100,
+                },
+                Event::NoteOff {
+                    instrument: INSTRUMENT,
+                    note: 72,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn fixed_gating_ignores_autorepeat() {
+        let (mut keyboard, mut rx) = keyboard(Gating::Fixed, Duration::ZERO);
+        press(&mut keyboard, KeyCode::Char('a'));
+        // the note ends before the first repeat, as with a short gate
+        keyboard.tick();
+        press(&mut keyboard, KeyCode::Char('a'));
+        assert_eq!(ons(&mut rx), vec![60]);
+    }
+
+    #[test]
+    fn fixed_gating_window_follows_the_repeats() {
+        let (mut keyboard, _rx) = keyboard(Gating::Fixed, Duration::ZERO);
+        let start = Instant::now();
+        let step = REPEAT / 2;
+        assert!(!keyboard.repeated('a', start));
+        // each repeat restarts the window, so a long hold stays one note
+        assert!(keyboard.repeated('a', start + step));
+        assert!(keyboard.repeated('a', start + step * 2));
+        assert!(keyboard.repeated('a', start + step * 3));
+        // a press after a full window of quiet is a new keystroke
+        assert!(!keyboard.repeated('a', start + step * 3 + REPEAT));
+        // keys are timed separately
+        assert!(!keyboard.repeated('s', start + step));
+    }
+
+    #[test]
+    fn fixed_gating_zero_window_retriggers_every_press() {
+        let (mut keyboard, mut rx) = keyboard(Gating::Fixed, Duration::ZERO);
+        keyboard.keymap.repeat = Duration::ZERO;
+        press(&mut keyboard, KeyCode::Char('a'));
+        press(&mut keyboard, KeyCode::Char('a'));
+        assert_eq!(ons(&mut rx), vec![60, 60]);
     }
 }
