@@ -44,6 +44,7 @@ struct Anchor {
 }
 
 pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Keymap> {
+    super::schema::KEYBOARD.check(table, None)?;
     let config: KeyboardConfig =
         mlua::LuaSerdeExt::from_value(lua, mlua::Value::Table(table.clone()))
             .context("keyboard layout")?;
@@ -113,34 +114,7 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
         "keyboard.stop must name at least one key to silence with"
     );
 
-    // a zero gate would end each note on the poll after it starts
-    anyhow::ensure!(
-        config.gate_ms.is_finite() && config.gate_ms > 0.0,
-        "keyboard.gate must be a positive number of milliseconds, got {}",
-        config.gate_ms
-    );
-
-    // zero is allowed: it turns repeat detection off for a terminal or OS
-    // that does not autorepeat
-    anyhow::ensure!(
-        config.repeat_ms.is_finite() && config.repeat_ms >= 0.0,
-        "keyboard.repeat_window must be zero or a positive number of milliseconds, got {}",
-        config.repeat_ms
-    );
-
-    // 0 is MIDI's note-off spelled as a note-on, and above 127 is not MIDI
-    anyhow::ensure!(
-        (1..=127).contains(&config.velocity),
-        "keyboard.velocity must be 1 to 127, got {}",
-        config.velocity
-    );
-
-    // past 10 octaves every shift leaves MIDI's 0..127 note range
-    anyhow::ensure!(
-        (0..=10).contains(&config.octave_range),
-        "keyboard.octave_range must be 0 to 10, got {}",
-        config.octave_range
-    );
+    // gate, repeat_window, velocity, and octave_range ranges: schema::KEYBOARD
 
     Ok(Keymap {
         notes,

@@ -69,16 +69,13 @@ fn flags_weak_peak() {
 }
 
 #[test]
-fn flags_zero_release_and_bad_sustain() {
+fn flags_zero_release() {
+    // sustain outside 0..1 is no longer a warning here: schema::ENVELOPE
+    // rejects it before anything is baked
     let mut instrument = instrument_with(wave_from(triangle, 2048));
     instrument.release = vec![];
-    instrument.sustain_level = 1.5;
     let report = inspect(&instrument, 0);
     assert!(report.diagnostics.iter().any(|d| d.message.contains("release = 0")));
-    assert!(report
-        .diagnostics
-        .iter()
-        .any(|d| d.message.contains("outside 0.0..1.0")));
 }
 
 // 48000 Hz at 60 bpm makes one beat exactly 48000 samples
@@ -276,7 +273,7 @@ fn voice_count_reaches_the_instrument() {
 fn zero_voices_is_rejected() {
     let error = with_voices("voice_count = 0").err().expect("0 voices");
     assert!(
-        format!("{error:#}").contains("voice_count must be at least 1"),
+        format!("{error:#}").contains("`voice_count` is 0; must be at least 1"),
         "unexpected: {error:#}"
     );
 }
@@ -932,4 +929,86 @@ fn diagnostics_name_the_line_that_built_the_value() {
     assert_eq!(peak.at.as_deref(), Some("song.lua:5"));
     let cutoff = &patch.filter_report.as_ref().unwrap().diagnostics[0];
     assert_eq!(cutoff.at.as_deref(), Some("song.lua:8"));
+}
+
+#[test]
+fn out_of_range_values_name_the_field_and_the_line() {
+    rejects_patch(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({
+            envelope = synth.envelope({ sustain = 1.5 }),
+        })
+        "#,
+        "envelope made at test:4: `sustain` is 1.5; must be 0 to 1",
+    );
+    rejects_patch(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({ keyboard = synth.keyboard({ velocity = 0 }) })
+        "#,
+        "keyboard made at test:3: `velocity` is 0; must be 1 to 127",
+    );
+}
+
+#[test]
+fn a_bad_step_is_named_by_its_position() {
+    rejects_patch(
+        r#"
+        local synth = require("synth")
+        return synth.sequence({
+            instruments = { a = synth.instrument({}) },
+            instrument = "a",
+            steps = { { note = 60 }, { note = 200 } },
+        })
+        "#,
+        "step 2: `note` is 200; must be 0 to 127",
+    );
+}
+
+#[test]
+fn a_fractional_count_is_rejected() {
+    rejects_patch(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({ voice_count = 2.5 })
+        "#,
+        "`voice_count` must be a whole number, got 2.5",
+    );
+}
+
+/// Calls a constructor module, which is a table with `__call`, as Lua would.
+fn construct(lua: &mlua::Lua, module: &str, opts: mlua::Table) -> mlua::Table {
+    let require: mlua::Function = lua.globals().get("require").unwrap();
+    let table: mlua::Table = require.call(module).unwrap();
+    let call: mlua::Function = table.metatable().unwrap().get("__call").unwrap();
+    call.call((table, opts)).unwrap()
+}
+
+#[test]
+fn every_lua_default_passes_rust_validation() {
+    // Lua owns the defaults and Rust owns what is valid; this keeps the two
+    // from drifting apart
+    let lua = mlua::Lua::new();
+    lua_register(&lua).unwrap();
+    let empty = || lua.create_table().unwrap();
+
+    let envelope = construct(&lua, "synth.envelope", empty());
+    super::schema::ENVELOPE.check(&envelope, None).unwrap();
+    let instrument = construct(&lua, "synth.instrument", empty());
+    super::schema::INSTRUMENT.check(&instrument, None).unwrap();
+    let keyboard = construct(&lua, "synth.keyboard", empty());
+    super::schema::KEYBOARD.check(&keyboard, None).unwrap();
+
+    // a sequence needs one step to resolve, which takes every step default
+    let opts: mlua::Table = lua
+        .load(r#"return { instruments = {}, steps = { {} } }"#)
+        .eval()
+        .unwrap();
+    let sequence = construct(&lua, "synth.sequence", opts);
+    super::schema::SEQUENCE.check(&sequence, None).unwrap();
+    let steps: mlua::Table = sequence.get("steps").unwrap();
+    for step in steps.sequence_values::<mlua::Table>() {
+        super::schema::STEP.check(&step.unwrap(), None).unwrap();
+    }
 }
