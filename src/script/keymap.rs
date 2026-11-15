@@ -2,10 +2,10 @@ use anyhow::Context;
 
 use crate::spec::{Key, Keymap};
 
-/// The raw keyboard layout as written in Lua. Field names live here, and
-/// camelCase renaming keeps the Lua side idiomatic without string literals.
+/// The raw keyboard layout as written in Lua. Field names live here, in
+/// the same snake_case the Lua side uses.
 #[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct KeyboardConfig {
     anchor: Anchor,
     offset: i32,
@@ -14,11 +14,10 @@ struct KeyboardConfig {
     octave_down: Vec<String>,
     stop: Vec<String>,
     help: Vec<String>,
-    // camelCase alone would make this `gateMs`; keyboard fields keep the
-    // capitalised unit suffix until they move to snake_case
-    #[serde(rename = "gateMS")]
+    // ms, implied rather than spelled in the Lua name
+    #[serde(rename = "gate")]
     gate_ms: f64,
-    #[serde(rename = "repeatMS")]
+    #[serde(rename = "repeat_window")]
     repeat_ms: f64,
     velocity: u8,
     octave_range: i32,
@@ -117,7 +116,7 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
     // a zero gate would end each note on the poll after it starts
     anyhow::ensure!(
         config.gate_ms.is_finite() && config.gate_ms > 0.0,
-        "keyboard.gateMS must be a positive number of milliseconds, got {}",
+        "keyboard.gate must be a positive number of milliseconds, got {}",
         config.gate_ms
     );
 
@@ -125,7 +124,7 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
     // that does not autorepeat
     anyhow::ensure!(
         config.repeat_ms.is_finite() && config.repeat_ms >= 0.0,
-        "keyboard.repeatMS must be zero or a positive number of milliseconds, got {}",
+        "keyboard.repeat_window must be zero or a positive number of milliseconds, got {}",
         config.repeat_ms
     );
 
@@ -139,7 +138,7 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
     // past 10 octaves every shift leaves MIDI's 0..127 note range
     anyhow::ensure!(
         (0..=10).contains(&config.octave_range),
-        "keyboard.octaveRange must be 0 to 10, got {}",
+        "keyboard.octave_range must be 0 to 10, got {}",
         config.octave_range
     );
 
@@ -147,8 +146,8 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
         notes,
         template: config.template.name,
         offset: config.offset,
-        octave_up: bindings(config.octave_up, "octaveUp")?,
-        octave_down: bindings(config.octave_down, "octaveDown")?,
+        octave_up: bindings(config.octave_up, "octave_up")?,
+        octave_down: bindings(config.octave_down, "octave_down")?,
         stop,
         // may be empty: a layout that would rather not spend a key on it
         // just leaves help unreachable

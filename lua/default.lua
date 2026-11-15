@@ -14,7 +14,8 @@ return synth.instrument.new({
 		release_curve = synth.slope.exponential(2),
 	}),
 	voiceCount = 4,
+	tuning = synth.tuning.equal({ reference_hz = 440, reference_note = 69, tones = 12 }),
 	keyboard = synth.keyboard.new({
-		gateMS = 400, -- note length when the terminal cannot report key release
+		gate = 400, -- ms; note length when the terminal cannot report key release
 	}),
 })

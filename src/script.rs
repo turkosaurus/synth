@@ -89,7 +89,8 @@ mod field {
     pub(super) const CHAIN: &str = "chain";
     pub(super) const LOOP: &str = "loop";
 
-    pub(super) const FREQUENCY: &str = "frequency";
+    pub(super) const TUNING: &str = "tuning";
+    pub(super) const EQUAL: &str = "equal";
 
     // Lua's own, not ours: these can never be renamed, but a typo breaks
     // identically, and `PATH` is also written to
@@ -155,12 +156,22 @@ fn load_in(
     };
 
     let require: mlua::Function = lua.globals().get(field::REQUIRE)?;
-    let tuning: mlua::Table = require.call(module::TUNING)?;
-    let to_hz: mlua::Function = tuning.get(field::FREQUENCY)?;
+
+    // a patch may ship its own tuning; otherwise equal temperament at A440
+    let to_hz: mlua::Function = match table.get(field::TUNING)? {
+        Some(function) => function,
+        None => {
+            let tuning: mlua::Table = require.call(module::TUNING)?;
+            let equal: mlua::Function = tuning.get(field::EQUAL)?;
+            equal.call(())?
+        }
+    };
 
     let mut freqs = Vec::with_capacity(128);
     for note in 0..128 {
-        let hz: f64 = to_hz.call(note)?;
+        let hz: f64 = to_hz
+            .call(note)
+            .with_context(|| format!("tuning must return Hz for note {note}"))?;
         freqs.push(hz as f32);
     }
 
