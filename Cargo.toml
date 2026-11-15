@@ -43,3 +43,12 @@ mod_module_files = "warn"
 
 [dev-dependencies]
 realfft = "3.5.1"
+
+# The pure-Rust PulseAudio client cannot keep a short buffer fed unoptimized,
+# so debug builds (`mise run tui`) starve the stream. Optimizing only the
+# audio path keeps synth's own code debuggable.
+[profile.dev.package.pulseaudio]
+opt-level = 3
+
+[profile.dev.package.cpal]
+opt-level = 3

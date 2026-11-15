@@ -96,6 +96,7 @@ pub struct Snapshot {
 pub struct Output {
     pub(crate) device: cpal::Device,
     pub(crate) config: cpal::SupportedStreamConfig,
+    pub(crate) buffer: cpal::BufferSize,
     pub sample_rate: u32,
     pub channels: usize,
 }
@@ -136,12 +137,41 @@ pub fn open() -> anyhow::Result<Output> {
     let channels = config.channels() as usize;
     debug!(sample_rate, channels, format = ?config.sample_format(), "device");
 
+    let buffer = buffer_size(host.id(), config.buffer_size());
+    debug!(?buffer, "buffer");
+
     Ok(Output {
         device,
         config,
+        buffer,
         sample_rate,
         channels,
     })
+}
+
+/// Frames per callback asked of the PulseAudio host: about 22 ms from callback
+/// to speaker at 48 kHz, against about 2 s when the server picks.
+const PULSE_FRAMES: u32 = 256;
+
+/// The buffer to ask the host for. PulseAudio, given no request, queues about
+/// 2 s of audio, which is fine for a sequence but makes live keys lag.
+/// Every other host's default is already short, so it is left alone.
+fn buffer_size(host: cpal::HostId, supported: &cpal::SupportedBufferSize) -> cpal::BufferSize {
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd"
+    ))]
+    if host == cpal::HostId::PulseAudio {
+        let frames = match *supported {
+            cpal::SupportedBufferSize::Range { min, max } => PULSE_FRAMES.clamp(min, max.max(min)),
+            cpal::SupportedBufferSize::Unknown => PULSE_FRAMES,
+        };
+        return cpal::BufferSize::Fixed(frames);
+    }
+    let _ = (host, supported);
+    cpal::BufferSize::Default
 }
 
 /// Build and start a stream that drives `player`, reporting into `stats`.
@@ -154,7 +184,10 @@ pub fn stream(
     let sample_rate = output.sample_rate;
     let faults = Arc::clone(&stats);
     let stream = output.device.build_output_stream(
-        output.config.into(),
+        cpal::StreamConfig {
+            buffer_size: output.buffer,
+            ..output.config.into()
+        },
         move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let start = Instant::now();
             let tally = fill(out, channels, &mut player);
@@ -191,4 +224,44 @@ pub fn stream(
     )?;
     stream.play()?;
     Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pulseaudio_gets_a_short_fixed_buffer() {
+        let range = cpal::SupportedBufferSize::Range { min: 64, max: 8192 };
+        assert_eq!(
+            buffer_size(cpal::HostId::PulseAudio, &range),
+            cpal::BufferSize::Fixed(PULSE_FRAMES)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pulseaudio_buffer_stays_in_the_supported_range() {
+        let range = cpal::SupportedBufferSize::Range { min: 512, max: 8192 };
+        assert_eq!(
+            buffer_size(cpal::HostId::PulseAudio, &range),
+            cpal::BufferSize::Fixed(512)
+        );
+        let unknown = cpal::SupportedBufferSize::Unknown;
+        assert_eq!(
+            buffer_size(cpal::HostId::PulseAudio, &unknown),
+            cpal::BufferSize::Fixed(PULSE_FRAMES)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn alsa_keeps_its_default() {
+        let range = cpal::SupportedBufferSize::Range { min: 64, max: 8192 };
+        assert_eq!(
+            buffer_size(cpal::HostId::Alsa, &range),
+            cpal::BufferSize::Default
+        );
+    }
 }
