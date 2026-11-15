@@ -8,7 +8,8 @@
 # version as it stands, with nothing to compare against.
 #
 # Prints version=X.Y.Z and release=true|false, and appends both to
-# $GITHUB_OUTPUT inside Actions. Every outcome is also an annotation.
+# $GITHUB_OUTPUT inside Actions. A release is a notice and a failure an error;
+# an unchanged version is only logged.
 set -euo pipefail
 
 base=${VERSION_BASE:-}
@@ -50,7 +51,8 @@ if [ -n "$base" ]; then
     # Not a release, not a failure.
     if [ "$new" = "$old" ]; then
         emit "release=false"
-        note "version stays $new; nothing to release"
+        # a log line, not a notice: notices are for a run that does something
+        echo "version stays $new; nothing to release"
         exit 0
     fi
 
