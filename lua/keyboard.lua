@@ -1,4 +1,12 @@
-local keyboard = {}
+local new -- the constructor, defined below
+
+---@class synth.keyboard
+---@overload fun(opts?: table): table
+local keyboard = setmetatable({}, {
+	__call = function(_, opts)
+		return new(opts)
+	end,
+})
 
 -- A fretboard like layout, where each row is a string.
 -- Offset represents the semitones between rows.
@@ -53,19 +61,23 @@ function keyboard.template(name)
 	return template
 end
 
--- Fills gaps without discarding anything, so a misspelled field reaches Rust
--- and gets named instead of silently taking a default.
-function keyboard.new(opts)
-	opts = opts or {}
+-- A new table: the caller's fields, then defaults for any left out. The
+-- caller's table is left alone, and nothing is discarded, so a misspelled
+-- field reaches Rust and gets named instead of silently taking a default.
+new = function(opts)
+	local out = {}
+	for key, value in pairs(opts or {}) do
+		out[key] = value
+	end
 	for key, default in pairs(defaults) do
-		if opts[key] == nil then
-			opts[key] = default
+		if out[key] == nil then
+			out[key] = default
 		end
 	end
-	if opts.template == nil then
-		opts.template = keyboard.template("qwerty")
+	if out.template == nil then
+		out.template = keyboard.template("qwerty")
 	end
-	return opts
+	return out
 end
 
 return keyboard

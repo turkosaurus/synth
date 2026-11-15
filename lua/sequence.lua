@@ -1,4 +1,12 @@
-local sequence = {}
+local new -- the constructor, defined below
+
+---@class synth.sequence
+---@overload fun(opts: table): table
+local sequence = setmetatable({}, {
+	__call = function(_, opts)
+		return new(opts)
+	end,
+})
 
 -- `note` and `instrument` stick until a later step changes them,
 -- so a step only names what differs.
@@ -55,10 +63,10 @@ local known = {
 
 -- Either a flat `steps` list, or `patterns` named and arranged by `chain`.
 -- Patterns are flattened here, so Rust only ever sees one step list.
-function sequence.new(opts)
+new = function(opts)
 	for key in pairs(opts) do
 		if not known[key] then
-			error("sequence.new: unknown field '" .. tostring(key) .. "'", 2)
+			error("sequence: unknown field '" .. tostring(key) .. "'", 2)
 		end
 	end
 

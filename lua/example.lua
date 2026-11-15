@@ -1,15 +1,15 @@
 local synth = require("synth")
 
-return synth.sequence.new({
+return synth.sequence({
 	bpm = 140,
 	division = 4, -- subdivisions per beat; 4 = 16th notes, 8 = 32nd notes, etc.
 	instrument = "tri", -- default for every pattern; stickiness resets per pattern
 	filter = synth.filter.lowpass({ cutoff = 2000, resonance = 0.3 }), -- on the summed output
 
 	instruments = {
-		tri = synth.instrument.new({
+		tri = synth.instrument({
 			waveform = synth.wave.triangle,
-			envelope = synth.envelope.new({
+			envelope = synth.envelope({
 				attack = 100, -- ms
 				decay = 150,
 				sustain = 0.7,

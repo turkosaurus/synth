@@ -70,12 +70,11 @@ mod module {
 
 mod field {
     pub(super) const REQUIRE: &str = "require";
-    pub(super) const NEW: &str = "new";
 
     pub(super) const WAVEFORM: &str = "waveform";
     pub(super) const ENVELOPE: &str = "envelope";
     pub(super) const KEYBOARD: &str = "keyboard";
-    pub(super) const VOICE_COUNT: &str = "voiceCount";
+    pub(super) const VOICE_COUNT: &str = "voice_count";
 
     pub(super) const ATTACK: &str = "attack";
     pub(super) const ATTACK_CURVE: &str = "attack_curve";
@@ -105,6 +104,7 @@ mod field {
 
     // Lua's own, not ours: these can never be renamed, but a typo breaks
     // identically, and `PATH` is also written to
+    pub(super) const CALL: &str = "__call";
     pub(super) const PACKAGE: &str = "package";
     pub(super) const PRELOAD: &str = "preload";
     pub(super) const PATH: &str = "path";
@@ -189,12 +189,16 @@ fn load_in(
     // a patch may ship its own layout; otherwise the embedded default
     let layout: mlua::Table = match table.get(field::KEYBOARD)? {
         Some(table) => table,
-        // the module exposes a constructor now, so the default layout is
-        // keyboard.new() rather than the module table itself
+        // the module is itself the constructor, so the default layout is
+        // keyboard() rather than the module table
         None => {
             let keyboard: mlua::Table = require.call(module::KEYBOARD)?;
-            let new: mlua::Function = keyboard.get(field::NEW)?;
-            new.call(())?
+            // a callable table: __call receives the module itself first
+            let call: mlua::Function = keyboard
+                .metatable()
+                .context("synth.keyboard is not callable")?
+                .get(field::CALL)?;
+            call.call((keyboard, mlua::Value::Nil))?
         }
     };
     let keys = keymap(&lua, &layout)?;

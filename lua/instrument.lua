@@ -1,22 +1,35 @@
 local wave = require("synth.wave")
 local envelope = require("synth.envelope")
 
-local instrument = {}
+local new -- the constructor, defined below
 
--- passes opts through for the same reason envelope.new does
-function instrument.new(opts)
-	opts = opts or {}
-	if opts.waveform == nil then
-		opts.waveform = wave.triangle
+---@class synth.instrument
+---@overload fun(opts?: table): table
+local instrument = setmetatable({}, {
+	__call = function(_, opts)
+		return new(opts)
+	end,
+})
+
+-- A new table, built the way envelope builds one: the caller's fields, then
+-- defaults, unknown fields kept for Rust to name.
+new = function(opts)
+	local out = {}
+	for key, value in pairs(opts or {}) do
+		out[key] = value
 	end
-	if opts.envelope == nil then
-		opts.envelope = envelope.new()
+	if out.waveform == nil then
+		out.waveform = wave.triangle
+	end
+	-- a fresh envelope per instrument, never one shared between them
+	if out.envelope == nil then
+		out.envelope = envelope()
 	end
 	-- notes this instrument can sound at once; 1 is mono
-	if opts.voiceCount == nil then
-		opts.voiceCount = 1
+	if out.voice_count == nil then
+		out.voice_count = 1
 	end
-	return opts
+	return out
 end
 
 return instrument

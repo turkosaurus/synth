@@ -2,9 +2,9 @@
 -- this doubles as a template for a new instrument.
 local synth = require("synth")
 
-return synth.instrument.new({
+return synth.instrument({
 	waveform = synth.wave.triangle,
-	envelope = synth.envelope.new({
+	envelope = synth.envelope({
 		attack = 20, -- ms
 		attack_curve = synth.slope.linear(),
 		decay = 80, -- ms
@@ -13,9 +13,9 @@ return synth.instrument.new({
 		release = 800, -- ms
 		release_curve = synth.slope.exponential(2),
 	}),
-	voiceCount = 4,
+	voice_count = 4,
 	tuning = synth.tuning.equal({ reference_hz = 440, reference_note = 69, tones = 12 }),
-	keyboard = synth.keyboard.new({
+	keyboard = synth.keyboard({
 		gate = 400, -- ms; note length when the terminal cannot report key release
 	}),
 })

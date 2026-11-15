@@ -89,9 +89,9 @@ fn seq(steps: &str) -> Patch {
         local instrument = require("synth.instrument")
         local wave = require("synth.wave")
         local envelope = require("synth.envelope")
-        return sequence.new({{
+        return sequence({{
             bpm = 60,
-            instruments = {{ a = instrument.new({{}}), b = instrument.new({{}}) }},
+            instruments = {{ a = instrument({{}}), b = instrument({{}}) }},
             steps = {steps},
         }})
         "#
@@ -230,9 +230,9 @@ fn an_unknown_instrument_name_is_rejected() {
     let source = r#"
         local sequence = require("synth.sequence")
         local instrument = require("synth.instrument")
-        return sequence.new({
+        return sequence({
             bpm = 60,
-            instruments = { a = instrument.new({}) },
+            instruments = { a = instrument({}) },
             steps = { { note = 69, instrument = "nope" } },
         })
     "#;
@@ -250,9 +250,9 @@ fn with_voices(voice_count: &str) -> anyhow::Result<Patch> {
         r#"
         local sequence = require("synth.sequence")
         local instrument = require("synth.instrument")
-        return sequence.new({{
+        return sequence({{
             bpm = 60,
-            instruments = {{ a = instrument.new({{ {voice_count} }}) }},
+            instruments = {{ a = instrument({{ {voice_count} }}) }},
             steps = {{ {{ note = 69, instrument = "a" }} }},
         }})
         "#
@@ -268,15 +268,15 @@ fn voice_count_defaults_to_mono() {
 
 #[test]
 fn voice_count_reaches_the_instrument() {
-    let patch = with_voices("voiceCount = 8").unwrap();
+    let patch = with_voices("voice_count = 8").unwrap();
     assert_eq!(patch.timeline.instruments[0].voice_count, 8);
 }
 
 #[test]
 fn zero_voices_is_rejected() {
-    let error = with_voices("voiceCount = 0").err().expect("0 voices");
+    let error = with_voices("voice_count = 0").err().expect("0 voices");
     assert!(
-        format!("{error:#}").contains("voiceCount must be at least 1"),
+        format!("{error:#}").contains("voice_count must be at least 1"),
         "unexpected: {error:#}"
     );
 }
@@ -296,9 +296,9 @@ fn one_instrument(attack_ms: u32, rate: u32) -> Patch {
         local instrument = require("synth.instrument")
         local wave = require("synth.wave")
         local envelope = require("synth.envelope")
-        return instrument.new({{
+        return instrument({{
             waveform = wave.triangle,
-            envelope = envelope.new({{
+            envelope = envelope({{
                 attack = {attack_ms}, decay = 120,
                 sustain = 0.7, release = 250,
             }}),
@@ -313,10 +313,10 @@ fn arranged(body: &str) -> Patch {
         r#"
         local sequence = require("synth.sequence")
         local instrument = require("synth.instrument")
-        return sequence.new({{
+        return sequence({{
             bpm = 60,
             instrument = "a",
-            instruments = {{ a = instrument.new({{}}), b = instrument.new({{}}) }},
+            instruments = {{ a = instrument({{}}), b = instrument({{}}) }},
             {body}
         }})
         "#
@@ -345,10 +345,10 @@ fn changing_offset_keeps_the_anchor_on_pitch() {
         local wave = require("synth.wave")
         local envelope = require("synth.envelope")
         local keyboard = require("synth.keyboard")
-        return instrument.new({
+        return instrument({
             waveform = wave.triangle,
-            envelope = envelope.new({}),
-            keyboard = keyboard.new({ offset = 7 }),
+            envelope = envelope({}),
+            keyboard = keyboard({ offset = 7 }),
         })
     "#;
     let patch = load_source(source, "test", 48000).unwrap();
@@ -364,8 +364,8 @@ fn an_explicit_shifted_row_of_the_wrong_length_is_rejected() {
     let source = r#"
         local instrument = require("synth.instrument")
         local keyboard = require("synth.keyboard")
-        return instrument.new({
-            keyboard = keyboard.new({
+        return instrument({
+            keyboard = keyboard({
                 template = { rows = { "asdfghjkl" }, shifted = { "ASD" } },
             }),
         })
@@ -392,7 +392,7 @@ fn the_frequency_table_covers_every_midi_note() {
 fn a_patch_tuning_replaces_equal_temperament() {
     let source = r#"
         local synth = require("synth")
-        return synth.instrument.new({
+        return synth.instrument({
             tuning = synth.tuning.equal({ reference_hz = 432, tones = 19 }),
         })
     "#;
@@ -403,10 +403,33 @@ fn a_patch_tuning_replaces_equal_temperament() {
 }
 
 #[test]
+fn constructors_leave_the_callers_table_alone() {
+    // a patch reusing one options table must not find defaults written into it
+    let source = r#"
+        local synth = require("synth")
+        local opts = { attack = 5 }
+        local first = synth.envelope(opts)
+        assert(opts.release == nil, "defaults leaked into the caller's table")
+        assert(first ~= opts, "returned the caller's table")
+        return synth.instrument({ envelope = first })
+    "#;
+    load_source(source, "test", 48000).unwrap();
+}
+
+#[test]
+fn the_old_new_entry_points_are_gone() {
+    let source = r#"
+        local synth = require("synth")
+        return synth.instrument.new({})
+    "#;
+    assert!(load_source(source, "test", 48000).is_err());
+}
+
+#[test]
 fn tuning_equal_rejects_unknown_fields() {
     let source = r#"
         local synth = require("synth")
-        return synth.instrument.new({ tuning = synth.tuning.equal({ A4 = 440 }) })
+        return synth.instrument({ tuning = synth.tuning.equal({ A4 = 440 }) })
     "#;
     let error = load_source(source, "test", 48000)
         .err()
@@ -499,7 +522,7 @@ fn a_reused_pattern_resolves_to_the_same_instrument_each_time() {
 fn a_chain_naming_an_undefined_pattern_is_rejected() {
     let source = r#"
         local sequence = require("synth.sequence")
-        return sequence.new({
+        return sequence({
             patterns = { x = {} },
             chain = { "nope" },
         })
@@ -523,9 +546,9 @@ fn baked(ctor: &str, ms: u32) -> (Vec<f32>, Vec<f32>) {
         local instrument = require("synth.instrument")
         local wave = require("synth.wave")
         local envelope = require("synth.envelope")
-        return instrument.new({{
+        return instrument({{
             waveform = wave.triangle,
-            envelope = envelope.new({{
+            envelope = envelope({{
                 attack = {ms},
                 attack_curve = {ctor},
                 sustain = 1,
@@ -584,8 +607,8 @@ fn handing_over_a_slope_constructor_uncalled_is_caught() {
         local slope = require("synth.slope")
         local instrument = require("synth.instrument")
         local envelope = require("synth.envelope")
-        return instrument.new({
-            envelope = envelope.new({ attack = 10, attack_curve = slope.exponential }),
+        return instrument({
+            envelope = envelope({ attack = 10, attack_curve = slope.exponential }),
         })
     "#;
     let error = load_source(source, "test", 1000)
@@ -664,7 +687,7 @@ fn with_filter(filter: &str) -> anyhow::Result<Patch> {
         r#"
         local instrument = require("synth.instrument")
         local filter = require("synth.filter")
-        return instrument.new({{ {field} }})
+        return instrument({{ {field} }})
         "#
     );
     load_source(&source, "test", 48000)
@@ -717,9 +740,9 @@ fn filter_in_sequence_file() {
         local sequence = require("synth.sequence")
         local instrument = require("synth.instrument")
         local filter = require("synth.filter")
-        return sequence.new({
+        return sequence({
             bpm = 60,
-            instruments = { a = instrument.new({}) },
+            instruments = { a = instrument({}) },
             steps = { { note = 69, instrument = "a" } },
             filter = filter.highpass({ cutoff = 200 }),
         })
