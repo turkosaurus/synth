@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::instrument::{Event, Freqs, Instrument, Timeline};
+use crate::spec::{Event, Freqs, Instrument, Timeline};
 
 /// How long a stolen voice's velocity takes to ease to the new note's own.
 /// Short enough to hear as the new note, long enough not to click.
@@ -290,7 +290,11 @@ pub struct Player {
 impl Player {
     pub fn new(timeline: Timeline, freqs: Freqs, sample_rate: f32) -> Self {
         Self {
-            pools: timeline.instruments.into_iter().map(Pool::new).collect(),
+            pools: timeline
+                .instruments
+                .into_iter()
+                .map(|instrument| Pool::new(Arc::new(instrument)))
+                .collect(),
             freqs,
             feed: Feed::Timeline {
                 events: timeline.events,
@@ -303,13 +307,16 @@ impl Player {
     }
 
     pub(crate) fn live(
-        instruments: Vec<Arc<Instrument>>,
+        instruments: Vec<Instrument>,
         freqs: Freqs,
         events: rtrb::Consumer<Event>,
         sample_rate: f32,
     ) -> Self {
         Self {
-            pools: instruments.into_iter().map(Pool::new).collect(),
+            pools: instruments
+                .into_iter()
+                .map(|instrument| Pool::new(Arc::new(instrument)))
+                .collect(),
             freqs,
             feed: Feed::Live(events),
             sample_rate,
@@ -559,7 +566,7 @@ mod tests {
     fn player(instrument: Instrument) -> Player {
         Player::new(
             Timeline {
-                instruments: vec![Arc::new(instrument)],
+                instruments: vec![instrument],
                 events: vec![(
                     0,
                     Event::NoteOn {
@@ -578,7 +585,7 @@ mod tests {
     #[test]
     fn a_live_feed_drains_the_queue() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![Arc::new(flat_instrument())], freqs(), rx, 4.0);
+        let mut player = Player::live(vec![flat_instrument()], freqs(), rx, 4.0);
 
         // nothing queued yet, so silence
         assert_eq!(player.next(), 0.0);
@@ -603,7 +610,7 @@ mod tests {
     #[test]
     fn a_noteoff_for_a_note_that_is_not_sounding_is_ignored() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![Arc::new(flat_instrument())], freqs(), rx, 4.0);
+        let mut player = Player::live(vec![flat_instrument()], freqs(), rx, 4.0);
 
         tx.push(Event::NoteOn {
             instrument: 0,
@@ -626,7 +633,7 @@ mod tests {
     #[test]
     fn velocity_zero_means_note_off() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![Arc::new(flat_instrument())], freqs(), rx, 4.0);
+        let mut player = Player::live(vec![flat_instrument()], freqs(), rx, 4.0);
 
         tx.push(Event::NoteOn {
             instrument: 0,
@@ -649,7 +656,7 @@ mod tests {
     #[test]
     fn velocity_scales_the_output() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![Arc::new(flat_instrument())], freqs(), rx, 4.0);
+        let mut player = Player::live(vec![flat_instrument()], freqs(), rx, 4.0);
 
         tx.push(Event::NoteOn {
             instrument: 0,
@@ -740,10 +747,7 @@ mod tests {
         let (tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let mut instrument = flat_instrument();
         instrument.voice_count = voice_count;
-        (
-            tx,
-            Player::live(vec![Arc::new(instrument)], freqs(), rx, 4.0),
-        )
+        (tx, Player::live(vec![instrument], freqs(), rx, 4.0))
     }
 
     fn on(note: u8) -> Event {
@@ -801,7 +805,7 @@ mod tests {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let mut instrument = flat_instrument();
         instrument.release = vec![1.0, 0.5, 0.25];
-        let mut player = Player::live(vec![Arc::new(instrument)], freqs(), rx, 4.0);
+        let mut player = Player::live(vec![instrument], freqs(), rx, 4.0);
 
         tx.push(on(2)).unwrap();
         player.next();
@@ -816,7 +820,7 @@ mod tests {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let mut instrument = flat_instrument();
         instrument.release = vec![1.0, 0.5, 0.25];
-        let mut player = Player::live(vec![Arc::new(instrument)], freqs(), rx, 4.0);
+        let mut player = Player::live(vec![instrument], freqs(), rx, 4.0);
 
         tx.push(on(2)).unwrap();
         player.next();
@@ -852,7 +856,7 @@ mod tests {
         let mut instrument = flat_instrument();
         instrument.voice_count = 2;
         instrument.release = vec![1.0; 16]; // long enough to still be fading
-        let mut player = Player::live(vec![Arc::new(instrument)], freqs(), rx, 4.0);
+        let mut player = Player::live(vec![instrument], freqs(), rx, 4.0);
 
         for event in [on(1), on(2), off(2), on(3)] {
             tx.push(event).unwrap();
@@ -891,7 +895,7 @@ mod tests {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let mut wide = flat_instrument();
         wide.voice_count = 2;
-        let instruments = vec![Arc::new(wide), Arc::new(flat_instrument())];
+        let instruments = vec![wide, flat_instrument()];
         let mut player = Player::live(instruments, freqs(), rx, 4.0);
 
         tx.push(on(1)).unwrap();
@@ -914,7 +918,7 @@ mod tests {
     #[test]
     fn instruments_do_not_share_voices() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let instruments = vec![Arc::new(flat_instrument()), Arc::new(flat_instrument())];
+        let instruments = vec![flat_instrument(), flat_instrument()];
         let mut player = Player::live(instruments, freqs(), rx, 4.0);
 
         tx.push(on(2)).unwrap();
