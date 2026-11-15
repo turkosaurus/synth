@@ -12,16 +12,16 @@ local defaults = {
 		note = 69, -- MIDI A4
 	},
 	offset = 5, -- semitones offset between rows
-	octaveUp = { "=", "+" },
-	octaveDown = { "-", "_" },
+	octave_up = { "=", "+" },
+	octave_down = { "-", "_" },
 	stop = { "escape" }, -- silence everything; must not be empty
 	help = { "/", "?" },
 	-- note length when the terminal cannot report key release
-	gateMS = 200,
+	gate = 200, -- ms
 	-- a key has no depth to time, so every note gets this velocity; 1 to 127
 	velocity = 100,
-	-- how many octaves octaveUp and octaveDown may move from the start
-	octaveRange = 4,
+	-- how many octaves octave_up and octave_down may move from the start
+	octave_range = 4,
 }
 
 -- Grid of character keys in their lowercase and shifted forms.
