@@ -34,6 +34,9 @@ pub(crate) struct Keymap {
     pub help: Vec<Key>,
     /// How long a note lasts in `Fixed` gating, from `gateMS`.
     pub gate: Duration,
+    /// In `Fixed` gating, a press of a key this soon after its last press
+    /// is taken as autorepeat and ignored, from `repeatMS`.
+    pub repeat: Duration,
     /// Every note's velocity: a key has no depth to time, so there is none
     /// to measure. MIDI hardware supplies a real one.
     pub velocity: u8,
