@@ -73,13 +73,13 @@ mod field {
     pub(super) const KEYBOARD: &str = "keyboard";
     pub(super) const VOICE_COUNT: &str = "voiceCount";
 
-    pub(super) const ATTACK_MS: &str = "attackMS";
-    pub(super) const ATTACK_FUNC: &str = "attackFunc";
-    pub(super) const DECAY_MS: &str = "decayMS";
-    pub(super) const DECAY_FUNC: &str = "decayFunc";
-    pub(super) const SUSTAIN_LEVEL: &str = "sustainLevel";
-    pub(super) const RELEASE_MS: &str = "releaseMS";
-    pub(super) const RELEASE_FUNC: &str = "releaseFunc";
+    pub(super) const ATTACK: &str = "attack";
+    pub(super) const ATTACK_CURVE: &str = "attack_curve";
+    pub(super) const DECAY: &str = "decay";
+    pub(super) const DECAY_CURVE: &str = "decay_curve";
+    pub(super) const SUSTAIN: &str = "sustain";
+    pub(super) const RELEASE: &str = "release";
+    pub(super) const RELEASE_CURVE: &str = "release_curve";
 
     pub(super) const BPM: &str = "bpm";
     pub(super) const DIVISION: &str = "division";
