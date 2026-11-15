@@ -58,7 +58,17 @@ run = "cargo clippy --all-targets -- -W clippy::pedantic"
 
 [tasks."lint:stylua"]
 description = "stylua formatting check on lua/; any difference fails"
-run = "stylua --check lua || { echo '::error title=lint:stylua::lua/ is not formatted; run stylua lua'; exit 1; }"
+# stylua exits 1 when files need formatting and 2 when it cannot run,
+# which is a bad stylua.toml or a Lua syntax error
+run = '''
+code=0
+stylua --check lua || code=$?
+case $code in
+  0) ;;
+  1) echo '::error title=lint:stylua::lua/ is not formatted; run stylua lua'; exit 1 ;;
+  *) echo '::error title=lint:stylua::stylua could not run; see its error above (stylua.toml or Lua syntax)'; exit 1 ;;
+esac
+'''
 
 [tasks."test:rust"]
 description = "cargo tests"
