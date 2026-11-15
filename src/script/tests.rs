@@ -687,7 +687,7 @@ fn with_filter(filter: &str) -> anyhow::Result<Patch> {
         r#"
         local instrument = require("synth.instrument")
         local filter = require("synth.filter")
-        return instrument.new({{ {field} }})
+        return instrument({{ {field} }})
         "#
     );
     load_source(&source, "test", 48000)
@@ -740,9 +740,9 @@ fn filter_in_sequence_file() {
         local sequence = require("synth.sequence")
         local instrument = require("synth.instrument")
         local filter = require("synth.filter")
-        return sequence.new({
+        return sequence({
             bpm = 60,
-            instruments = { a = instrument.new({}) },
+            instruments = { a = instrument({}) },
             steps = { { note = 69, instrument = "a" } },
             filter = filter.highpass({ cutoff = 200 }),
         })
