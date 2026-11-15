@@ -77,13 +77,13 @@ mod field {
     pub(super) const KEYBOARD: &str = "keyboard";
     pub(super) const VOICE_COUNT: &str = "voiceCount";
 
-    pub(super) const ATTACK_MS: &str = "attackMS";
-    pub(super) const ATTACK_FUNC: &str = "attackFunc";
-    pub(super) const DECAY_MS: &str = "decayMS";
-    pub(super) const DECAY_FUNC: &str = "decayFunc";
-    pub(super) const SUSTAIN_LEVEL: &str = "sustainLevel";
-    pub(super) const RELEASE_MS: &str = "releaseMS";
-    pub(super) const RELEASE_FUNC: &str = "releaseFunc";
+    pub(super) const ATTACK: &str = "attack";
+    pub(super) const ATTACK_CURVE: &str = "attack_curve";
+    pub(super) const DECAY: &str = "decay";
+    pub(super) const DECAY_CURVE: &str = "decay_curve";
+    pub(super) const SUSTAIN: &str = "sustain";
+    pub(super) const RELEASE: &str = "release";
+    pub(super) const RELEASE_CURVE: &str = "release_curve";
 
     pub(super) const BPM: &str = "bpm";
     pub(super) const DIVISION: &str = "division";
@@ -93,7 +93,8 @@ mod field {
     pub(super) const CHAIN: &str = "chain";
     pub(super) const LOOP: &str = "loop";
 
-    pub(super) const FREQUENCY: &str = "frequency";
+    pub(super) const TUNING: &str = "tuning";
+    pub(super) const EQUAL: &str = "equal";
 
     pub(super) const FILTER: &str = "filter";
     // reserved: stamped by the synth.filter constructors, never by users
@@ -166,12 +167,22 @@ fn load_in(
     };
 
     let require: mlua::Function = lua.globals().get(field::REQUIRE)?;
-    let tuning: mlua::Table = require.call(module::TUNING)?;
-    let to_hz: mlua::Function = tuning.get(field::FREQUENCY)?;
+
+    // a patch may ship its own tuning; otherwise equal temperament at A440
+    let to_hz: mlua::Function = match table.get(field::TUNING)? {
+        Some(function) => function,
+        None => {
+            let tuning: mlua::Table = require.call(module::TUNING)?;
+            let equal: mlua::Function = tuning.get(field::EQUAL)?;
+            equal.call(())?
+        }
+    };
 
     let mut freqs = Vec::with_capacity(128);
     for note in 0..128 {
-        let hz: f64 = to_hz.call(note)?;
+        let hz: f64 = to_hz
+            .call(note)
+            .with_context(|| format!("tuning must return Hz for note {note}"))?;
         freqs.push(hz as f32);
     }
 

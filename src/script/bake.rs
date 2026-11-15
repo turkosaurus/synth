@@ -39,6 +39,7 @@ impl mlua::FromLua for InstrumentSpec {
                 field::WAVEFORM,
                 field::ENVELOPE,
                 field::KEYBOARD,
+                field::TUNING,
                 field::VOICE_COUNT,
                 field::FILTER,
             ],
@@ -59,24 +60,24 @@ impl mlua::FromLua for EnvelopeSpec {
             &table,
             "envelope",
             &[
-                field::ATTACK_MS,
-                field::ATTACK_FUNC,
-                field::DECAY_MS,
-                field::DECAY_FUNC,
-                field::SUSTAIN_LEVEL,
-                field::RELEASE_MS,
-                field::RELEASE_FUNC,
+                field::ATTACK,
+                field::ATTACK_CURVE,
+                field::DECAY,
+                field::DECAY_CURVE,
+                field::SUSTAIN,
+                field::RELEASE,
+                field::RELEASE_CURVE,
             ],
         )?;
         let what = "envelope";
         Ok(Self {
-            attack_ms: spec_entry(&table, what, field::ATTACK_MS, "number")?,
-            attack_func: spec_entry(&table, what, field::ATTACK_FUNC, "function")?,
-            decay_ms: spec_entry(&table, what, field::DECAY_MS, "number")?,
-            decay_func: spec_entry(&table, what, field::DECAY_FUNC, "function")?,
-            sustain_level: spec_entry(&table, what, field::SUSTAIN_LEVEL, "number")?,
-            release_ms: spec_entry(&table, what, field::RELEASE_MS, "number")?,
-            release_func: spec_entry(&table, what, field::RELEASE_FUNC, "function")?,
+            attack_ms: spec_entry(&table, what, field::ATTACK, "number")?,
+            attack_func: spec_entry(&table, what, field::ATTACK_CURVE, "function")?,
+            decay_ms: spec_entry(&table, what, field::DECAY, "number")?,
+            decay_func: spec_entry(&table, what, field::DECAY_CURVE, "function")?,
+            sustain_level: spec_entry(&table, what, field::SUSTAIN, "number")?,
+            release_ms: spec_entry(&table, what, field::RELEASE, "number")?,
+            release_func: spec_entry(&table, what, field::RELEASE_CURVE, "function")?,
         })
     }
 }
@@ -199,21 +200,21 @@ pub(super) fn bake_instrument(
             curve(
                 env.attack_ms,
                 &env.attack_func,
-                field::ATTACK_FUNC,
+                field::ATTACK_CURVE,
                 0.0,
                 1.0,
             )?,
             curve(
                 env.decay_ms,
                 &env.decay_func,
-                field::DECAY_FUNC,
+                field::DECAY_CURVE,
                 1.0,
                 sustain_level,
             )?,
             curve(
                 env.release_ms,
                 &env.release_func,
-                field::RELEASE_FUNC,
+                field::RELEASE_CURVE,
                 sustain_level,
                 0.0,
             )?,
@@ -259,11 +260,11 @@ pub(super) fn inspect(instrument: &Instrument, clamped: usize) -> Report {
         warnings.push(format!("waveform peaks at only {peak:.3}"));
     }
     if instrument.release.is_empty() {
-        warnings.push("releaseMS = 0 cuts the note mid-cycle and will click".to_string());
+        warnings.push("release = 0 cuts the note mid-cycle and will click".to_string());
     }
     if !(0.0..=1.0).contains(&instrument.sustain_level) {
         warnings.push(format!(
-            "sustainLevel {} is outside 0.0..1.0",
+            "sustain {} is outside 0.0..1.0",
             instrument.sustain_level
         ));
     }

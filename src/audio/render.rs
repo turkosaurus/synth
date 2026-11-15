@@ -74,7 +74,7 @@ impl Note {
         self.idx = 0;
     }
 
-    // the loop falls through zero-length segments, e.g. attackMS = 0
+    // the loop falls through zero-length segments, e.g. attack = 0
     fn envelope(&mut self) -> f32 {
         loop {
             match self.stage {

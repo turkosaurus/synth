@@ -50,6 +50,7 @@ local known = {
 	steps = true,
 	keyboard = true,
 	filter = true,
+	tuning = true,
 }
 
 -- Either a flat `steps` list, or `patterns` named and arranged by `chain`.
@@ -92,6 +93,7 @@ function sequence.new(opts)
 		chain = #chain,
 		loop = loop,
 		keyboard = opts.keyboard, -- a sequence may ship its own layout
+		tuning = opts.tuning, -- and its own tuning
 		filter = opts.filter, -- runs on the summed output
 	}
 end

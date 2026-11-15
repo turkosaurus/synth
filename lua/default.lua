@@ -5,16 +5,17 @@ local synth = require("synth")
 return synth.instrument.new({
 	waveform = synth.wave.triangle,
 	envelope = synth.envelope.new({
-		attackMS = 20,
-		attackFunc = synth.slope.linear(),
-		decayMS = 80,
-		decayFunc = synth.slope.linear(),
-		sustainLevel = 0.7, -- 0.0 to 1.0
-		releaseMS = 800,
-		releaseFunc = synth.slope.exponential(2),
+		attack = 20, -- ms
+		attack_curve = synth.slope.linear(),
+		decay = 80, -- ms
+		decay_curve = synth.slope.linear(),
+		sustain = 0.7, -- 0.0 to 1.0
+		release = 800, -- ms
+		release_curve = synth.slope.exponential(2),
 	}),
 	voiceCount = 4,
+	tuning = synth.tuning.equal({ reference_hz = 440, reference_note = 69, tones = 12 }),
 	keyboard = synth.keyboard.new({
-		gateMS = 400, -- note length when the terminal cannot report key release
+		gate = 400, -- ms; note length when the terminal cannot report key release
 	}),
 })

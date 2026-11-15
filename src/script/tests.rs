@@ -74,7 +74,7 @@ fn flags_zero_release_and_bad_sustain() {
     instrument.release = vec![];
     instrument.sustain_level = 1.5;
     let report = inspect(&instrument, 0);
-    assert!(report.warnings.iter().any(|w| w.contains("releaseMS = 0")));
+    assert!(report.warnings.iter().any(|w| w.contains("release = 0")));
     assert!(report
         .warnings
         .iter()
@@ -299,8 +299,8 @@ fn one_instrument(attack_ms: u32, rate: u32) -> Patch {
         return instrument.new({{
             waveform = wave.triangle,
             envelope = envelope.new({{
-                attackMS = {attack_ms}, decayMS = 120,
-                sustainLevel = 0.7, releaseMS = 250,
+                attack = {attack_ms}, decay = 120,
+                sustain = 0.7, release = 250,
             }}),
         }})
         "#
@@ -386,6 +386,35 @@ fn the_frequency_table_covers_every_midi_note() {
     assert!((patch.freqs[69] - 440.0).abs() < 0.01);
     assert!((patch.freqs[81] - 880.0).abs() < 0.01);
     assert!((patch.freqs[57] - 220.0).abs() < 0.01);
+}
+
+#[test]
+fn a_patch_tuning_replaces_equal_temperament() {
+    let source = r#"
+        local synth = require("synth")
+        return synth.instrument.new({
+            tuning = synth.tuning.equal({ reference_hz = 432, tones = 19 }),
+        })
+    "#;
+    let patch = load_source(source, "test", 48000).unwrap();
+    assert!((patch.freqs[69] - 432.0).abs() < 0.01);
+    // 19 steps up is one octave in 19-EDO
+    assert!((patch.freqs[88] - 864.0).abs() < 0.01);
+}
+
+#[test]
+fn tuning_equal_rejects_unknown_fields() {
+    let source = r#"
+        local synth = require("synth")
+        return synth.instrument.new({ tuning = synth.tuning.equal({ A4 = 440 }) })
+    "#;
+    let error = load_source(source, "test", 48000)
+        .err()
+        .expect("A4 is the old name");
+    assert!(
+        format!("{error:#}").contains("unknown field 'A4'"),
+        "unexpected: {error:#}"
+    );
 }
 
 #[test]
@@ -486,7 +515,7 @@ fn a_chain_naming_an_undefined_pattern_is_rejected() {
 
 // The slopes are Lua, so they are exercised through a real bake. Rate
 // 1000 makes milliseconds map 1:1 to samples, so `ms` is the step count.
-// attack rises 0 -> 1, release falls sustainLevel -> 0.
+// attack rises 0 -> 1, release falls sustain -> 0.
 fn baked(ctor: &str, ms: u32) -> (Vec<f32>, Vec<f32>) {
     let source = format!(
         r#"
@@ -497,11 +526,11 @@ fn baked(ctor: &str, ms: u32) -> (Vec<f32>, Vec<f32>) {
         return instrument.new({{
             waveform = wave.triangle,
             envelope = envelope.new({{
-                attackMS = {ms},
-                attackFunc = {ctor},
-                sustainLevel = 1,
-                releaseMS = {ms},
-                releaseFunc = {ctor},
+                attack = {ms},
+                attack_curve = {ctor},
+                sustain = 1,
+                release = {ms},
+                release_curve = {ctor},
             }}),
         }})
         "#
@@ -556,7 +585,7 @@ fn handing_over_a_slope_constructor_uncalled_is_caught() {
         local instrument = require("synth.instrument")
         local envelope = require("synth.envelope")
         return instrument.new({
-            envelope = envelope.new({ attackMS = 10, attackFunc = slope.exponential }),
+            envelope = envelope.new({ attack = 10, attack_curve = slope.exponential }),
         })
     "#;
     let error = load_source(source, "test", 1000)

@@ -10,10 +10,10 @@ return synth.sequence.new({
 		tri = synth.instrument.new({
 			waveform = synth.wave.triangle,
 			envelope = synth.envelope.new({
-				attackMS = 100,
-				decayMS = 150,
-				sustainLevel = 0.7,
-				releaseMS = 50,
+				attack = 100, -- ms
+				decay = 150,
+				sustain = 0.7,
+				release = 50,
 			}),
 		}),
 	},

@@ -10,8 +10,8 @@ pub fn environment(gating: Gating) {
 
     let (release, mode) = match gating {
         Gating::Held => ("yes".to_string(), "held notes".to_string()),
-        // the length is the keyboard's gateMS, which belongs to a patch
-        Gating::Fixed => ("no".to_string(), "fixed length (keyboard gateMS)".to_string()),
+        // the length is the keyboard's gate, which belongs to a patch
+        Gating::Fixed => ("no".to_string(), "fixed length (keyboard gate)".to_string()),
     };
 
     table::pairs(
