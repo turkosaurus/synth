@@ -623,3 +623,23 @@ fn the_shipped_example_loads_clean() {
         );
     }
 }
+
+#[test]
+fn the_root_reexports_every_module() {
+    let lua = mlua::Lua::new();
+    lua_register(&lua).unwrap();
+
+    for (name, _) in MODULES {
+        let Some(short) = name.strip_prefix("synth.") else {
+            continue;
+        };
+        // the same table, not a copy: a module is loaded once per state
+        let same: bool = lua
+            .load(format!(
+                r#"return rawequal(require("synth").{short}, require("{name}"))"#
+            ))
+            .eval()
+            .unwrap();
+        assert!(same, "synth.{short} is not re-exported by the root");
+    }
+}

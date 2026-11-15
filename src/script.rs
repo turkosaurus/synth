@@ -20,6 +20,19 @@ const LUA_TUNING: &str = include_str!("../lua/tuning.lua");
 const LUA_INSTRUMENT: &str = include_str!("../lua/instrument.lua");
 const LUA_SEQUENCE: &str = include_str!("../lua/sequence.lua");
 const LUA_KEYBOARD: &str = include_str!("../lua/keyboard.lua");
+const LUA_ROOT: &str = include_str!("../lua/synth.lua");
+
+/// Every embedded module, by the name `require` finds it under.
+const MODULES: [(&str, &str); 8] = [
+    (module::SLOPE, LUA_SLOPE),
+    (module::WAVE, LUA_WAVE),
+    (module::ENVELOPE, LUA_ENVELOPE),
+    (module::TUNING, LUA_TUNING),
+    (module::INSTRUMENT, LUA_INSTRUMENT),
+    (module::SEQUENCE, LUA_SEQUENCE),
+    (module::KEYBOARD, LUA_KEYBOARD),
+    (module::ROOT, LUA_ROOT),
+];
 
 // require checks package.preload before any filesystem search, so the
 // embedded libraries resolve with no cwd dependency
@@ -27,15 +40,7 @@ fn lua_register(lua: &mlua::Lua) -> anyhow::Result<()> {
     let package: mlua::Table = lua.globals().get(field::PACKAGE)?;
     let preload: mlua::Table = package.get(field::PRELOAD)?;
 
-    for (name, src) in [
-        (module::SLOPE, LUA_SLOPE),
-        (module::WAVE, LUA_WAVE),
-        (module::ENVELOPE, LUA_ENVELOPE),
-        (module::TUNING, LUA_TUNING),
-        (module::INSTRUMENT, LUA_INSTRUMENT),
-        (module::SEQUENCE, LUA_SEQUENCE),
-        (module::KEYBOARD, LUA_KEYBOARD),
-    ] {
+    for (name, src) in MODULES {
         let loader = lua.create_function(move |lua, _: mlua::Value| {
             lua.load(src).set_name(name).eval::<mlua::Value>()
         })?;
@@ -56,6 +61,8 @@ mod module {
     pub(super) const INSTRUMENT: &str = "synth.instrument";
     pub(super) const SEQUENCE: &str = "synth.sequence";
     pub(super) const KEYBOARD: &str = "synth.keyboard";
+    /// Re-exports every other module, so a patch needs one `require`.
+    pub(super) const ROOT: &str = "synth";
 }
 
 mod field {
