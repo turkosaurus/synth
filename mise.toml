@@ -6,17 +6,31 @@ yq = "4"
 # `mise run lint` checks lua/ with both
 lua-language-server = "3"
 stylua = "2"
-# turns tool output into GitHub annotations in Actions (.github/annotations)
-jq = "1"
-
-# lint:* and test:* are file tasks in mise-tasks/, since each one also
-# writes GitHub annotations when run inside Actions
 
 # cargo-edit compiles for minutes, so it is fetched here on first use rather
 # than listed in [tools], where every CI run would install it
 [tasks.bump]
 description = "bump the crate version in Cargo.toml and Cargo.lock: mise run bump <patch|minor|major>"
 run = "mise exec cargo:cargo-edit@0.13 -- cargo set-version --bump"
+
+[tasks."test:separation"]
+description = "lua stays in script.rs and script/, cpal stays in audio/device.rs"
+run = '''
+set -eu
+failed=0
+# allowed paths are extended regexes, anchored at the start
+for rule in 'mlua:src/script(\.rs|/)' 'cpal:src/audio/device\.rs'; do
+  name=${rule%%:*}
+  allowed=${rule#*:}
+  if offenders=$(grep -rln "use $name\|$name::" src/ | grep -vE "^($allowed)"); then
+    echo "::error title=test:separation::$name must stay in $allowed"
+    echo "$name must stay in $allowed, found in:" >&2
+    echo "$offenders" >&2
+    failed=1
+  fi
+done
+exit $failed
+'''
 
 [tasks.test]
 depends = ["test:rust", "test:separation", "test:example"]
@@ -25,6 +39,24 @@ description = "run all tests: cargo tests and the example patch lint"
 [tasks.lint]
 depends = ["lint:rust", "lint:pedantic", "lint:lua", "lint:stylua"]
 description = "run all linters; any warning fails, except pedantic"
+
+[tasks."lint:rust"]
+description = "clippy on every target; any warning fails"
+run = "cargo clippy --all-targets -- -D warnings || { echo '::error title=lint:rust::clippy found warnings'; exit 1; }"
+
+[tasks."lint:pedantic"]
+description = "clippy pedantic, for review; reports but never fails"
+run = "cargo clippy --all-targets -- -W clippy::pedantic"
+
+# lint:lua is a file task: mise-tasks/lint/lua
+
+[tasks."lint:stylua"]
+description = "stylua formatting check on lua/; any difference fails"
+run = "stylua --check lua || { echo '::error title=lint:stylua::lua/ is not formatted; run stylua lua'; exit 1; }"
+
+[tasks."test:rust"]
+description = "cargo tests"
+run = "cargo test --verbose -- --show-output || { echo '::error title=test:rust::cargo test failed'; exit 1; }"
 
 [tasks.play]
 description = "play the example patch, then show the debug log"
@@ -37,6 +69,10 @@ run = "touch synth.log; tail -F synth.log"
 [tasks.doctor]
 description = "report terminal capabilities and gating mode"
 run = "cargo run -- doctor"
+
+[tasks."test:example"]
+description = "lint example.lua; nonzero exit on warnings"
+run = "cargo run -- check lua/example.lua || { echo '::error file=lua/example.lua,title=test:example::synth check found warnings'; exit 1; }"
 
 [tasks.tui]
 description = "play live from the keyboard with the default instrument"
