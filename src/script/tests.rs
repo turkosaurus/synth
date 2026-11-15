@@ -389,6 +389,35 @@ fn the_frequency_table_covers_every_midi_note() {
 }
 
 #[test]
+fn a_patch_tuning_replaces_equal_temperament() {
+    let source = r#"
+        local synth = require("synth")
+        return synth.instrument.new({
+            tuning = synth.tuning.equal({ reference_hz = 432, tones = 19 }),
+        })
+    "#;
+    let patch = load_source(source, "test", 48000).unwrap();
+    assert!((patch.freqs[69] - 432.0).abs() < 0.01);
+    // 19 steps up is one octave in 19-EDO
+    assert!((patch.freqs[88] - 864.0).abs() < 0.01);
+}
+
+#[test]
+fn tuning_equal_rejects_unknown_fields() {
+    let source = r#"
+        local synth = require("synth")
+        return synth.instrument.new({ tuning = synth.tuning.equal({ A4 = 440 }) })
+    "#;
+    let error = load_source(source, "test", 48000)
+        .err()
+        .expect("A4 is the old name");
+    assert!(
+        format!("{error:#}").contains("unknown field 'A4'"),
+        "unexpected: {error:#}"
+    );
+}
+
+#[test]
 fn list_builds_from_a_function_body() {
     // the point of seq.list: a loop inline where its result is used
     let patch = arranged(
