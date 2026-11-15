@@ -1,5 +1,4 @@
 use std::io::Stdout;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -14,14 +13,12 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 
-use crate::audio::{self, Event, Player, Snapshot, Stats};
-
+use crate::audio::{Snapshot, Stats};
 use crate::input::keyboard::{Gating, Keyboard, Outcome};
-use crate::script;
+use crate::session::Session;
 
 use super::meter::{self, Activity, Meter};
 
-const QUEUE: usize = 256;
 const POLL: Duration = Duration::from_millis(16);
 
 const POPUP_FILL: Color = Color::Yellow;
@@ -34,31 +31,9 @@ const COLUMN_GAP: u16 = 2;
 const SPARK_ROWS: u16 = 2;
 const STATS_ROWS: u16 = 2 + SPARK_ROWS;
 
-pub fn run(path: Option<&std::path::Path>, gating: Gating) -> anyhow::Result<()> {
-    let output = audio::open()?;
-    let patch = match path {
-        Some(path) => script::load(path, output.sample_rate)?,
-        None => script::load_default(output.sample_rate)?,
-    };
-
-    // the view reads the same baked table the player does,
-    // and the player takes ownership of it.
-    // 128 f32 copied once at startup.
-    let freqs = patch.freqs.clone();
-
-    // the producer stays here; the consumer moves into the audio callback
-    let (tx, rx) = rtrb::RingBuffer::<Event>::new(QUEUE);
-    let player = Player::live(
-        patch.timeline.instruments,
-        patch.freqs,
-        rx,
-        output.sample_rate as f32,
-    );
-
-    let stats = Arc::new(Stats::default());
-    let _stream = audio::stream(&output, player, Arc::clone(&stats))?;
-
-    let mut keyboard = Keyboard::new(patch.keymap, gating, tx);
+/// Draw `session` and feed it keys until the player quits.
+pub fn run(session: &mut Session) -> anyhow::Result<()> {
+    let gating = session.keyboard.gating();
 
     // built before enter(), so a failure here needs no teardown.
     // backend goes straight over stdout rather than through ratatui::init()
@@ -66,7 +41,13 @@ pub fn run(path: Option<&std::path::Path>, gating: Gating) -> anyhow::Result<()>
     let mut terminal = Terminal::new(backend).context("building terminal")?;
 
     crate::terminal::enter(gating)?;
-    let result = update(&mut terminal, &mut keyboard, &stats, &freqs, gating);
+    let result = update(
+        &mut terminal,
+        &mut session.keyboard,
+        &session.stats,
+        &session.freqs,
+        gating,
+    );
     crate::terminal::leave(gating);
     result
 }

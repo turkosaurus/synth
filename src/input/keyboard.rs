@@ -104,6 +104,10 @@ impl Keyboard {
         }
     }
 
+    pub(crate) fn gating(&self) -> Gating {
+        self.gating
+    }
+
     pub(crate) fn octave(&self) -> i32 {
         self.octave
     }

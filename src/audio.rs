@@ -7,6 +7,6 @@ mod device;
 mod instrument;
 mod render;
 
-pub use device::{open, stream, Output, Snapshot, Stats};
+pub use device::{open, stream, Output, Snapshot, Stats, Stream};
 pub use instrument::{Event, Freqs, Instrument, Timeline};
 pub use render::Player;

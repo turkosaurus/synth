@@ -7,6 +7,10 @@ use tracing::debug;
 
 use super::render::{fill, Player};
 
+/// A running output stream; audio stops when it drops. Named here so
+/// holders need not import cpal, which stays in this file.
+pub use cpal::Stream;
+
 // written by the audio thread, read anywhere, lock-free because the
 // callback must never block, and Relaxed because these are standalone
 // counters, not gates on other memory.
