@@ -1,5 +1,3 @@
-#!/usr/bin/env luajit
-
 local wave = {}
 
 -- phase (0.0 to 1.0) to triangle wave (-1.0 to 1.0)

@@ -7,6 +7,7 @@ use tracing::debug;
 use tracing_subscriber::fmt::format::FmtSpan;
 
 use synth::input::Gating;
+use synth::session::Session;
 use synth::{audio, script, terminal, view};
 
 /// synth | rust+luaJIT terminal synthesizer
@@ -81,7 +82,10 @@ fn run() -> anyhow::Result<ExitCode> {
             }
         }
         Commands::Play { path } => play(&path)?,
-        Commands::Tui { path } => view::tui::run(path.as_deref(), gating)?,
+        Commands::Tui { path } => {
+            let mut session = Session::open(path.as_deref(), gating)?;
+            view::tui::run(&mut session)?;
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

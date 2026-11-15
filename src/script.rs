@@ -6,9 +6,7 @@ mod feed;
 mod filter;
 mod keymap;
 
-pub use bake::Report;
-pub use filter::FilterReport;
-
+use crate::spec::Patch;
 use feed::{sequence, single};
 use keymap::keymap;
 
@@ -23,6 +21,20 @@ const LUA_INSTRUMENT: &str = include_str!("../lua/instrument.lua");
 const LUA_SEQUENCE: &str = include_str!("../lua/sequence.lua");
 const LUA_KEYBOARD: &str = include_str!("../lua/keyboard.lua");
 const LUA_FILTER: &str = include_str!("../lua/filter.lua");
+const LUA_ROOT: &str = include_str!("../lua/synth.lua");
+
+/// Every embedded module, by the name `require` finds it under.
+const MODULES: [(&str, &str); 9] = [
+    (module::SLOPE, LUA_SLOPE),
+    (module::WAVE, LUA_WAVE),
+    (module::ENVELOPE, LUA_ENVELOPE),
+    (module::TUNING, LUA_TUNING),
+    (module::INSTRUMENT, LUA_INSTRUMENT),
+    (module::SEQUENCE, LUA_SEQUENCE),
+    (module::KEYBOARD, LUA_KEYBOARD),
+    (module::FILTER, LUA_FILTER),
+    (module::ROOT, LUA_ROOT),
+];
 
 // require checks package.preload before any filesystem search, so the
 // embedded libraries resolve with no cwd dependency
@@ -30,16 +42,7 @@ fn lua_register(lua: &mlua::Lua) -> anyhow::Result<()> {
     let package: mlua::Table = lua.globals().get(field::PACKAGE)?;
     let preload: mlua::Table = package.get(field::PRELOAD)?;
 
-    for (name, src) in [
-        (module::SLOPE, LUA_SLOPE),
-        (module::WAVE, LUA_WAVE),
-        (module::ENVELOPE, LUA_ENVELOPE),
-        (module::TUNING, LUA_TUNING),
-        (module::INSTRUMENT, LUA_INSTRUMENT),
-        (module::SEQUENCE, LUA_SEQUENCE),
-        (module::KEYBOARD, LUA_KEYBOARD),
-        (module::FILTER, LUA_FILTER),
-    ] {
+    for (name, src) in MODULES {
         let loader = lua.create_function(move |lua, _: mlua::Value| {
             lua.load(src).set_name(name).eval::<mlua::Value>()
         })?;
@@ -61,6 +64,8 @@ mod module {
     pub(super) const SEQUENCE: &str = "synth.sequence";
     pub(super) const KEYBOARD: &str = "synth.keyboard";
     pub(super) const FILTER: &str = "synth.filter";
+    /// Re-exports every other module, so a patch needs one `require`.
+    pub(super) const ROOT: &str = "synth";
 }
 
 mod field {
@@ -102,39 +107,6 @@ mod field {
     pub(super) const PACKAGE: &str = "package";
     pub(super) const PRELOAD: &str = "preload";
     pub(super) const PATH: &str = "path";
-}
-
-/// A loaded file: a playable timeline plus one report per instrument in it.
-pub struct Patch {
-    pub timeline: crate::audio::Timeline,
-    /// hz for every midi note, baked from Lua so temperament stays there
-    pub freqs: Vec<f32>,
-    pub(crate) keymap: crate::input::keyboard::Keymap,
-    pub bpm: f32,
-    pub(crate) division: f32,
-    pub step_ms: f32,
-    pub(crate) steps: usize,
-    pub(crate) patterns: usize,
-    pub(crate) chain: usize,
-    pub(crate) loops: usize,
-    pub reports: Vec<(String, Report)>,
-    /// runs on the summed output of every voice
-    pub filter: Option<crate::audio::Filter>,
-    /// what `check` shows about `filter`
-    pub filter_report: Option<FilterReport>,
-}
-
-impl Patch {
-    /// No instrument raised a warning, so the patch is safe to play as written.
-    pub fn clean(&self) -> bool {
-        self.reports
-            .iter()
-            .all(|(_, report)| report.warnings.is_empty())
-            && self
-                .filter_report
-                .as_ref()
-                .is_none_or(|report| report.warnings.is_empty())
-    }
 }
 
 /// What plays when no file is given.

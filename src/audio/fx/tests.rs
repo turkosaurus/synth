@@ -18,7 +18,8 @@ fn tan_tracks_std() {
 
 use core::f32::consts::SQRT_2;
 
-use super::{Filter, Kind, Svf, MIN_DAMPING};
+use super::Svf;
+use crate::spec::{Filter, Kind, MIN_DAMPING};
 
 const FS: f32 = 48000.0;
 const N: usize = 8192;

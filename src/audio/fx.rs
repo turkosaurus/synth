@@ -7,7 +7,6 @@
 mod approx;
 mod svf;
 
-pub use svf::{Filter, Kind, MAX_CUTOFF, MIN_CUTOFF, MIN_DAMPING};
 pub(crate) use svf::Svf;
 
 #[cfg(test)]

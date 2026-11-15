@@ -1,4 +1,4 @@
-use crate::audio::Instrument;
+use crate::spec::Instrument;
 
 use super::bake::inspect;
 use super::*;
@@ -106,7 +106,7 @@ fn steps_land_one_beat_apart() {
         .timeline
         .events
         .iter()
-        .filter(|(_, e)| matches!(e, crate::audio::Event::NoteOn { .. }))
+        .filter(|(_, e)| matches!(e, crate::spec::Event::NoteOn { .. }))
         .map(|(at, _)| *at)
         .collect();
 
@@ -121,7 +121,7 @@ fn duration_sets_the_off_position() {
         .timeline
         .events
         .iter()
-        .filter(|(_, e)| matches!(e, crate::audio::Event::NoteOff { .. }))
+        .filter(|(_, e)| matches!(e, crate::spec::Event::NoteOff { .. }))
         .map(|(at, _)| *at)
         .collect();
 
@@ -133,7 +133,7 @@ fn offs(patch: &Patch) -> Vec<u64> {
         .timeline
         .events
         .iter()
-        .filter(|(_, e)| matches!(e, crate::audio::Event::NoteOff { .. }))
+        .filter(|(_, e)| matches!(e, crate::spec::Event::NoteOff { .. }))
         .map(|(at, _)| *at)
         .collect()
 }
@@ -164,12 +164,12 @@ fn a_long_note_emits_no_off_when_its_pitch_retriggers() {
         .timeline
         .events
         .iter()
-        .filter(|(_, e)| matches!(e, crate::audio::Event::NoteOff { .. }))
+        .filter(|(_, e)| matches!(e, crate::spec::Event::NoteOff { .. }))
         .count();
     assert_eq!(offs, 1, "only the final note should emit an off");
 
     let last = patch.timeline.events.last().unwrap();
-    assert!(matches!(last.1, crate::audio::Event::NoteOff { .. }));
+    assert!(matches!(last.1, crate::spec::Event::NoteOff { .. }));
     assert_eq!(last.0, 48_000 + 24_000); // beat 1 plus half a beat
 }
 
@@ -193,16 +193,16 @@ fn a_rest_releases_every_note_on_its_instrument() {
     let patch =
         seq(r#"{ { note = 69, instrument = "a", duration = 3 }, { note = 72 }, { off = true } }"#);
     let events = &patch.timeline.events;
-    let crate::audio::Event::NoteOn { instrument, .. } = events[0].1 else {
+    let crate::spec::Event::NoteOn { instrument, .. } = events[0].1 else {
         panic!("first event should be a note-on");
     };
     let rests: Vec<_> = events
         .iter()
-        .filter(|(_, e)| matches!(e, crate::audio::Event::AllNotesOff { .. }))
+        .filter(|(_, e)| matches!(e, crate::spec::Event::AllNotesOff { .. }))
         .collect();
     assert_eq!(
         rests,
-        vec![&(2 * 48_000, crate::audio::Event::AllNotesOff { instrument })]
+        vec![&(2 * 48_000, crate::spec::Event::AllNotesOff { instrument })]
     );
 }
 
@@ -216,8 +216,8 @@ fn instrument_sticks_until_a_step_changes_it() {
         .events
         .iter()
         .filter_map(|(_, e)| match e {
-            crate::audio::Event::NoteOn { instrument, .. } => Some(*instrument),
-            crate::audio::Event::NoteOff { .. } | crate::audio::Event::AllNotesOff { .. } => None,
+            crate::spec::Event::NoteOn { instrument, .. } => Some(*instrument),
+            crate::spec::Event::NoteOff { .. } | crate::spec::Event::AllNotesOff { .. } => None,
         })
         .collect();
 
@@ -285,7 +285,7 @@ fn zero_voices_is_rejected() {
 fn a_step_emits_its_midi_note() {
     let patch = seq(r#"{ { note = 69, instrument = "a" } }"#);
     match patch.timeline.events[0].1 {
-        crate::audio::Event::NoteOn { note, .. } => assert_eq!(note, 69),
+        crate::spec::Event::NoteOn { note, .. } => assert_eq!(note, 69),
         _ => panic!("expected a note on first"),
     }
 }
@@ -456,8 +456,8 @@ fn a_reused_pattern_resolves_to_the_same_instrument_each_time() {
         .events
         .iter()
         .filter_map(|(_, e)| match e {
-            crate::audio::Event::NoteOn { instrument, .. } => Some(*instrument),
-            crate::audio::Event::NoteOff { .. } | crate::audio::Event::AllNotesOff { .. } => None,
+            crate::spec::Event::NoteOn { instrument, .. } => Some(*instrument),
+            crate::spec::Event::NoteOff { .. } | crate::spec::Event::AllNotesOff { .. } => None,
         })
         .collect();
 
@@ -660,8 +660,8 @@ fn lowpass_reads_into_filter() {
     let patch = with_filter("filter.lowpass({ cutoff = 800 })").unwrap();
     assert_eq!(
         patch.filter,
-        Some(crate::audio::Filter {
-            kind: crate::audio::Kind::Lowpass,
+        Some(crate::spec::Filter {
+            kind: crate::spec::Kind::Lowpass,
             cutoff: 800.0,
             damping: std::f32::consts::SQRT_2,
             root: 1.0,
@@ -679,7 +679,7 @@ fn bell_gain_converts_from_db() {
 #[test]
 fn full_resonance_reaches_min_damping() {
     let patch = with_filter("filter.lowpass({ cutoff = 800, resonance = 1 })").unwrap();
-    assert_eq!(patch.filter.unwrap().damping, crate::audio::MIN_DAMPING);
+    assert_eq!(patch.filter.unwrap().damping, crate::spec::MIN_DAMPING);
 }
 
 #[test]
@@ -696,7 +696,7 @@ fn filter_in_sequence_file() {
         })
     "#;
     let patch = load_source(source, "test", 48000).unwrap();
-    assert_eq!(patch.filter.unwrap().kind, crate::audio::Kind::Highpass);
+    assert_eq!(patch.filter.unwrap().kind, crate::spec::Kind::Highpass);
 }
 
 #[test]
@@ -755,4 +755,24 @@ fn cutoff_below_floor_warns() {
     let warnings = &patch.filter_report.as_ref().unwrap().warnings;
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(!patch.clean());
+}
+
+#[test]
+fn the_root_reexports_every_module() {
+    let lua = mlua::Lua::new();
+    lua_register(&lua).unwrap();
+
+    for (name, _) in MODULES {
+        let Some(short) = name.strip_prefix("synth.") else {
+            continue;
+        };
+        // the same table, not a copy: a module is loaded once per state
+        let same: bool = lua
+            .load(format!(
+                r#"return rawequal(require("synth").{short}, require("{name}"))"#
+            ))
+            .eval()
+            .unwrap();
+        assert!(same, "synth.{short} is not re-exported by the root");
+    }
 }

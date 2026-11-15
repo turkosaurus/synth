@@ -1,5 +1,3 @@
-#!/usr/bin/env luajit
-
 local slope = require("synth.slope")
 
 local envelope = {}

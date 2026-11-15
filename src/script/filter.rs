@@ -4,7 +4,7 @@
 
 use std::f32::consts::SQRT_2;
 
-use crate::audio::{Filter, Kind, MAX_CUTOFF, MIN_CUTOFF, MIN_DAMPING};
+use crate::spec::{Filter, FilterReport, Kind, MAX_CUTOFF, MIN_CUTOFF, MIN_DAMPING};
 
 use super::bake::{expect_only, spec_entry, spec_error, spec_table};
 use super::field;
@@ -18,20 +18,6 @@ pub(super) struct FilterSpec {
     cutoff: f64,
     resonance: Option<f64>,
     gain: Option<f64>,
-}
-
-/// What `check` shows about a patch's filter, in the units Lua used.
-#[derive(Debug)]
-pub struct FilterReport {
-    /// the constructor's name, e.g. `low_shelf`
-    pub kind: &'static str,
-    /// Hz, as written; the audio side may clamp it, which `warnings` says
-    pub cutoff: f64,
-    /// 0 to 1; `None` on shelves, which have none
-    pub resonance: Option<f64>,
-    /// dB; `None` on kinds without gain
-    pub gain: Option<f64>,
-    pub warnings: Vec<String>,
 }
 
 impl FilterSpec {

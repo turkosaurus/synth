@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use super::bake::{bake_instrument, InstrumentSpec};
 use super::field;
-use super::Patch;
+use crate::spec::Patch;
 
 /// One resolved step. The struct is the schema: field names come from here,
 /// and `deny_unknown_fields` turns a misspelling in a patch into a named
@@ -30,19 +30,19 @@ pub(super) fn single(
     spec: InstrumentSpec,
     sample_rate: u32,
     freqs: Vec<f32>,
-    keymap: crate::input::keyboard::Keymap,
+    keymap: crate::spec::Keymap,
 ) -> anyhow::Result<Patch> {
     let (instrument, report) = bake_instrument(spec, sample_rate)?;
     let tail = instrument.release.len() as u64;
     let hold = (SINGLE_HOLD.as_secs_f64() * sample_rate as f64) as u64;
 
     Ok(Patch {
-        timeline: crate::audio::Timeline {
-            instruments: vec![std::sync::Arc::new(instrument)],
+        timeline: crate::spec::Timeline {
+            instruments: vec![instrument],
             events: vec![
                 (
                     0,
-                    crate::audio::Event::NoteOn {
+                    crate::spec::Event::NoteOn {
                         instrument: 0,
                         note: SINGLE_NOTE,
                         velocity: 127,
@@ -50,7 +50,7 @@ pub(super) fn single(
                 ),
                 (
                     hold,
-                    crate::audio::Event::NoteOff {
+                    crate::spec::Event::NoteOff {
                         instrument: 0,
                         note: SINGLE_NOTE,
                     },
@@ -80,7 +80,7 @@ pub(super) fn sequence(
     steps: &mlua::Table,
     sample_rate: u32,
     freqs: Vec<f32>,
-    keymap: crate::input::keyboard::Keymap,
+    keymap: crate::spec::Keymap,
 ) -> anyhow::Result<Patch> {
     let bpm: f64 = table.get(field::BPM).context("sequence.bpm is missing")?;
     anyhow::ensure!(bpm > 0.0, "sequence.bpm must be positive, got {bpm}");
@@ -109,7 +109,7 @@ pub(super) fn sequence(
             .and_then(|spec| bake_instrument(spec, sample_rate))
             .with_context(|| format!("instrument `{name}`"))?;
         index.insert(name.clone(), instruments.len());
-        instruments.push(std::sync::Arc::new(instrument));
+        instruments.push(instrument);
         reports.push((name, report));
     }
     reports.sort_by(|a, b| a.0.cmp(&b.0));
@@ -150,7 +150,7 @@ pub(super) fn sequence(
         );
         events.push((
             start,
-            crate::audio::Event::NoteOn {
+            crate::spec::Event::NoteOn {
                 instrument,
                 note,
                 velocity: step.velocity,
@@ -176,7 +176,7 @@ pub(super) fn sequence(
             })
             .map(|&(_, at)| at);
         if retrigger.is_none_or(|next| ends < next) {
-            events.push((ends, crate::audio::Event::NoteOff { instrument, note }));
+            events.push((ends, crate::spec::Event::NoteOff { instrument, note }));
         }
     }
 
@@ -194,7 +194,7 @@ pub(super) fn sequence(
         })?;
         events.push((
             (step_len * i as f64) as u64,
-            crate::audio::Event::AllNotesOff { instrument },
+            crate::spec::Event::AllNotesOff { instrument },
         ));
     }
 
@@ -207,7 +207,7 @@ pub(super) fn sequence(
     let total_samples = (step_len * parsed.len() as f64) as u64 + tail;
 
     Ok(Patch {
-        timeline: crate::audio::Timeline {
+        timeline: crate::spec::Timeline {
             instruments,
             events,
             total_samples,

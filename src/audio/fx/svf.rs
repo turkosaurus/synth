@@ -9,42 +9,7 @@
 use core::f32::consts::PI;
 
 use super::approx;
-
-/// Which mix of the filter's outputs is heard.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Kind {
-    Lowpass,
-    Highpass,
-    Bandpass,
-    Notch,
-    Bell,
-    LowShelf,
-    HighShelf,
-}
-
-/// A filter as plain data: what Lua configured, before any state exists.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Filter {
-    pub kind: Kind,
-    /// Hz
-    pub cutoff: f32,
-    /// Simper's `k`, `1 / Q`: `SQRT_2` is flat (Butterworth), and
-    /// smaller values resonate, down to `MIN_DAMPING`.
-    pub damping: f32,
-    /// `10^(dB / 80)`, the square root of the shelf amplitude `A`.
-    /// Carried as the root so `A = root * root` needs no `sqrt`.
-    /// 1.0 for kinds without gain.
-    pub root: f32,
-}
-
-/// Damping at full resonance: rings, but never self-oscillates.
-pub const MIN_DAMPING: f32 = 0.05;
-
-/// Lowest cutoff, which keeps `g` above zero.
-pub const MIN_CUTOFF: f32 = 10.0;
-
-/// Highest cutoff as a share of the sample rate. `tan` diverges at 0.5.
-pub const MAX_CUTOFF: f32 = 0.49;
+use crate::spec::{Filter, Kind, MAX_CUTOFF, MIN_CUTOFF};
 
 /// How long the cutoff takes to glide to a new value, roughly.
 const SMOOTH_MS: f32 = 5.0;

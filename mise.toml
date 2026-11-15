@@ -3,6 +3,9 @@
 rust = { version = "1.98", components = "clippy" }
 # the release workflow reads Cargo.toml's version with it
 yq = "4"
+# `mise run lint` checks lua/ with both
+lua-language-server = "3"
+stylua = "2"
 
 # cargo-edit compiles for minutes, so it is fetched here on first use rather
 # than listed in [tools], where every CI run would install it
@@ -11,7 +14,7 @@ description = "bump the crate version in Cargo.toml and Cargo.lock: mise run bum
 run = "mise exec cargo:cargo-edit@0.13 -- cargo set-version --bump"
 
 [tasks."test:separation"]
-description = "lua stays in script.rs and script/, cpal stays in audio/device.rs"
+description = "lua stays in script.rs and script/, cpal stays in audio/device.rs, spec/ depends on neither"
 run = '''
 set -eu
 failed=0
@@ -20,11 +23,18 @@ for rule in 'mlua:src/script(\.rs|/)' 'cpal:src/audio/device\.rs'; do
   name=${rule%%:*}
   allowed=${rule#*:}
   if offenders=$(grep -rln "use $name\|$name::" src/ | grep -vE "^($allowed)"); then
+    echo "::error title=test:separation::$name must stay in $allowed"
     echo "$name must stay in $allowed, found in:" >&2
     echo "$offenders" >&2
     failed=1
   fi
 done
+# spec is plain data between script and audio, so it names neither
+if offenders=$(grep -rlE "(crate|mlua|cpal)::" src/spec.rs src/spec/); then
+  echo "spec must not depend on the rest of the crate, found in:" >&2
+  echo "$offenders" >&2
+  failed=1
+fi
 exit $failed
 '''
 
@@ -38,6 +48,7 @@ methods='floor|ceil|round|trunc|fract|sqrt|powf|powi|exp|exp2|ln|log|log2|log10'
 methods="$methods|sin|cos|tan|tanh|sinh|cosh|asin|acos|atan|atan2|hypot|cbrt|mul_add"
 if offenders=$(grep -rnE "std::|\.($methods)\(" src/audio/fx/ src/audio/fx.rs \
   | grep -v '^src/audio/fx/tests\.rs:'); then
+  echo "::error title=test:core::src/audio/fx/ must build with core alone"
   echo "src/audio/fx/ must build with core alone, found:" >&2
   echo "$offenders" >&2
   exit 1
@@ -49,16 +60,26 @@ depends = ["test:rust", "test:separation", "test:core", "test:example"]
 description = "run all tests: cargo tests and the example patch lint"
 
 [tasks.lint]
+depends = ["lint:rust", "lint:pedantic", "lint:lua", "lint:stylua"]
+description = "run all linters; any warning fails, except pedantic"
+
+[tasks."lint:rust"]
 description = "clippy on every target; any warning fails"
-run = "cargo clippy --all-targets -- -D warnings"
+run = "cargo clippy --all-targets -- -D warnings || { echo '::error title=lint:rust::clippy found warnings'; exit 1; }"
 
 [tasks."lint:pedantic"]
 description = "clippy pedantic, for review; reports but never fails"
 run = "cargo clippy --all-targets -- -W clippy::pedantic"
 
+# lint:lua is a file task: mise-tasks/lint/lua
+
+[tasks."lint:stylua"]
+description = "stylua formatting check on lua/; any difference fails"
+run = "stylua --check lua || { echo '::error title=lint:stylua::lua/ is not formatted; run stylua lua'; exit 1; }"
+
 [tasks."test:rust"]
 description = "cargo tests"
-run = "cargo test --verbose -- --show-output"
+run = "cargo test --verbose -- --show-output || { echo '::error title=test:rust::cargo test failed'; exit 1; }"
 
 [tasks.play]
 description = "play the example patch, then show the debug log"
@@ -74,7 +95,7 @@ run = "cargo run -- doctor"
 
 [tasks."test:example"]
 description = "lint example.lua; nonzero exit on warnings"
-run = "cargo run -- check lua/example.lua"
+run = "cargo run -- check lua/example.lua || { echo '::error file=lua/example.lua,title=test:example::synth check found warnings'; exit 1; }"
 
 [tasks.tui]
 description = "play live from the keyboard with the default instrument"

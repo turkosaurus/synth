@@ -9,6 +9,13 @@ on:
 permissions:
   contents: read
 
+# mise prefixes parallel task output with the task's label, and Actions only
+# reads a workflow command such as ::error:: at the start of a line.
+# One task at a time, unprefixed, keeps every annotation.
+env:
+  MISE_JOBS: 1
+  MISE_TASK_OUTPUT: interleave
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -23,6 +30,15 @@ jobs:
 
       - name: Install tools
         uses: jdx/mise-action@v5
+
+      # ~/.cargo and target/, keyed on rustc and Cargo.lock; after mise, so
+      # rustc is on PATH. Only main saves: PRs restore main's cache and never
+      # write their own, which would crowd it out of the repo's 10 GB.
+      # Pinned to a commit, since it is a third-party action.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # a PR that changes the version is checked here, before merge, so a bad
       # bump never reaches main. Only on PRs: after merge, release.yml runs

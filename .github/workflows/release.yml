@@ -12,6 +12,11 @@ on:
 permissions:
   contents: write
 
+# unprefixed task output, so annotations reach Actions; see test.yml
+env:
+  MISE_JOBS: 1
+  MISE_TASK_OUTPUT: interleave
+
 concurrency:
   group: release
   cancel-in-progress: false

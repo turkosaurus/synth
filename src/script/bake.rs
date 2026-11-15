@@ -1,7 +1,7 @@
 use anyhow::Context;
 use tracing::{debug_span, instrument};
 
-use crate::audio::Instrument;
+use crate::spec::{Instrument, Report};
 
 use super::field;
 
@@ -230,21 +230,6 @@ pub(super) fn bake_instrument(
     };
     let report = inspect(&instrument, clamped);
     Ok((instrument, report))
-}
-
-/// Measurements and warnings from a baked patch. Pure data, so the caller
-/// decides whether to log them, print them, or fail on them.
-#[derive(Debug)]
-pub struct Report {
-    pub(crate) peak: f32,
-    pub(crate) dc: f32,
-    pub(crate) seam: f32,
-    pub(crate) clamped: usize,
-    pub(crate) attack: usize,
-    pub(crate) decay: usize,
-    pub(crate) release: usize,
-    pub(crate) sustain_level: f32,
-    pub warnings: Vec<String>,
 }
 
 // each warning corresponds to something audible: flattened peaks, a click

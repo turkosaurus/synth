@@ -1,21 +1,15 @@
-#!/usr/bin/env luajit
+local synth = require("synth")
 
-local sequence = require("synth.sequence")
-local instrument = require("synth.instrument")
-local wave = require("synth.wave")
-local envelope = require("synth.envelope")
-local filter = require("synth.filter")
-
-return sequence.new({
+return synth.sequence.new({
 	bpm = 140,
 	division = 4, -- subdivisions per beat; 4 = 16th notes, 8 = 32nd notes, etc.
 	instrument = "tri", -- default for every pattern; stickiness resets per pattern
-	filter = filter.lowpass({ cutoff = 2000, resonance = 0.3 }), -- on the summed output
+	filter = synth.filter.lowpass({ cutoff = 2000, resonance = 0.3 }), -- on the summed output
 
 	instruments = {
-		tri = instrument.new({
-			waveform = wave.triangle,
-			envelope = envelope.new({
+		tri = synth.instrument.new({
+			waveform = synth.wave.triangle,
+			envelope = synth.envelope.new({
 				attackMS = 100,
 				decayMS = 150,
 				sustainLevel = 0.7,
@@ -26,7 +20,7 @@ return sequence.new({
 
 	-- one step is one grid slot; duration is slots to sound, so >1 holds over
 	patterns = {
-		chop = sequence.list(function(add)
+		chop = synth.sequence.list(function(add)
 			for _ = 1, 2 do
 				add({ note = 60, duration = 0.4 }, {})
 				add({ note = 60, duration = 0.4 }, {})
@@ -45,7 +39,7 @@ return sequence.new({
 		},
 	},
 
-	chain = sequence.list(function(add)
+	chain = synth.sequence.list(function(add)
 		for _ = 1, 1 do
 			add("chop")
 		end
