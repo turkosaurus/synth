@@ -5,6 +5,7 @@ mod bake;
 mod feed;
 mod filter;
 mod keymap;
+mod schema;
 mod structure;
 
 use crate::spec::Patch;
@@ -123,6 +124,23 @@ mod field {
     pub(super) const PATTERNS: &str = "patterns";
     pub(super) const CHAIN: &str = "chain";
     pub(super) const LOOP: &str = "loop";
+
+    pub(super) const NOTE: &str = "note";
+    pub(super) const OFF: &str = "off";
+    pub(super) const INSTRUMENT: &str = "instrument";
+    pub(super) const DURATION: &str = "duration";
+    pub(super) const VELOCITY: &str = "velocity";
+
+    pub(super) const ANCHOR: &str = "anchor";
+    pub(super) const OFFSET: &str = "offset";
+    pub(super) const TEMPLATE: &str = "template";
+    pub(super) const OCTAVE_UP: &str = "octave_up";
+    pub(super) const OCTAVE_DOWN: &str = "octave_down";
+    pub(super) const STOP: &str = "stop";
+    pub(super) const HELP: &str = "help";
+    pub(super) const GATE: &str = "gate";
+    pub(super) const REPEAT_WINDOW: &str = "repeat_window";
+    pub(super) const OCTAVE_RANGE: &str = "octave_range";
 
     pub(super) const TUNING: &str = "tuning";
     pub(super) const EQUAL: &str = "equal";

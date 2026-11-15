@@ -27,6 +27,11 @@ fn stamp(table: &mlua::Table) -> mlua::Result<Option<Stamp>> {
     }))
 }
 
+/// Where a constructor said it made `table`, if one stamped it.
+pub(super) fn made_at(table: &mlua::Table) -> mlua::Result<Option<String>> {
+    Ok(stamp(table)?.map(|found| found.at))
+}
+
 /// What a field must hold, decided by the kind of the table holding it.
 enum Expect {
     One(&'static str),

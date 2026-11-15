@@ -87,15 +87,13 @@ pub(super) fn sequence(
     freqs: Vec<f32>,
     keymap: crate::spec::Keymap,
 ) -> anyhow::Result<Patch> {
-    let bpm: f64 = table.get(field::BPM).context("sequence.bpm is missing")?;
-    anyhow::ensure!(bpm > 0.0, "sequence.bpm must be positive, got {bpm}");
-    let division: f64 = table
-        .get(field::DIVISION)
-        .context("sequence.division is missing")?;
-    anyhow::ensure!(
-        division > 0.0,
-        "sequence.division must be positive, got {division}"
-    );
+    super::schema::SEQUENCE.check(table, None)?;
+    for (i, step) in steps.sequence_values::<mlua::Table>().enumerate() {
+        super::schema::STEP.check(&step?, Some(&format!("step {}", i + 1)))?;
+    }
+    // both checked positive by schema::SEQUENCE
+    let bpm: f64 = table.get(field::BPM)?;
+    let division: f64 = table.get(field::DIVISION)?;
     // one step, in samples. `duration` is measured in steps, not beats, so
     // the grid and the gate length share a unit.
     let step_len = sample_rate as f64 * 60.0 / bpm / division;
@@ -146,13 +144,6 @@ pub(super) fn sequence(
             )
         })?;
 
-        // 0 would be MIDI's note-off spelled as a note-on
-        anyhow::ensure!(
-            (1..=127).contains(&step.velocity),
-            "step {} has velocity {}; must be 1 to 127",
-            i + 1,
-            step.velocity
-        );
         events.push((
             start,
             crate::spec::Event::NoteOn {
@@ -162,12 +153,6 @@ pub(super) fn sequence(
             },
         ));
 
-        anyhow::ensure!(
-            step.duration > 0.0,
-            "step {} has duration {}; must be positive",
-            i + 1,
-            step.duration
-        );
         let ends = start + (step_len * step.duration) as u64;
 
         // A retrigger of the same pitch on the same instrument takes this
