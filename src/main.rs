@@ -134,6 +134,7 @@ fn play(path: &std::path::Path) -> anyhow::Result<()> {
     debug!(
         frames = snap.frames,
         clips = snap.clips,
+        non_finite = snap.non_finite,
         overruns = snap.overruns,
         errors = snap.errors,
         peak = snap.peak,
