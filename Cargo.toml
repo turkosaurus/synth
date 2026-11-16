@@ -36,7 +36,6 @@ features = ["env-filter"]
 # main.rs and tests/ cannot reach is flagged
 [lints.rust]
 unreachable_pub = "warn"
-# the source has no unsafe, and forbid keeps it that way
 unsafe_code = "forbid"
 
 # modules live in `name.rs` beside a `name/` directory, never `name/mod.rs`
