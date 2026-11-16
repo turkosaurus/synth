@@ -84,6 +84,14 @@ impl Svf {
         self.cutoff
     }
 
+    /// Zero the integrator state, so a NaN or infinity that reached it stops
+    /// here. The input never feeds the cutoff or coefficients, so those are
+    /// still finite and are kept.
+    pub(crate) fn reset(&mut self) {
+        self.ic1 = 0.0;
+        self.ic2 = 0.0;
+    }
+
     pub(crate) fn next(&mut self, x: f32) -> f32 {
         self.glide();
 

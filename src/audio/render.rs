@@ -424,6 +424,14 @@ impl Player {
             None => sum,
         }
     }
+
+    // the filter is the only state that feeds a sample back into the next,
+    // so it is the only place a NaN can persist
+    fn reset_filter(&mut self) {
+        if let Some(filter) = &mut self.filter {
+            filter.reset();
+        }
+    }
 }
 
 /// What one callback produced. Accumulated in locals so the atomics are
@@ -431,28 +439,48 @@ impl Player {
 #[derive(Debug, Default, PartialEq)]
 pub(super) struct Tally {
     pub frames: u32,
+    /// samples beyond full scale, each written clamped to it
     pub clips: u64,
+    /// samples that were NaN or infinite, each written as silence
+    pub non_finite: u64,
+    /// Largest finite magnitude, taken before the clamp so a meter shows how
+    /// far over full scale the output went. Non-finite samples are left out:
+    /// an infinity would pin the meter, and `Stats::record_peak` orders bit
+    /// patterns, which only holds for non-negative finite floats.
     pub peak: f32,
 }
 
-/// Full scale. A sample beyond this cannot be represented and is clipped.
+/// Full scale. A sample beyond this cannot be represented, so `fill`
+/// clamps it here.
 ///
-/// One mono voice can reach this but not pass it: the wavetable is clamped
-/// at bake, and envelope and velocity only ever scale it down. Summed
-/// voices are what will cross it.
+/// The wavetable is clamped at bake, so one mono voice stays within this
+/// as long as its envelope stays within 0.0..1.0. Nothing enforces that
+/// yet (#83), and summed voices and a resonant filter can cross it anyway.
 const CLIP: f32 = 1.0;
 
 /// Lay one sample per frame across every channel. Split out of the callback
 /// so the interleaving can be tested without an audio device.
+///
+/// This is the last step before the device, so it bounds what goes out. A
+/// sample beyond full scale is clamped to it. A NaN or infinity is written
+/// as silence and resets the filter, whose state would otherwise carry the
+/// NaN into every sample after it.
 pub(super) fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tally {
     let mut tally = Tally::default();
 
     for frame in out.chunks_mut(channels) {
-        let sample = player.next();
-        if sample.abs() > CLIP {
-            tally.clips += 1;
-        }
-        tally.peak = tally.peak.max(sample.abs());
+        let raw = player.next();
+        let sample = if raw.is_finite() {
+            if raw.abs() > CLIP {
+                tally.clips += 1;
+            }
+            tally.peak = tally.peak.max(raw.abs());
+            raw.clamp(-CLIP, CLIP)
+        } else {
+            tally.non_finite += 1;
+            player.reset_filter();
+            0.0
+        };
         tally.frames += 1;
         for channel in frame.iter_mut() {
             *channel = sample;
@@ -998,8 +1026,94 @@ mod tests {
         let tally = fill(&mut out, 2, &mut player(instrument));
 
         assert_eq!(tally.frames, 4);
+        // -2.0 and 1.5 are written at full scale
+        assert_eq!(out, [0.5, 0.5, -1.0, -1.0, 1.0, 1.0, 0.1, 0.1]);
         assert_eq!(tally.clips, 2); // -2.0 and 1.5 both exceed full scale
-        assert_eq!(tally.peak, 2.0); // peak is absolute, so -2.0 wins
+        assert_eq!(tally.peak, 2.0); // absolute and pre-clamp, so -2.0 wins
+    }
+
+    #[test]
+    fn fill_drops_non_finite_samples() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut instrument = flat_instrument();
+            instrument.wave = vec![0.5, bad, 0.25, 0.75];
+
+            let mut out = [0.0f32; 4];
+            let tally = fill(&mut out, 1, &mut player(instrument));
+
+            // wave[0] interpolates toward wave[1] with a weight of zero, and
+            // a non-finite value times zero is NaN, so two samples are bad
+            assert_eq!(out, [0.0, 0.0, 0.25, 0.75], "for {bad}");
+            assert_eq!(tally.non_finite, 2, "for {bad}");
+            assert_eq!(tally.clips, 0, "for {bad}");
+            assert_eq!(tally.peak, 0.75, "for {bad}");
+        }
+    }
+
+    // Without the reset the filter state stays NaN, so every later sample
+    // would be dropped as well.
+    #[test]
+    fn the_filter_recovers_after_a_non_finite_sample() {
+        let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
+        let mut broken = flat_instrument();
+        broken.wave = vec![0.5, f32::NAN, 0.25, 0.75];
+        let lowpass = Filter {
+            kind: Kind::Lowpass,
+            cutoff: 20000.0, // clamps just below Nyquist
+            damping: core::f32::consts::SQRT_2,
+            root: 1.0,
+        };
+        let instruments = vec![broken, flat_instrument()];
+        let mut player = Player::live(instruments, freqs(), rx, 4.0).with_filter(Some(lowpass));
+
+        tx.push(on(1)).unwrap();
+        let mut out = [0.0f32; 4];
+        assert_eq!(fill(&mut out, 1, &mut player).non_finite, 2);
+
+        // the broken note reads NaN once more as it ends, and after that only
+        // the clean instrument sounds
+        tx.push(off(1)).unwrap();
+        tx.push(Event::NoteOn {
+            instrument: 1,
+            note: 1,
+            velocity: 127,
+        })
+        .unwrap();
+        let mut out = [0.0f32; 8];
+        let tally = fill(&mut out, 1, &mut player);
+
+        assert_eq!(tally.non_finite, 1);
+        assert_eq!(out[0], 0.0);
+        for &y in &out[1..] {
+            assert!(y.is_finite() && y != 0.0 && y.abs() <= CLIP, "{out:?}");
+        }
+    }
+
+    #[test]
+    fn fill_clamps_summed_voices_to_full_scale() {
+        let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
+        let loud = || {
+            let mut instrument = flat_instrument();
+            instrument.wave = vec![1.0, -1.0, 1.0, -1.0];
+            instrument
+        };
+        let mut player = Player::live(vec![loud(), loud()], freqs(), rx, 4.0);
+
+        // two mono instruments add with no scaling, so every sample is 2.0
+        // or -2.0 before the clamp
+        tx.push(on(1)).unwrap();
+        tx.push(Event::NoteOn {
+            instrument: 1,
+            note: 1,
+            velocity: 127,
+        })
+        .unwrap();
+        let mut out = [0.0f32; 4];
+        let tally = fill(&mut out, 1, &mut player);
+
+        assert_eq!(out, [1.0, -1.0, 1.0, -1.0]);
+        assert_eq!(tally.clips, 4);
+        assert_eq!(tally.peak, 2.0);
     }
 
     #[test]
