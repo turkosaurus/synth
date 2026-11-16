@@ -12,7 +12,7 @@ pub struct Instrument {
 /// instrument on every event the way MIDI puts a channel on every message.
 /// That keeps a MIDI input close to a passthrough, puts tuning in one place
 /// (the audio side), and lets a release find the voice pool it belongs to.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Event {
     NoteOn {
         instrument: usize,
