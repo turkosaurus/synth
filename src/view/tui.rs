@@ -41,16 +41,15 @@ pub fn run(session: &mut Session) -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(std::io::stdout());
     let mut terminal = Terminal::new(backend).context("building terminal")?;
 
-    crate::terminal::enter(gating)?;
-    let result = update(
+    // restores the terminal on every way out of here, a panic included
+    let _restore = crate::terminal::enter(gating)?;
+    update(
         &mut terminal,
         &mut session.keyboard,
         &session.stats,
         &session.freqs,
         gating,
-    );
-    crate::terminal::leave(gating);
-    result
+    )
 }
 
 fn update(
