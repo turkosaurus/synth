@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #MISE description="lua-language-server on lua/, once per runtime; any warning fails"
 
-# Patches run on LuaJIT everywhere it runs; Lua 5.4 is kept passing so a
-# microcontroller target stays open (#33).
+# Patches run on LuaJIT everywhere it runs; 
+# Lua 5.4 is kept passing for microcontroller targets 
+
 set -euo pipefail
 
 # a temporary config keeps .luarc.json free for #31
