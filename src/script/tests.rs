@@ -42,7 +42,10 @@ fn clean_triangle_raises_nothing() {
 #[test]
 fn flags_clamping() {
     let report = inspect(&instrument_with(wave_from(triangle, 2048)), 17);
-    assert!(report.diagnostics.iter().any(|d| d.message.contains("17 points")));
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("17 points")));
 }
 
 #[test]
@@ -52,20 +55,29 @@ fn flags_dc_offset() {
         &instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)),
         0,
     );
-    assert!(report.diagnostics.iter().any(|d| d.message.contains("DC offset")));
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("DC offset")));
 }
 
 #[test]
 fn flags_wrap_discontinuity() {
     // a saw ends at +1 and restarts at -1: a step of 2.0 every cycle
     let report = inspect(&instrument_with(wave_from(|p| 2.0 * p - 1.0, 2048)), 0);
-    assert!(report.diagnostics.iter().any(|d| d.message.contains("wrap smoothly")));
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("wrap smoothly")));
 }
 
 #[test]
 fn flags_weak_peak() {
     let report = inspect(&instrument_with(wave_from(|p| triangle(p) * 0.2, 2048)), 0);
-    assert!(report.diagnostics.iter().any(|d| d.message.contains("peaks at only")));
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("peaks at only")));
 }
 
 #[test]
@@ -75,7 +87,10 @@ fn flags_zero_release() {
     let mut instrument = instrument_with(wave_from(triangle, 2048));
     instrument.release = vec![];
     let report = inspect(&instrument, 0);
-    assert!(report.diagnostics.iter().any(|d| d.message.contains("release = 0")));
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("release = 0")));
 }
 
 // 48000 Hz at 60 bpm makes one beat exactly 48000 samples
@@ -760,7 +775,10 @@ fn gain_on_lowpass_is_rejected() {
 
 #[test]
 fn resonance_out_of_range_is_rejected() {
-    rejects("filter.lowpass({ cutoff = 800, resonance = 1.5 })", "resonance");
+    rejects(
+        "filter.lowpass({ cutoff = 800, resonance = 1.5 })",
+        "resonance",
+    );
 }
 
 #[test]
@@ -831,7 +849,10 @@ fn rejects_patch(source: &str, needle: &str) {
     let error = load_source(source, "test", 48000)
         .err()
         .unwrap_or_else(|| panic!("expected an error containing {needle:?}"));
-    assert!(format!("{error:#}").contains(needle), "unexpected: {error:#}");
+    assert!(
+        format!("{error:#}").contains(needle),
+        "unexpected: {error:#}"
+    );
 }
 
 #[test]

@@ -49,8 +49,12 @@ depends = ["test:rust", "test:separation", "test:core", "test:example"]
 description = "run all tests: cargo tests and the example patch lint"
 
 [tasks.lint]
-depends = ["lint:rust", "lint:pedantic", "lint:lua", "lint:stylua", "lint:licenses"]
+depends = ["lint:fmt", "lint:rust", "lint:pedantic", "lint:lua", "lint:stylua", "lint:licenses"]
 description = "run all linters; any warning fails, except pedantic"
+
+[tasks."lint:fmt"]
+description = "cargo fmt check on the crate; any difference fails"
+run = "cargo fmt --check || { echo '::error title=lint:fmt::the crate is not formatted; run cargo fmt'; exit 1; }"
 
 [tasks."lint:rust"]
 description = "clippy on every target; any warning fails"
