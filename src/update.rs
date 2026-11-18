@@ -14,6 +14,7 @@ use anyhow::{bail, ensure, Context};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use crate::install;
 use crate::release::VERSION;
 
 const RELEASES: &str = "https://api.github.com/repos/turkosaurus/synth/releases";
@@ -153,13 +154,9 @@ pub fn run(channel: &Channel) -> anyhow::Result<Outcome> {
         .iter()
         .find(|a| a.name == asset_name)
         .with_context(|| format!("{} has no {asset_name}", release.tag_name))?;
-    // resolved, so a symlink on PATH updates the file it points to rather
-    // than being replaced by a copy
-    let exe = std::env::current_exe()
-        .and_then(fs::canonicalize)
-        .context("find the running binary")?;
+    let exe = install::exe()?;
     let dir = scratch()?;
-    let result = install(asset, &exe, &dir);
+    let result = fetch(asset, &exe, &dir);
     // best effort: a leftover temp directory is not worth failing for
     let _ = fs::remove_dir_all(&dir);
     result?;
@@ -191,7 +188,7 @@ fn releases() -> anyhow::Result<Vec<Release>> {
 }
 
 /// Downloads, verifies, and unpacks the asset, then swaps it in for `exe`.
-fn install(asset: &Asset, exe: &Path, dir: &Path) -> anyhow::Result<()> {
+fn fetch(asset: &Asset, exe: &Path, dir: &Path) -> anyhow::Result<()> {
     let archive = dir.join(&asset.name);
     let archive_str = archive.to_str().context("temp path is not UTF-8")?;
     curl(&["-o", archive_str, &asset.browser_download_url])
@@ -209,7 +206,7 @@ fn install(asset: &Asset, exe: &Path, dir: &Path) -> anyhow::Result<()> {
         .context("run tar")?;
     ensure!(status.success(), "tar could not unpack {}", asset.name);
 
-    replace(&dir.join("synth"), exe)
+    install::place(&dir.join("synth"), exe)
 }
 
 /// Checks the download against the digest GitHub recorded on upload.
@@ -226,29 +223,6 @@ fn verify(asset: &Asset, bytes: &[u8]) -> anyhow::Result<()> {
         asset.name
     );
     Ok(())
-}
-
-/// Copies `new` beside `exe` and renames it over `exe`.
-/// A rename within one directory is atomic, and a running binary keeps its
-/// old inode, so the process that is replacing itself is unaffected.
-#[cfg(unix)]
-fn replace(new: &Path, exe: &Path) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let staged = exe.with_file_name(format!(".synth-update-{}", std::process::id()));
-    fs::copy(new, &staged).with_context(|| format!("write {}", staged.display()))?;
-    let result = fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))
-        .and_then(|()| fs::rename(&staged, exe));
-    if let Err(e) = result {
-        let _ = fs::remove_file(&staged);
-        return Err(e).with_context(|| format!("replace {}", exe.display()));
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn replace(_new: &Path, _exe: &Path) -> anyhow::Result<()> {
-    bail!("update cannot replace a running binary on this platform yet")
 }
 
 /// A fresh directory under the system temp directory.

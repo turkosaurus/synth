@@ -8,7 +8,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 
 use synth::input::Gating;
 use synth::session::Session;
-use synth::{audio, release, script, terminal, update, view};
+use synth::{audio, install, release, script, terminal, update, view};
 
 /// synth | rust+luaJIT terminal synthesizer
 #[derive(Parser)]
@@ -40,6 +40,10 @@ enum Commands {
     Play { path: PathBuf },
     /// Play live from the keyboard; without a path, the default instrument
     Tui { path: Option<PathBuf> },
+    /// Copy this binary to $XDG_BIN_HOME, or ~/.local/bin
+    Install,
+    /// Remove this binary
+    Uninstall,
     /// Install the latest build of a release channel from GitHub
     Update {
         #[command(flatten)]
@@ -116,6 +120,17 @@ fn run() -> anyhow::Result<ExitCode> {
             let mut session = Session::open(path.as_deref(), gating())?;
             view::tui::run(&mut session)?;
         }
+        Commands::Install => match install::install()? {
+            install::Installed::Already(to) => println!("synth is installed at {}", to.display()),
+            install::Installed::Copied { to, on_path } => {
+                println!("installed synth {} to {}", release::VERSION, to.display());
+                if !on_path {
+                    let dir = to.parent().unwrap_or(&to).display();
+                    eprintln!("{dir} is not on PATH; add it, e.g. export PATH=\"{dir}:$PATH\"");
+                }
+            }
+        },
+        Commands::Uninstall => println!("removed {}", install::uninstall()?.display()),
         Commands::Update { channel } => match update::run(&channel.channel())? {
             update::Outcome::Current(version) => println!("synth {version} is current"),
             update::Outcome::Installed { from, to } => println!("synth {from} -> {to}"),

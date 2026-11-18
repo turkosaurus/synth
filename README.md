@@ -4,6 +4,25 @@
 
 _Lua defined Rust synthesizer and sequencer_
 
+## install
+
+Linux x86_64 and macOS arm64:
+```sh
+curl -fsSL https://raw.githubusercontent.com/turkosaurus/synth/main/install.sh | bash
+```
+
+[`install.sh`](./install.sh) downloads the latest stable release, checks its sha256, and runs `synth install`, which copies the binary to `$XDG_BIN_HOME`, or `~/.local/bin`.
+
+```sh
+synth --version          # synth 0.4.0
+synth update             # latest stable
+synth update --beta      # latest beta, or dev when no beta is newer than stable
+synth update --dev [SHA] # newest dev build of main, or the one built from SHA
+synth uninstall
+```
+
+`update` and `uninstall` act on the binary you run. If a package manager such as mise installed it, update it there instead.
+
 ## requirements
 
 ### linux
