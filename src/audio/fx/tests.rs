@@ -25,16 +25,29 @@ const FS: f32 = 48000.0;
 const N: usize = 8192;
 
 fn lowpass(cutoff: f32, damping: f32) -> Filter {
-    Filter { kind: Kind::Lowpass, cutoff, damping, root: 1.0 }
+    Filter {
+        kind: Kind::Lowpass,
+        cutoff,
+        damping,
+        root: 1.0,
+    }
 }
 
 fn at(kind: Kind) -> Filter {
-    Filter { kind, cutoff: 1000.0, damping: SQRT_2, root: 1.0 }
+    Filter {
+        kind,
+        cutoff: 1000.0,
+        damping: SQRT_2,
+        root: 1.0,
+    }
 }
 
 // root for a shelf or bell gain in dB: 10^(dB / 80)
 fn with_db(kind: Kind, db: f32) -> Filter {
-    Filter { root: 10f32.powf(db / 80.0), ..at(kind) }
+    Filter {
+        root: 10f32.powf(db / 80.0),
+        ..at(kind)
+    }
 }
 
 /// Magnitude in dB at each frequency, from the filter's impulse response.
@@ -56,7 +69,10 @@ fn response_db(filter: Filter, hz: &[f32]) -> Vec<f32> {
 
 #[track_caller]
 fn near(got: f32, want: f32, tolerance: f32) {
-    assert!((got - want).abs() <= tolerance, "got {got} dB, want {want} ± {tolerance}");
+    assert!(
+        (got - want).abs() <= tolerance,
+        "got {got} dB, want {want} ± {tolerance}"
+    );
 }
 
 #[track_caller]
@@ -160,7 +176,11 @@ fn cutoff_glides() {
     for _ in 1..1200 {
         svf.next(0.0);
     }
-    assert!((svf.cutoff() - 20000.0).abs() < 200.0, "only reached {}", svf.cutoff());
+    assert!(
+        (svf.cutoff() - 20000.0).abs() < 200.0,
+        "only reached {}",
+        svf.cutoff()
+    );
 }
 
 #[test]

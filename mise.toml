@@ -1,6 +1,7 @@
 [tools]
-# clippy is not in every rustup profile; CI's minimal install lacks it
-rust = { version = "1.98", components = "clippy" }
+# clippy and rustfmt are not in every rustup profile;
+# CI's minimal install lacks them
+rust = { version = "1.98", components = "clippy,rustfmt" }
 # the release workflow reads Cargo.toml's version with it
 yq = "4"
 # `mise run lint` checks lua/ with both
@@ -49,8 +50,12 @@ depends = ["test:rust", "test:separation", "test:core", "test:example"]
 description = "run all tests: cargo tests and the example patch lint"
 
 [tasks.lint]
-depends = ["lint:rust", "lint:pedantic", "lint:lua", "lint:stylua", "lint:licenses"]
+depends = ["lint:fmt", "lint:rust", "lint:pedantic", "lint:lua", "lint:stylua", "lint:licenses"]
 description = "run all linters; any warning fails, except pedantic"
+
+[tasks."lint:fmt"]
+description = "cargo fmt check on the crate; any difference fails"
+run = "cargo fmt --check || { echo '::error title=lint:fmt::the crate is not formatted; run cargo fmt'; exit 1; }"
 
 [tasks."lint:rust"]
 description = "clippy on every target; any warning fails"

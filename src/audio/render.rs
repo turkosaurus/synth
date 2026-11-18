@@ -350,7 +350,7 @@ impl Player {
                 let (at, event) = events.get(*next)?;
                 if *at <= clock {
                     *next += 1;
-                    Some(event.clone())
+                    Some(*event)
                 } else {
                     None
                 }
