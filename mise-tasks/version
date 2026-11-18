@@ -111,4 +111,4 @@ if [ -n "$latest" ]; then
 fi
 
 emit "release=true"
-note "v$new is ready to release; latest tag ${latest:+v}${latest:-none}"
+note "v$new is ready to release; previous tag ${latest:+v}${latest:-none}"
