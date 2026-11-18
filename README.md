@@ -6,7 +6,10 @@ _Lua defined Rust synthesizer and sequencer_
 
 ## requirements
 
+Release binaries need nothing installed. The Linux one is fully static (musl) and needs PulseAudio or PipeWire for sound; without a sound server it can only reach ALSA `hw:` devices that accept f32. `mise run build:musl` builds it locally with docker.
+
 ### linux
+To build from source:
 ```sh
 sudo apt install libasound2-dev pkg-config build-essential
 ```

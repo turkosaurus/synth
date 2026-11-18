@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+#MISE description="fully static Linux release binary (x86_64 musl), built in an Alpine container"
+
+# Writes target/musl/x86_64-unknown-linux-musl/release/synth.
+#
+# On the host this re-runs itself inside rust:$RUST-alpine, so the only host
+# requirement is docker. Inside the container it builds a static alsa-lib,
+# which Alpine does not package, then synth against it. Both are cached
+# under target/musl, which CI restores between runs.
+set -euo pipefail
+
+target=x86_64-unknown-linux-musl
+rust=1.98
+alsa=1.2.15.3 # Alpine 3.24's own alsa-lib, built static
+
+if [ ! -f /etc/alpine-release ]; then
+  root=$(git rev-parse --show-toplevel)
+  if ! docker run --rm \
+    -v "$root":/src -w /src \
+    -e HOST_OWNER="$(id -u):$(id -g)" \
+    "rust:$rust-alpine" sh -c 'apk add -q bash && bash mise-tasks/build/musl'; then
+    echo "::error title=build:musl::static musl build failed"
+    exit 1
+  fi
+  exit 0
+fi
+
+apk add -q build-base pkgconf linux-headers curl
+
+out=/src/target/musl
+export CARGO_HOME=$out/cargo
+export CARGO_TARGET_DIR=$out
+prefix=$out/alsa-$alsa
+
+# the container runs as root; hand everything back to the host user,
+# whether the build succeeds or not
+trap 'chown -R "$HOST_OWNER" "$out"' EXIT
+
+if [ ! -f "$prefix/lib/libasound.a" ]; then
+  src=$(mktemp -d)
+  curl -fsSL "https://www.alsa-project.org/files/pub/lib/alsa-lib-$alsa.tar.bz2" \
+    | tar -xj -C "$src"
+  (
+    cd "$src/alsa-lib-$alsa"
+    # config and plugin paths match a typical distro, where the binary runs
+    ./configure -q --prefix="$prefix" --enable-static --disable-shared \
+      --disable-python --disable-ucm --disable-topology \
+      --with-configdir=/usr/share/alsa --with-plugindir=/usr/lib/alsa-lib
+    make -s -j"$(nproc)" install >/dev/null
+  )
+fi
+
+export PKG_CONFIG_PATH=$prefix/lib/pkgconfig
+export PKG_CONFIG_ALL_STATIC=1
+# LuaJIT registers unwind tables for JIT code in libgcc's format, which the
+# LLVM libunwind in Rust's musl target rejects ("bad fde"). Without unwind
+# tables LuaJIT raises Lua errors with longjmp, as standard Lua does, and
+# registers nothing; mlua already supports that for standard Lua.
+export CFLAGS_x86_64_unknown_linux_musl=-DLUAJIT_NO_UNWIND
+
+cargo build --release --locked --target "$target"

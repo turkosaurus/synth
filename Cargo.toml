@@ -1,13 +1,15 @@
 [package]
 name = "synth"
-version = "0.3.4"
+version = "0.4.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow = "1.0.104"
 comfy-table = "8.0.1"
-cpal = "0.18.2"
+# pulseaudio: a pure-Rust client for the PulseAudio protocol, which
+# PipeWire also serves; tried before ALSA, so a static build still plays
+cpal = { version = "0.18.2", features = ["pulseaudio"] }
 crossterm = "0.29.0"
 ratatui = "0.30"
 rtrb = "0.4.0"
@@ -41,3 +43,12 @@ mod_module_files = "warn"
 
 [dev-dependencies]
 realfft = "3.5.1"
+
+# The pure-Rust PulseAudio client cannot keep a short buffer fed unoptimized,
+# so debug builds (`mise run tui`) starve the stream. Optimizing only the
+# audio path keeps synth's own code debuggable.
+[profile.dev.package.pulseaudio]
+opt-level = 3
+
+[profile.dev.package.cpal]
+opt-level = 3

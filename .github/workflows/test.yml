@@ -17,6 +17,44 @@ env:
   MISE_TASK_OUTPUT: interleave
 
 jobs:
+  # the static Linux release binary, built here so a break shows on the PR
+  # rather than at release
+  musl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Install tools
+        uses: jdx/mise-action@v5
+
+      # static alsa-lib, the cargo registry, and target/; like the cargo
+      # cache in test, only main saves
+      - name: Restore musl cache
+        uses: actions/cache/restore@v6
+        with:
+          path: target/musl
+          key: musl-${{ hashFiles('Cargo.lock', 'mise-tasks/build/musl') }}
+          restore-keys: musl-
+
+      - name: Build
+        run: mise run build:musl
+
+      - name: Save musl cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: target/musl
+          key: musl-${{ hashFiles('Cargo.lock', 'mise-tasks/build/musl') }}
+
+      # the runner is glibc Ubuntu: the binary must start with nothing to load
+      - name: Run static binary
+        run: |
+          set -euo pipefail
+          bin=target/musl/x86_64-unknown-linux-musl/release/synth
+          file "$bin" | grep -q 'static-pie linked'
+          "$bin" check lua/example.lua
+
   test:
     runs-on: ubuntu-latest
     steps:
