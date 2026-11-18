@@ -2,6 +2,8 @@
 name = "synth"
 version = "0.3.4"
 edition = "2021"
+# the dependencies' floor; ratatui, mlua, and comfy-table need 1.88
+rust-version = "1.88"
 license = "GPL-3.0-or-later"
 
 [dependencies]
@@ -34,6 +36,7 @@ features = ["env-filter"]
 # main.rs and tests/ cannot reach is flagged
 [lints.rust]
 unreachable_pub = "warn"
+unsafe_code = "forbid"
 
 # modules live in `name.rs` beside a `name/` directory, never `name/mod.rs`
 [lints.clippy]
