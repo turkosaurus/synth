@@ -8,6 +8,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
 
+/// The binary's file name, installed and inside release archives.
+pub(crate) const BIN: &str = "synth";
+
+const XDG_BIN_HOME: &str = "XDG_BIN_HOME";
+const HOME: &str = "HOME";
+const PATH: &str = "PATH";
+/// The XDG spec's user bin directory, under `$HOME`.
+const LOCAL_BIN: [&str; 2] = [".local", "bin"];
+
 /// What `install` did.
 #[derive(Debug)]
 pub enum Installed {
@@ -32,24 +41,25 @@ fn bin_dir(xdg: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
     let xdg = xdg.map(PathBuf::from).filter(|p| p.is_absolute());
     xdg.or_else(|| {
         let home = home.map(PathBuf::from).filter(|p| p.is_absolute())?;
-        Some(home.join(".local").join("bin"))
+        Some(LOCAL_BIN.iter().fold(home, |dir, part| dir.join(part)))
     })
 }
 
 /// Copies the running binary into the user's bin directory.
 pub fn install() -> anyhow::Result<Installed> {
     let exe = exe()?;
-    let Some(dir) = bin_dir(env::var_os("XDG_BIN_HOME"), env::var_os("HOME")) else {
-        bail!("neither XDG_BIN_HOME nor HOME is an absolute path");
+    let Some(dir) = bin_dir(env::var_os(XDG_BIN_HOME), env::var_os(HOME)) else {
+        bail!("neither {XDG_BIN_HOME} nor {HOME} is an absolute path");
     };
-    let to = dir.join("synth");
+    let to = dir.join(BIN);
     if fs::canonicalize(&to).is_ok_and(|installed| installed == exe) {
         return Ok(Installed::Already(to));
     }
     fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    place(&exe, &to)?;
+    let binary = fs::read(&exe).with_context(|| format!("read {}", exe.display()))?;
+    place(&binary, &to)?;
 
-    let on_path = env::var_os("PATH").is_some_and(|path| env::split_paths(&path).any(|d| d == dir));
+    let on_path = env::var_os(PATH).is_some_and(|path| env::split_paths(&path).any(|d| d == dir));
     Ok(Installed::Copied { to, on_path })
 }
 
@@ -61,15 +71,15 @@ pub fn uninstall() -> anyhow::Result<PathBuf> {
     Ok(exe)
 }
 
-/// Copies `new` beside `to` and renames it over `to`.
+/// Writes `binary` beside `to` and renames it over `to`.
 /// A rename within one directory is atomic, and a running binary keeps its
 /// old inode, so a process that replaces itself is unaffected.
 #[cfg(unix)]
-pub(crate) fn place(new: &Path, to: &Path) -> anyhow::Result<()> {
+pub(crate) fn place(binary: &[u8], to: &Path) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
-    let staged = to.with_file_name(format!(".synth-{}.tmp", std::process::id()));
-    fs::copy(new, &staged).with_context(|| format!("write {}", staged.display()))?;
+    let staged = to.with_file_name(format!(".{BIN}-{}.tmp", std::process::id()));
+    fs::write(&staged, binary).with_context(|| format!("write {}", staged.display()))?;
     let result = fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))
         .and_then(|()| fs::rename(&staged, to));
     if let Err(e) = result {
@@ -80,7 +90,7 @@ pub(crate) fn place(new: &Path, to: &Path) -> anyhow::Result<()> {
 }
 
 #[cfg(not(unix))]
-pub(crate) fn place(_new: &Path, _to: &Path) -> anyhow::Result<()> {
+pub(crate) fn place(_binary: &[u8], _to: &Path) -> anyhow::Result<()> {
     bail!("cannot replace a running binary on this platform yet")
 }
 

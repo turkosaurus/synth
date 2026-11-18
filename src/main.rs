@@ -48,6 +48,9 @@ enum Commands {
     Update {
         #[command(flatten)]
         channel: ChannelArgs,
+        /// download, verify, and unpack the build, but leave this binary
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -62,7 +65,12 @@ struct ChannelArgs {
     #[arg(long)]
     beta: bool,
     /// the newest dev build, or the one built from SHA
-    #[arg(long, value_name = "SHA", num_args = 0..=1, default_missing_value = "main")]
+    #[arg(
+        long,
+        value_name = "SHA",
+        num_args = 0..=1,
+        default_missing_value = update::DEV_NEWEST
+    )]
     dev: Option<String>,
 }
 
@@ -70,7 +78,7 @@ impl ChannelArgs {
     fn channel(self) -> update::Channel {
         match (self.beta, self.dev) {
             (true, _) => update::Channel::Beta,
-            (_, Some(sha)) if sha == "main" => update::Channel::Dev(None),
+            (_, Some(sha)) if sha == update::DEV_NEWEST => update::Channel::Dev(None),
             (_, Some(sha)) => update::Channel::Dev(Some(sha)),
             _ => update::Channel::Stable,
         }
@@ -131,9 +139,12 @@ fn run() -> anyhow::Result<ExitCode> {
             }
         },
         Commands::Uninstall => println!("removed {}", install::uninstall()?.display()),
-        Commands::Update { channel } => match update::run(&channel.channel())? {
+        Commands::Update { channel, dry_run } => match update::run(&channel.channel(), dry_run)? {
             update::Outcome::Current(version) => println!("synth {version} is current"),
             update::Outcome::Installed { from, to } => println!("synth {from} -> {to}"),
+            update::Outcome::Checked { to, path } => {
+                println!("synth {to} verified; would replace {}", path.display());
+            }
         },
     }
     Ok(ExitCode::SUCCESS)

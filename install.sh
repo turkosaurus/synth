@@ -11,6 +11,14 @@
 set -euo pipefail
 
 repo=turkosaurus/synth
+api="https://api.github.com/repos/$repo/releases/latest"
+downloads="https://github.com/$repo/releases/download"
+bin=synth
+asset_prefix="$bin-"
+asset_suffix=.tar.gz
+# the release target built for each uname -s/uname -m
+linux_x86_64=x86_64-unknown-linux-gnu
+darwin_arm64=aarch64-apple-darwin
 
 fail() {
     echo "install.sh: $*" >&2
@@ -18,11 +26,11 @@ fail() {
 }
 
 case "$(uname -s)/$(uname -m)" in
-Linux/x86_64) target=x86_64-unknown-linux-gnu ;;
-Darwin/arm64) target=aarch64-apple-darwin ;;
+Linux/x86_64) target=$linux_x86_64 ;;
+Darwin/arm64) target=$darwin_arm64 ;;
 *) fail "no release is built for $(uname -s) $(uname -m)" ;;
 esac
-asset="synth-$target.tar.gz"
+asset="$asset_prefix$target$asset_suffix"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -32,7 +40,7 @@ get() {
     curl -fsSL --proto =https --proto-redir =https "$@"
 }
 
-if ! get -o "$tmp/release.json" "https://api.github.com/repos/$repo/releases/latest"; then
+if ! get -o "$tmp/release.json" "$api"; then
     fail "cannot read the latest release"
 fi
 
@@ -47,7 +55,7 @@ want=$(awk -v asset="$asset" '
 [ -n "$tag" ] || fail "the latest release has no tag"
 [ -n "$want" ] || fail "$tag has no sha256 digest for $asset"
 
-if ! get -o "$tmp/$asset" "https://github.com/$repo/releases/download/$tag/$asset"; then
+if ! get -o "$tmp/$asset" "$downloads/$tag/$asset"; then
     fail "cannot download $asset from $tag"
 fi
 
@@ -63,4 +71,4 @@ fi
 if ! tar -xzf "$tmp/$asset" -C "$tmp"; then
     fail "cannot unpack $asset"
 fi
-"$tmp/synth" install "$@"
+"$tmp/$bin" install "$@"

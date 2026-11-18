@@ -164,3 +164,31 @@ jobs:
             --generate-notes \
             --prerelease="$PRERELEASE" \
             --repo "$GITHUB_REPOSITORY"
+
+  # the release just published, end to end: its Linux build finds it on the
+  # release page by its channel, downloads, verifies, and unpacks it
+  verify:
+    needs: [version, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the Linux build
+        uses: actions/download-artifact@v8
+        with:
+          name: synth-x86_64-unknown-linux-gnu
+
+      - name: Update dry run to ${{ needs.version.outputs.tag }}
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          tar -xzf synth-x86_64-unknown-linux-gnu.tar.gz
+          case $TAG in
+          *+*) channel=(--dev "${TAG##*+}") ;;
+          *-*) channel=(--beta) ;;
+          *) channel=(--stable) ;;
+          esac
+          out=$(./synth update --dry-run "${channel[@]}")
+          echo "$out"
+          if [[ $out != "synth ${TAG#v} verified;"* ]]; then
+            echo "::error::update --dry-run ${channel[*]} did not find $TAG"
+            exit 1
+          fi
