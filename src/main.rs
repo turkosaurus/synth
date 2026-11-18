@@ -8,10 +8,11 @@ use tracing_subscriber::fmt::format::FmtSpan;
 
 use synth::input::Gating;
 use synth::session::Session;
-use synth::{audio, script, terminal, view};
+use synth::{audio, release, script, terminal, view};
 
 /// synth | rust+luaJIT terminal synthesizer
 #[derive(Parser)]
+#[command(version = release::VERSION)]
 struct Args {
     #[command(subcommand)]
     command: Commands,
