@@ -4,8 +4,9 @@
 # One check, run twice: by test.yml on a PR, so a bad bump fails before merge,
 # and by release.yml after merge, to decide whether to release. Both read the
 # version from HEAD and compare with VERSION_BASE, the git ref holding the
-# previous version. An empty VERSION_BASE means a manual release of the
-# version as it stands, with nothing to compare against.
+# previous version. VERSION_BASE=latest means the latest version tag. An empty
+# VERSION_BASE means a manual release of the version as it stands, with
+# nothing to compare against.
 #
 # A version is MAJOR.MINOR.PATCH, or MAJOR.MINOR.PATCH-beta.N for a beta.
 #
@@ -56,6 +57,17 @@ if [[ ! $new =~ $semver ]]; then
 fi
 emit "version=$new"
 
+# tags that are not versions, such as a dev build's v0.3.4+beef3d0,
+# are ignored rather than compared
+latest=$(git tag --list 'v*' | sed 's/^v//' | { grep -E "$semver" || true; } | highest)
+
+# release.yml compares with the latest release rather than HEAD^.
+# A queued run can be replaced by a newer push's run, so a bump whose own
+# run never ran is still released by the next one.
+if [ "$base" = latest ]; then
+    base=${latest:+v$latest}
+fi
+
 old=""
 if [ -n "$base" ]; then
     if ! old=$(version_of "$base"); then
@@ -102,8 +114,6 @@ if git rev-parse -q --verify "refs/tags/v$new" >/dev/null; then
     fail "tag v$new already exists"
 fi
 
-# tags that are not versions are ignored rather than compared
-latest=$(git tag --list 'v*' | sed 's/^v//' | { grep -E "$semver" || true; } | highest)
 if [ -n "$latest" ]; then
     if [ "$(printf '%s\n%s\n' "$latest" "$new" | highest)" != "$new" ]; then
         fail "$new does not move forward from the latest tag v$latest"
