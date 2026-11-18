@@ -77,7 +77,9 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          # the binary needs the build host's glibc or newer;
+          # 24.04 (glibc 2.39) keeps it running on 24.04 and later
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
