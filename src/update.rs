@@ -153,7 +153,11 @@ pub fn run(channel: &Channel) -> anyhow::Result<Outcome> {
         .iter()
         .find(|a| a.name == asset_name)
         .with_context(|| format!("{} has no {asset_name}", release.tag_name))?;
-    let exe = std::env::current_exe().context("find the running binary")?;
+    // resolved, so a symlink on PATH updates the file it points to rather
+    // than being replaced by a copy
+    let exe = std::env::current_exe()
+        .and_then(fs::canonicalize)
+        .context("find the running binary")?;
     let dir = scratch()?;
     let result = install(asset, &exe, &dir);
     // best effort: a leftover temp directory is not worth failing for
