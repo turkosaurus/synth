@@ -77,7 +77,11 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          # pinned, not ubuntu-latest: the binary needs the glibc it was built
+          # against or newer, so the runner sets the oldest Linux it runs on.
+          # 24.04 has glibc 2.39; ubuntu-latest moved to 26 (2.43), and its
+          # binaries failed on 24.04 with `GLIBC_2.43 not found`.
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
