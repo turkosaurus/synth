@@ -1,11 +1,13 @@
 name: release
 
+# Every push to main publishes one release, created once with every asset.
 # Versions are bumped only by PR (mise run bump <part>), where test.yml checks
-# them. Merging such a PR releases it: the tag follows Cargo.toml.
+# them. Merging such a PR releases it: the tag follows Cargo.toml, and a
+# -beta.N version is a prerelease. Any other push is a dev build, tagged
+# v<version>+<sha7> and also a prerelease.
 on:
   push:
     branches: [main]
-    paths: ["Cargo.toml"]
   # retries a failed release of the version Cargo.toml has now
   workflow_dispatch:
 
@@ -25,8 +27,9 @@ jobs:
   version:
     runs-on: ubuntu-latest
     outputs:
-      release: ${{ steps.check.outputs.release }}
-      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.name.outputs.tag }}
+      build: ${{ steps.name.outputs.build }}
+      prerelease: ${{ steps.name.outputs.prerelease }}
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -36,24 +39,43 @@ jobs:
       - name: Install tools
         uses: jdx/mise-action@v5
 
-      # a push compares with the commit before it; a manual retry has nothing
+      # a push compares with the latest release; a manual retry has nothing
       # to compare with, and releases the version as it stands
       - name: Check version
         id: check
         env:
-          VERSION_BASE: ${{ github.event_name == 'push' && 'HEAD^' || '' }}
+          VERSION_BASE: ${{ github.event_name == 'push' && 'latest' || '' }}
         run: mise run version
+
+      # semver build metadata names the commit without ordering it,
+      # so a dev build shows what it was built from and never outranks a release
+      - name: Name the build
+        id: name
+        env:
+          RELEASE: ${{ steps.check.outputs.release }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          if [ "$RELEASE" = true ]; then
+            tag="v$VERSION"
+          else
+            tag="v$VERSION+${GITHUB_SHA::7}"
+          fi
+          case $tag in
+          *-* | *+*) prerelease=true ;;
+          *) prerelease=false ;;
+          esac
+          echo "tag=$tag" | tee -a "$GITHUB_OUTPUT"
+          echo "build=${tag#v}" | tee -a "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" | tee -a "$GITHUB_OUTPUT"
 
   test:
     needs: version
-    if: needs.version.outputs.release == 'true'
     uses: ./.github/workflows/test.yml
 
   # one notices file covers every target: about.toml lists all three, so
   # each archive carries the licenses of everything any build links
   notices:
     needs: version
-    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -92,7 +114,10 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
+      # --version prints the tag without its v
       - name: Build ${{ matrix.target }}
+        env:
+          SYNTH_VERSION: ${{ needs.version.outputs.build }}
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Download notices
@@ -127,12 +152,15 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Create release v${{ needs.version.outputs.version }}
+      # one call with every asset, so a release is never seen half uploaded
+      - name: Create release ${{ needs.version.outputs.tag }}
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
-          gh release create "v$VERSION" dist/* \
+          gh release create "$TAG" dist/* \
             --target "$GITHUB_SHA" \
             --generate-notes \
+            --prerelease="$PRERELEASE" \
             --repo "$GITHUB_REPOSITORY"
