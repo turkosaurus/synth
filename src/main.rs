@@ -8,7 +8,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 
 use synth::input::Gating;
 use synth::session::Session;
-use synth::{audio, release, script, terminal, view};
+use synth::{audio, release, script, terminal, update, view};
 
 /// synth | rust+luaJIT terminal synthesizer
 #[derive(Parser)]
@@ -40,6 +40,37 @@ enum Commands {
     Play { path: PathBuf },
     /// Play live from the keyboard; without a path, the default instrument
     Tui { path: Option<PathBuf> },
+    /// Install the latest build of a release channel from GitHub
+    Update {
+        #[command(flatten)]
+        channel: ChannelArgs,
+    },
+}
+
+/// At most one channel; none means stable.
+#[derive(clap::Args)]
+#[group(multiple = false)]
+struct ChannelArgs {
+    /// the latest release (default)
+    #[arg(long)]
+    stable: bool,
+    /// the latest beta while it is newer than stable, else dev
+    #[arg(long)]
+    beta: bool,
+    /// the newest dev build, or the one built from SHA
+    #[arg(long, value_name = "SHA", num_args = 0..=1, default_missing_value = "main")]
+    dev: Option<String>,
+}
+
+impl ChannelArgs {
+    fn channel(self) -> update::Channel {
+        match (self.beta, self.dev) {
+            (true, _) => update::Channel::Beta,
+            (_, Some(sha)) if sha == "main" => update::Channel::Dev(None),
+            (_, Some(sha)) => update::Channel::Dev(Some(sha)),
+            _ => update::Channel::Stable,
+        }
+    }
 }
 
 fn main() -> ExitCode {
@@ -85,6 +116,10 @@ fn run() -> anyhow::Result<ExitCode> {
             let mut session = Session::open(path.as_deref(), gating())?;
             view::tui::run(&mut session)?;
         }
+        Commands::Update { channel } => match update::run(&channel.channel())? {
+            update::Outcome::Current(version) => println!("synth {version} is current"),
+            update::Outcome::Installed { from, to } => println!("synth {from} -> {to}"),
+        },
     }
     Ok(ExitCode::SUCCESS)
 }
