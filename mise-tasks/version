@@ -7,13 +7,16 @@
 # previous version. An empty VERSION_BASE means a manual release of the
 # version as it stands, with nothing to compare against.
 #
+# A version is MAJOR.MINOR.PATCH, or MAJOR.MINOR.PATCH-beta.N for a beta.
+#
 # Prints version=X.Y.Z and release=true|false, and appends both to
 # $GITHUB_OUTPUT inside Actions. A release is a notice and a failure an error;
 # an unchanged version is only logged.
 set -euo pipefail
 
 base=${VERSION_BASE:-}
-semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+num='(0|[1-9][0-9]*)'
+semver="^$num\.$num\.$num(-beta\.$num)?$"
 
 note() { echo "::notice::$*"; }
 fail() {
@@ -27,6 +30,18 @@ emit() {
     fi
 }
 
+# Prints the highest of the versions on stdin, in semver order.
+# sort -V puts 0.4.0-beta.1 after 0.4.0, so each version is keyed as
+# MAJOR MINOR PATCH STABLE BETA, where a release sorts after its betas.
+highest() {
+    local v core rank
+    while read -r v; do
+        core=${v%%-*}
+        if [[ $v == *-beta.* ]]; then rank="0 ${v##*.}"; else rank="1 0"; fi
+        echo "${core//./ } $rank $v"
+    done | sort -n -k1,1 -k2,2 -k3,3 -k4,4 -k5,5 | tail -1 | cut -d' ' -f6
+}
+
 # from a revision, not the working tree, so the previous version is readable
 # without checking it out
 version_of() {
@@ -37,7 +52,7 @@ if ! new=$(version_of HEAD); then
     fail "cannot read the version from Cargo.toml"
 fi
 if [[ ! $new =~ $semver ]]; then
-    fail "Cargo.toml version '$new' is not MAJOR.MINOR.PATCH"
+    fail "Cargo.toml version '$new' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N"
 fi
 emit "version=$new"
 
@@ -59,27 +74,38 @@ if [ -n "$base" ]; then
     # exactly one bump from the previous version, which catches typos such
     # as 0.1.0 to 0.10.0 before they become a permanent tag
     if [[ ! $old =~ $semver ]]; then
-        fail "previous version '$old' at $base is not MAJOR.MINOR.PATCH"
+        fail "previous version '$old' at $base is not a version"
     fi
-    IFS=. read -r major minor patch <<<"$old"
-    patch_next="$major.$minor.$((patch + 1))"
-    minor_next="$major.$((minor + 1)).0"
-    major_next="$((major + 1)).0.0"
-    case $new in
-    "$patch_next" | "$minor_next" | "$major_next") ;;
-    *) fail "$old to $new is not one bump; expected $patch_next, $minor_next, or $major_next" ;;
-    esac
+    if [[ $old == *-beta.* ]]; then
+        # a beta moves to its next beta or to its own release
+        core=${old%%-*}
+        beta=${old##*.}
+        expected=("$core-beta.$((beta + 1))" "$core")
+    else
+        # a release moves to the next release, or starts that release's betas
+        IFS=. read -r major minor patch <<<"$old"
+        expected=()
+        for next in "$major.$minor.$((patch + 1))" "$major.$((minor + 1)).0" "$((major + 1)).0.0"; do
+            expected+=("$next" "$next-beta.1")
+        done
+    fi
+    found=false
+    for next in "${expected[@]}"; do
+        if [ "$new" = "$next" ]; then found=true; fi
+    done
+    if ! $found; then
+        fail "$old to $new is not one bump; expected one of ${expected[*]}"
+    fi
 fi
 
 if git rev-parse -q --verify "refs/tags/v$new" >/dev/null; then
     fail "tag v$new already exists"
 fi
 
-# tags that are not plain MAJOR.MINOR.PATCH are ignored rather than compared
-latest=$(git tag --list 'v*' | sed 's/^v//' | { grep -E "$semver" || true; } | sort -V | tail -1)
+# tags that are not versions are ignored rather than compared
+latest=$(git tag --list 'v*' | sed 's/^v//' | { grep -E "$semver" || true; } | highest)
 if [ -n "$latest" ]; then
-    highest=$(printf '%s\n%s\n' "$latest" "$new" | sort -V | tail -1)
-    if [ "$highest" != "$new" ]; then
+    if [ "$(printf '%s\n%s\n' "$latest" "$new" | highest)" != "$new" ]; then
         fail "$new does not move forward from the latest tag v$latest"
     fi
 fi
