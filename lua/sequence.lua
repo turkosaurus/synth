@@ -47,9 +47,9 @@ function sequence.list(build)
 	return out
 end
 
--- The other constructors return the table you passed in,
--- so Rust can reject unknown fields by name.
--- This fresh table builds from scratch, so this allows checks.
+-- The other constructors copy every field they are given, so an unknown
+-- one reaches Rust and gets named there. sequence builds its result from
+-- scratch and would drop an unknown field, so it checks them here.
 local known = {
 	bpm = true,
 	division = true,
