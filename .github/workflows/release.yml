@@ -1,10 +1,10 @@
 name: release
 
-# Every push to main publishes one release, created once with every asset.
+# Every push to main publishes a GitHub release, created once with every asset.
+# It is a prerelease unless the push bumps Cargo.toml to a stable X.Y.Z.
 # Versions are bumped only by PR (mise run bump <part>), where test.yml checks
-# them. Merging such a PR releases it: the tag follows Cargo.toml, and a
-# -beta.N version is a prerelease. Any other push is a dev build, tagged
-# v<version>+<sha7> and also a prerelease.
+# them; the tag follows Cargo.toml. Any other push is a dev build, tagged
+# v<version>+<sha7>.
 on:
   push:
     branches: [main]
