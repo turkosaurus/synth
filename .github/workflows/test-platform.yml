@@ -24,6 +24,12 @@ env:
   # here, they apply to this workflow only. Unused on macOS.
   MISE_WINDOWS_DEFAULT_INLINE_SHELL_ARGS: bash -o errexit -c
   MISE_WINDOWS_DEFAULT_FILE_SHELL_ARGS: bash
+  # `mise run` would first install every tool in mise.toml, the Linux-only
+  # lint tools included, through GitHub's API; only Rust is installed here
+  MISE_TASK_RUN_AUTO_INSTALL: false
+  # authenticates any GitHub API call mise still makes, past the
+  # unauthenticated rate limit
+  GITHUB_TOKEN: ${{ github.token }}
 
 jobs:
   test:
