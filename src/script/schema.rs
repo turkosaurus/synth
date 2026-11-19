@@ -31,8 +31,7 @@ impl Ty {
     }
 }
 
-/// The values a number may take. Bounds are inclusive unless named `Above`
-/// or `Below`.
+/// The values a number may take. Bounds are inclusive unless named `Above` or `Below`.
 #[derive(Clone, Copy)]
 enum Bound {
     Any,
