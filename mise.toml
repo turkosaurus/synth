@@ -30,9 +30,13 @@ run = "cargo run -- tui"
 
 ### TEST ###
 
-[tasks.test]
+[tasks.tests]
+depends = ["test:*"]
+description = "every test:* task, network included"
+
+[tasks."test:local"]
 depends = ["test:rust", "test:separation", "test:core", "test:example"]
-description = "run the offline tests: cargo tests and the example patch lint; test:network is separate"
+description = "tests that need no network"
 
 [tasks."test:rust"]
 description = "cargo tests"
@@ -41,6 +45,8 @@ run = "cargo test --verbose -- --show-output || { echo '::error title=test:rust:
 # #[ignore]d tests in tests/network.rs; CI runs them beside test
 [tasks."test:network"]
 description = "tests that reach GitHub releases"
+# they run target/debug/synth, which the other cargo tasks may be relinking
+wait_for = ["test:rust", "test:example"]
 run = "cargo test --test network -- --ignored || { echo '::error title=test:network::network tests failed'; exit 1; }"
 
 [tasks."test:example"]

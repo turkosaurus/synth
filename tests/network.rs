@@ -1,5 +1,5 @@
 //! Tests that reach GitHub releases. `cargo test` skips them;
-//! `mise run test:network` runs them, and CI runs both suites.
+//! `mise run test:network` runs them, and `mise run tests` runs everything.
 
 use std::process::Command;
 

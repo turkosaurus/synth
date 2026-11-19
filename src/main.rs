@@ -152,7 +152,7 @@ fn run() -> anyhow::Result<ExitCode> {
 
 /// The terminal reports a capability; the keyboard decides the policy.
 /// Probing switches the terminal to raw mode, which stops the process when
-/// it runs in a background job, as under `mise test`, so only the commands
+/// it runs in a background job, as under `mise run test:local`, so only the commands
 /// that need it ask.
 fn gating() -> Gating {
     if terminal::reports_key_release() {
