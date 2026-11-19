@@ -1,8 +1,4 @@
--- Settings for this machine, read by synth at startup. Song files hold the
--- music; this holds what depends on the machine. `synth doctor` shows the
--- settings in effect. Every setting is optional.
+-- Optional settings for this machine, evaluated when program starts.
 return {
-	-- frames per audio callback; smaller is lower latency, larger is
-	-- steadier. 0 lets the platform decide.
-	buffer_frames = 0,
+	buffer_frames = 0, -- audio callback frames (0: defer to system default)
 }
