@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/turkosaurus/synth/main/install.sh |
 
 ## config
 
-Settings for the machine live in `$XDG_CONFIG_HOME/synth/config.lua`, or `~/.config/synth/config.lua`. `synth config` opens it in `$VISUAL` or `$EDITOR`, writing [a commented template](./lua/config.lua) first if there is none, and checks it once the editor closes. The file is optional and returns a plain table:
+Settings for the machine live in `$XDG_CONFIG_HOME/synth/config.lua`, or `~/.config/synth/config.lua`. `synth config` opens it in `$VISUAL` or `$EDITOR`, writing [the template](./lua/config.lua) first if there is none, and checks it once the editor closes. The file is optional and returns a plain table:
 
 ```lua
 return {
