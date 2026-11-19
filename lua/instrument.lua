@@ -30,7 +30,7 @@ new = function(opts)
 	end
 	-- notes this instrument can sound at once; 1 is mono
 	if out.voice_count == nil then
-		out.voice_count = 1
+		out.voice_count = 4
 	end
 	return out
 end
