@@ -1,5 +1,6 @@
 use anyhow::Context;
 use clap::{CommandFactory, Parser, Subcommand};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -47,8 +48,12 @@ enum Commands {
     /// copying in the built-in modules if needed
     Patches {
         /// print the folder's path instead, for editors that cannot open one
-        #[arg(long)]
+        #[arg(long, conflicts_with = "sync")]
         path: bool,
+        /// bring the built-in copies up to date, asking about edited ones,
+        /// without opening the editor; `update` runs this
+        #[arg(long)]
+        sync: bool,
     },
     /// Copy this binary to $XDG_BIN_HOME, or ~/.local/bin
     Install,
@@ -151,7 +156,7 @@ fn run() -> anyhow::Result<ExitCode> {
             view::tui::run(&mut session, &config.tui)?;
         }
         Commands::Config => return edit_config(),
-        Commands::Patches { path } => patches(path)?,
+        Commands::Patches { path, sync } => patches(path, sync)?,
         Commands::Install => match install::install()? {
             install::Installed::Already(to) => println!("synth is installed at {}", to.display()),
             install::Installed::Copied { to, on_path } => {
@@ -172,7 +177,10 @@ fn run() -> anyhow::Result<ExitCode> {
         Commands::Uninstall => println!("removed {}", install::uninstall()?.display()),
         Commands::Update { channel, dry_run } => match update::run(&channel.channel(), dry_run)? {
             update::Outcome::Current(version) => println!("synth {version} is current"),
-            update::Outcome::Installed { from, to } => println!("synth {from} -> {to}"),
+            update::Outcome::Installed { from, to } => {
+                println!("synth {from} -> {to}");
+                sync_patches();
+            }
             update::Outcome::Checked { to, path } => {
                 println!("synth {to} verified; would replace {}", path.display());
             }
@@ -224,7 +232,7 @@ fn edit_config() -> anyhow::Result<ExitCode> {
 
 /// Prints the patches folder, or creates it with a folder per kind and
 /// opens it in the user's editor.
-fn patches(print_path: bool) -> anyhow::Result<()> {
+fn patches(print_path: bool, sync: bool) -> anyhow::Result<()> {
     let dir = script::config()?.patches.context(
         "no patches folder: set `patches` in config.lua, or HOME, or APPDATA on Windows",
     )?;
@@ -235,8 +243,84 @@ fn patches(print_path: bool) -> anyhow::Result<()> {
     for wrote in script::starters::write(&dir)? {
         println!("wrote {wrote}");
     }
-    view::report::builtins_written(&script::builtins::write(&dir)?);
+    let wrote = script::builtins::write(&dir)?;
+    // a question needs someone at a terminal to answer it; a script or CI
+    // run is told which copies are behind and left to decide later
+    let asking = std::io::stdin().is_terminal();
+    view::report::builtins_written(&wrote, asking);
+    if asking {
+        resolve_behind(&dir, &wrote)?;
+    }
+    if sync {
+        return Ok(());
+    }
     open_in_editor(&dir)
+}
+
+/// Asks about each edited copy whose built-in changed since it was written,
+/// and overwrites or keeps it as answered.
+fn resolve_behind(
+    dir: &std::path::Path,
+    wrote: &[(&str, script::builtins::Wrote)],
+) -> anyhow::Result<()> {
+    use script::builtins::{self, Wrote};
+    use view::prompt::Choice;
+
+    let mut input = std::io::stdin().lock();
+    let mut output = std::io::stdout();
+    // escape codes only for a terminal; crossterm also drops them for
+    // NO_COLOR
+    let color = output.is_terminal();
+    for (name, outcome) in wrote {
+        if *outcome != Wrote::KeptBehind {
+            continue;
+        }
+        let Some(stale) = builtins::behind(dir, name)? else {
+            continue;
+        };
+        let choice = view::prompt::overwrite(
+            &stale.path,
+            &stale.copy,
+            stale.built_in,
+            color,
+            &mut input,
+            &mut output,
+        )?;
+        match choice {
+            Choice::Overwrite => {
+                builtins::overwrite(dir, &stale)?;
+                println!("overwrote {name} with the new default");
+            }
+            Choice::Keep => {
+                builtins::keep(dir, &stale)?;
+                println!("kept {name}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// After an update, runs the new binary's `patches --sync`, so built-in
+/// copies follow the new built-ins and edited ones are asked about. Only
+/// for a patches folder that already has copies; a failure here is
+/// reported, but the update itself has succeeded.
+fn sync_patches() {
+    let Ok(Some(dir)) = script::config().map(|config| config.patches) else {
+        return;
+    };
+    if !script::builtins::written(&dir) {
+        return;
+    }
+    let ran = std::env::current_exe().and_then(|exe| {
+        std::process::Command::new(exe)
+            .args(["patches", "--sync"])
+            .status()
+    });
+    match ran {
+        Ok(status) if status.success() => {}
+        Ok(status) => eprintln!("synth patches --sync exited with {status}; run it again"),
+        Err(error) => eprintln!("could not run synth patches --sync: {error}"),
+    }
 }
 
 /// Opens `path`, a file or a folder, in the user's editor and waits for it.
