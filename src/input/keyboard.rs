@@ -92,6 +92,15 @@ impl Keyboard {
         self.gating
     }
 
+    /// The lowest and highest shift the octave keys can reach.
+    pub(crate) fn reach(&self) -> (i32, i32) {
+        let start = self.keymap.octave;
+        (
+            start - self.keymap.octave_low,
+            start + self.keymap.octave_high,
+        )
+    }
+
     /// The current octave shift, and whether it is the one the keyboard
     /// started at.
     pub(crate) fn octave(&self) -> (i32, bool) {
@@ -169,13 +178,11 @@ impl Keyboard {
             return;
         }
         if bound(&self.keymap.octave_up, code) {
-            let top = self.keymap.octave + self.keymap.octave_high;
-            self.octave = (self.octave + 1).min(top);
+            self.octave = (self.octave + 1).min(self.reach().1);
             return;
         }
         if bound(&self.keymap.octave_down, code) {
-            let bottom = self.keymap.octave - self.keymap.octave_low;
-            self.octave = (self.octave - 1).max(bottom);
+            self.octave = (self.octave - 1).max(self.reach().0);
             return;
         }
 
@@ -345,6 +352,7 @@ mod tests {
             press(&mut keyboard, KeyCode::Char('='));
         }
         assert_eq!(keyboard.octave(), (3, false), "four above the start");
+        assert_eq!(keyboard.reach(), (-4, 3));
     }
 
     fn release(keyboard: &mut Keyboard, code: KeyCode) {
