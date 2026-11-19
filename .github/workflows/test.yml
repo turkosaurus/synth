@@ -52,9 +52,8 @@ jobs:
       - name: Test
         run: mise run test
 
-      # update end to end against the live release page
-      - name: Update dry run
-        run: cargo run -q -- update --dry-run
+      - name: Network tests
+        run: mise run test:network
 
       - name: Lint
         run: mise run lint

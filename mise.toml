@@ -47,7 +47,7 @@ exit $failed
 
 [tasks.test]
 depends = ["test:rust", "test:separation", "test:core", "test:example"]
-description = "run all tests: cargo tests and the example patch lint"
+description = "run the offline tests: cargo tests and the example patch lint; test:network is separate"
 
 [tasks.lint]
 depends = ["lint:fmt", "lint:rust", "lint:pedantic", "lint:lua", "lint:stylua", "lint:licenses"]
@@ -84,6 +84,11 @@ esac
 [tasks."test:rust"]
 description = "cargo tests"
 run = "cargo test --verbose -- --show-output || { echo '::error title=test:rust::cargo test failed'; exit 1; }"
+
+# #[ignore]d tests in tests/network.rs; CI runs them beside test
+[tasks."test:network"]
+description = "tests that reach GitHub releases"
+run = "cargo test --test network -- --ignored || { echo '::error title=test:network::network tests failed'; exit 1; }"
 
 [tasks.play]
 description = "play the example patch, then show the debug log"
