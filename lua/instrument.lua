@@ -14,8 +14,8 @@ local instrument = setmetatable({}, {
 	end,
 })
 
--- A new table, built the way envelope builds one: the caller's fields, then
--- defaults, unknown fields kept for Rust to name.
+-- Copies the caller's fields, then fills in defaults.
+-- Unknown fields are propagated for error reporting.
 new = function(opts)
 	local out = {}
 	for key, value in pairs(opts or {}) do
@@ -30,7 +30,7 @@ new = function(opts)
 	end
 	-- notes this instrument can sound at once; 1 is mono
 	if out.voice_count == nil then
-		out.voice_count = 1
+		out.voice_count = 4
 	end
 	return out
 end

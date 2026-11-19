@@ -79,8 +79,30 @@ fn under(dir: PathBuf, parts: &[&str]) -> PathBuf {
 
 /// The defaults, and what `synth config` writes when there is no file yet.
 /// A user's file is laid over it, so it need set only what it changes.
-pub const TEMPLATE: &str = include_str!("../../lua/config.lua");
+const TEMPLATE: &str = include_str!("../../lua/config.lua");
 const TEMPLATE_NAME: &str = "config.lua (built in)";
+/// Stands in for the default patches folder in [`TEMPLATE`]'s comment.
+const DEFAULT_PATCH_DIR: &str = "{default}";
+
+/// [`TEMPLATE`] as `synth config` writes it, with the default patches
+/// folder filled in, so the file shows a real path in the form to copy.
+pub fn template() -> String {
+    template_for(&Dirs::current())
+}
+
+/// The line naming the default is dropped when there is no data directory,
+/// or when the path holds `]]` and would end the long string early.
+fn template_for(dirs: &Dirs) -> String {
+    let dir = patch_dir("", dirs).ok().flatten();
+    match dir.map(|dir| dir.display().to_string()) {
+        Some(dir) if !dir.contains("]]") => TEMPLATE.replace(DEFAULT_PATCH_DIR, &dir),
+        _ => TEMPLATE
+            .lines()
+            .filter(|line| !line.contains(DEFAULT_PATCH_DIR))
+            .map(|line| format!("{line}\n"))
+            .collect(),
+    }
+}
 
 /// Reads `config.lua` from the user's config directory over the defaults.
 /// A missing file, or no directory to look in, is the defaults alone.
@@ -157,20 +179,20 @@ fn overlay(base: &mlua::Table, over: &mlua::Table) -> mlua::Result<()> {
 /// The patches folder `setting` names. `""` is `synth/patches` under the
 /// data directory; any other value is an absolute path or one starting
 /// `~/`. `None` when the default is asked for and there is no data directory.
-fn patches_dir(setting: &str, dirs: &Dirs) -> anyhow::Result<Option<PathBuf>> {
+fn patch_dir(setting: &str, dirs: &Dirs) -> anyhow::Result<Option<PathBuf>> {
     if setting.is_empty() {
         return Ok(dirs.data().map(|dir| under(dir, &PATCHES)));
     }
     if let Some(rest) = setting.strip_prefix("~/") {
         let home = dirs
             .home()
-            .context("config.lua: `patches` starts with ~/, but there is no home directory")?;
+            .context("config.lua: `patch_dir` starts with ~/, but there is no home directory")?;
         return Ok(Some(home.join(rest)));
     }
     let path = PathBuf::from(setting);
     anyhow::ensure!(
         path.is_absolute(),
-        "config.lua: `patches` is {setting:?}; must be absolute, start with ~/, or be \"\""
+        "config.lua: `patch_dir` is {setting:?}; must be absolute, start with ~/, or be \"\""
     );
     Ok(Some(path))
 }
@@ -186,7 +208,13 @@ fn settings(table: &mlua::Table) -> anyhow::Result<Config> {
             .get::<Option<u32>>(field::BUFFER_FRAMES)?
             .filter(|&frames| frames > 0),
         queue: table.get(field::QUEUE)?,
-        patches: patches_dir(&table.get::<String>(field::PATCHES)?, &Dirs::current())?,
+        // absent is the default; "" says the same thing explicitly
+        patch_dir: patch_dir(
+            &table
+                .get::<Option<String>>(field::PATCH_DIR)?
+                .unwrap_or_default(),
+            &Dirs::current(),
+        )?,
         tui: TuiConfig {
             poll: ms(field::POLL)?,
             meter_hold: ms(field::METER_HOLD)?,
@@ -330,7 +358,7 @@ mod tests {
             true => abs(setting).display().to_string(),
             false => setting.to_string(),
         };
-        patches_dir(&setting, &unix(xdg, home)).unwrap()
+        patch_dir(&setting, &unix(xdg, home)).unwrap()
     }
 
     #[test]
@@ -344,6 +372,19 @@ mod tests {
             Some(abs("/h/.local/share/synth/patches"))
         );
         assert_eq!(patches("", Some("d"), None), None);
+    }
+
+    #[test]
+    fn the_template_names_the_default_patches_folder() {
+        // joined as the code joins it, so Windows gets its own separators
+        let dir = abs("/d").join("synth").join("patches");
+        let dir = dir.display().to_string();
+        let written = template_for(&unix(Some("/d"), None));
+        assert!(written.contains(&format!("-- patch_dir = [[{dir}]]")));
+        assert!(!written.contains(DEFAULT_PATCH_DIR));
+
+        let written = template_for(&unix(None, None));
+        assert!(!written.contains("patch_dir"));
     }
 
     #[test]
@@ -363,12 +404,12 @@ mod tests {
             Some(abs("/appdata/synth/config.lua"))
         );
         assert_eq!(
-            patches_dir("", &dirs).unwrap(),
+            patch_dir("", &dirs).unwrap(),
             Some(abs("/appdata/synth/patches"))
         );
         // with no HOME, ~/ is the user profile
         assert_eq!(
-            patches_dir("~/music", &dirs).unwrap(),
+            patch_dir("~/music", &dirs).unwrap(),
             Some(abs("/users/me/music"))
         );
     }
@@ -395,12 +436,12 @@ mod tests {
 
     #[test]
     fn a_relative_patches_folder_is_named() {
-        let error = patches_dir("music", &unix(None, Some("/h"))).unwrap_err();
+        let error = patch_dir("music", &unix(None, Some("/h"))).unwrap_err();
         assert!(
-            error.to_string().contains("`patches` is \"music\""),
+            error.to_string().contains("`patch_dir` is \"music\""),
             "{error}"
         );
-        let error = patches_dir("~/music", &unix(None, None)).unwrap_err();
+        let error = patch_dir("~/music", &unix(None, None)).unwrap_err();
         assert!(error.to_string().contains("no home directory"), "{error}");
     }
 
@@ -421,7 +462,7 @@ mod tests {
                 "unknown field `bufer_frames`",
             ),
             ("return { queue = 8 }", "`queue` is 8; must be at least 16"),
-            ("return { patches = 5 }", "`patches` must be a string"),
+            ("return { patch_dir = 5 }", "`patch_dir` must be a string"),
             ("return { tui = 16 }", "`tui` must be a table"),
             (
                 "return { tui = { poll = 0 } }",
