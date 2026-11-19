@@ -343,7 +343,8 @@ fn verify(asset: &Asset, bytes: &[u8]) -> anyhow::Result<()> {
 }
 
 /// The binary at the root of a release archive.
-/// Release archives hold it as `./synth`; only that entry is read.
+/// Release archives hold it as `./synth`, or `./synth.exe` for Windows; only
+/// that entry is read.
 fn unpack(archive: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut tar = tar::Archive::new(GzDecoder::new(archive));
     for entry in tar.entries()? {
@@ -352,13 +353,13 @@ fn unpack(archive: &[u8]) -> anyhow::Result<Vec<u8>> {
         let at_root = path
             .parent()
             .is_some_and(|p| p == Path::new("") || p == Path::new("."));
-        if at_root && path.file_name().is_some_and(|n| n == install::BIN) {
+        if at_root && path.file_name().is_some_and(|n| n == install::FILE) {
             let mut binary = Vec::new();
             entry.read_to_end(&mut binary)?;
             return Ok(binary);
         }
     }
-    bail!("no {} in the archive", install::BIN)
+    bail!("no {} in the archive", install::FILE)
 }
 
 #[cfg(test)]
@@ -462,13 +463,19 @@ mod tests {
 
     #[test]
     fn unpack_reads_the_root_binary() {
+        // the platform's own name: synth, or synth.exe on Windows
+        let nested = format!("./nested/{}", install::FILE);
+        let root = format!("./{}", install::FILE);
         let files: [(&str, &[u8]); 3] = [
             ("./LICENSE", b"gpl"),
-            ("./nested/synth", b"wrong"),
-            ("./synth", b"binary"),
+            (&nested, b"wrong"),
+            (&root, b"binary"),
         ];
         assert_eq!(unpack(&archive(&files)).unwrap(), b"binary");
-        assert_eq!(unpack(&archive(&[("synth", b"bare")])).unwrap(), b"bare");
+        assert_eq!(
+            unpack(&archive(&[(install::FILE, b"bare")])).unwrap(),
+            b"bare"
+        );
         assert!(unpack(&archive(&[("./LICENSE", b"gpl")])).is_err());
         assert!(unpack(b"not gzip").is_err());
     }

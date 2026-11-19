@@ -130,19 +130,34 @@ fn settings(table: &mlua::Table) -> anyhow::Result<Config> {
 mod tests {
     use super::*;
 
+    /// `path`, a Unix-style absolute path, made absolute on the test host:
+    /// Windows needs a drive, so `/h` becomes `C:/h` there.
+    fn abs(path: &str) -> PathBuf {
+        match cfg!(windows) {
+            true => PathBuf::from(format!("C:{path}")),
+            false => PathBuf::from(path),
+        }
+    }
+
+    /// An environment value: absolute ones go through [`abs`], relative
+    /// ones are passed as written.
+    fn var(value: &str) -> OsString {
+        match value.starts_with('/') {
+            true => abs(value).into_os_string(),
+            false => OsString::from(value),
+        }
+    }
+
     fn at(xdg: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
-        path(xdg.map(OsString::from), home.map(OsString::from))
+        path(xdg.map(var), home.map(var))
     }
 
     #[test]
     fn the_path_prefers_xdg() {
-        assert_eq!(
-            at(Some("/x"), Some("/h")),
-            Some("/x/synth/config.lua".into())
-        );
+        assert_eq!(at(Some("/x"), Some("/h")), Some(abs("/x/synth/config.lua")));
         assert_eq!(
             at(None, Some("/h")),
-            Some("/h/.config/synth/config.lua".into())
+            Some(abs("/h/.config/synth/config.lua"))
         );
     }
 
@@ -150,7 +165,7 @@ mod tests {
     fn the_path_ignores_relative_dirs() {
         assert_eq!(
             at(Some("x"), Some("/h")),
-            Some("/h/.config/synth/config.lua".into())
+            Some(abs("/h/.config/synth/config.lua"))
         );
         assert_eq!(at(None, Some("h")), None);
         assert_eq!(at(None, None), None);

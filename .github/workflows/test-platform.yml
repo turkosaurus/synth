@@ -1,0 +1,46 @@
+name: test-platform
+
+# The Rust tests and clippy on one platform, through the same mise tasks
+# as Linux. test.yml calls this once per platform beyond Linux; the Lua,
+# license and version checks give the same answer everywhere, so they run
+# on Linux only.
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: runner image, such as macos-latest or windows-latest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  MISE_JOBS: 1
+  MISE_TASK_OUTPUT: interleave
+
+jobs:
+  test:
+    runs-on: ${{ inputs.os }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      # Rust only: the other tools serve the Linux-only checks
+      - name: Install Rust
+        uses: jdx/mise-action@v5
+        with:
+          install_args: rust
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # compiles and runs the #[cfg(windows)] and #[cfg(target_os = "macos")]
+      # code nothing on Linux does
+      - name: Test
+        run: mise run test:rust
+
+      - name: Lint
+        run: mise run lint:rust
