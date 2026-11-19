@@ -23,7 +23,7 @@ sequenceDiagram
     keyboard->>tx: Event
     tx-->>rx: lock-free push
     device->>player: fill buffer
-    player->>rx: pop due events
+    rx->>player: Event
     note over player: voices: phase, wave, envelope
     player->>fx: summed sample
     fx->>device: filtered sample
