@@ -19,6 +19,8 @@ pub struct Stats {
     /// frames, not samples: one frame is one sample per channel
     frames: AtomicU64,
     clips: AtomicU64,
+    /// NaN or infinite samples, each written as silence
+    non_finite: AtomicU64,
     /// callbacks that ran past their deadline, which is the count that
     /// corresponds to something audible
     overruns: AtomicU64,
@@ -67,6 +69,7 @@ impl Stats {
         Snapshot {
             frames: self.frames.load(Ordering::Relaxed),
             clips: self.clips.load(Ordering::Relaxed),
+            non_finite: self.non_finite.load(Ordering::Relaxed),
             overruns: self.overruns.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
             peak: self.take_peak(),
@@ -83,6 +86,7 @@ impl Stats {
 pub struct Snapshot {
     pub frames: u64,
     pub clips: u64,
+    pub non_finite: u64,
     pub overruns: u64,
     pub errors: u64,
     pub peak: f32,
@@ -146,6 +150,9 @@ pub fn stream(
                 .frames
                 .fetch_add(tally.frames as u64, Ordering::Relaxed);
             stats.clips.fetch_add(tally.clips, Ordering::Relaxed);
+            stats
+                .non_finite
+                .fetch_add(tally.non_finite, Ordering::Relaxed);
             stats.record_peak(tally.peak);
 
             let used_us = start.elapsed().as_micros() as u32;
