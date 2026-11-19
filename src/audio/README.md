@@ -9,18 +9,21 @@
 ```mermaid
 sequenceDiagram
     box ui thread
-        participant keyboard
+        participant keyboard as input::keyboard
+        participant tx as rtrb::Producer
     end
-    participant ring as rtrb ring
     box audio callback
+        participant rx as rtrb::Consumer
         participant player as render::Player
         participant fx
     end
     participant device
 
-    keyboard->>ring: Event
+    note over tx,rx: one ring, split by session.rs
+    keyboard->>tx: Event
+    tx-->>rx: lock-free push
     device->>player: fill buffer
-    player->>ring: pop due events
+    player->>rx: pop due events
     note over player: voices: phase, wave, envelope
     player->>fx: summed sample
     fx->>device: filtered sample
