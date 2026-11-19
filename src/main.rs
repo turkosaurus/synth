@@ -184,8 +184,8 @@ fn gating() -> Gating {
 /// Opens `config.lua` in the user's editor, writing the template first if
 /// there is no file, then checks what was saved.
 fn edit_config() -> anyhow::Result<ExitCode> {
-    let path =
-        script::config_path().context("neither XDG_CONFIG_HOME nor HOME is an absolute path")?;
+    let path = script::config_path()
+        .context("no config directory: set XDG_CONFIG_HOME or HOME, or APPDATA on Windows")?;
     if !path.exists() {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
@@ -212,9 +212,9 @@ fn edit_config() -> anyhow::Result<ExitCode> {
 /// Prints the patches folder, or creates it with a folder per kind and
 /// opens it in the user's editor.
 fn patches(print_path: bool) -> anyhow::Result<()> {
-    let dir = script::config()?
-        .patches
-        .context("no patches folder: set `patches` in config.lua, or HOME")?;
+    let dir = script::config()?.patches.context(
+        "no patches folder: set `patches` in config.lua, or HOME, or APPDATA on Windows",
+    )?;
     if print_path {
         println!("{}", dir.display());
         return Ok(());
