@@ -143,32 +143,48 @@ pub(super) fn bake_instrument(
         }
     }
 
-    // Rust owns the sample rate, so it sizes each segment and lets the
-    // patch's own curve function fill it
+    // Rust owns the sample rate, so it sizes each stage and samples the
+    // patch's curve across it: t runs 0 to 1, and the curve says how far
+    // from `from` toward `to` the envelope is at t
     let curve = |ms: f64,
                  shape: &mlua::Function,
                  name: &str,
                  from: f64,
                  to: f64|
-     -> anyhow::Result<Vec<f32>> {
+     -> anyhow::Result<(Vec<f32>, usize)> {
         let steps = (sample_rate as f64 * ms / 1000.0) as usize;
-        let filled: mlua::Table = shape.call((from, to, steps))?;
-
         let mut out = Vec::with_capacity(steps);
-        for i in 1..=steps {
-            let value: f64 = filled.get(i).with_context(|| {
-                format!(
-                    "envelope.{name} returned {} of {steps} expected values",
-                    i - 1
-                )
-            })?;
-            out.push(value as f32);
+        let mut clamped = 0usize;
+        for i in 0..steps {
+            let t = i as f64 / steps as f64;
+            let along = match shape.call::<mlua::Value>(t)? {
+                mlua::Value::Number(n) => n,
+                mlua::Value::Integer(n) => n as f64,
+                // `synth.slope.exponential` handed over without its (),
+                // which then returns a curve rather than a point on one
+                mlua::Value::Function(_) => anyhow::bail!(
+                    "envelope.{name} returned a function, not a number: a curve \
+                     constructor needs its (), as in synth.slope.exponential(2)"
+                ),
+                other => anyhow::bail!(
+                    "envelope.{name} must return a number from 0 to 1, got {}",
+                    other.type_name()
+                ),
+            };
+            anyhow::ensure!(
+                along.is_finite(),
+                "envelope.{name} returned {along} at t = {t}; must be a number from 0 to 1"
+            );
+            if !(0.0..=1.0).contains(&along) {
+                clamped += 1;
+            }
+            out.push((from + (to - from) * along.clamp(0.0, 1.0)) as f32);
         }
-        Ok(out)
+        Ok((out, clamped))
     };
 
     let sustain_level = env.sustain_level;
-    let (attack, decay, release) = {
+    let ((attack, attack_clamped), (decay, decay_clamped), (release, release_clamped)) = {
         let _span = debug_span!("bake_envelope").entered();
         (
             curve(
@@ -203,13 +219,20 @@ pub(super) fn bake_instrument(
         release,
         voice_count: spec.voice_count,
     };
-    let report = inspect(&instrument, clamped);
+    let curves = [
+        (field::ATTACK_CURVE, attack_clamped),
+        (field::DECAY_CURVE, decay_clamped),
+        (field::RELEASE_CURVE, release_clamped),
+    ];
+    let report = inspect(&instrument, clamped, &curves);
     Ok((instrument, report))
 }
 
 // each warning corresponds to something audible: flattened peaks, a click
 // once per cycle, a speaker cone resting off-center, or a note cut mid-wave
-pub(super) fn inspect(instrument: &Instrument, clamped: usize) -> Report {
+/// `curves` names each envelope curve and how many of its points left
+/// 0..1 and were clamped.
+pub(super) fn inspect(instrument: &Instrument, clamped: usize, curves: &[(&str, usize)]) -> Report {
     let wave = &instrument.wave;
     let peak = wave.iter().fold(0.0f32, |acc, v| acc.max(v.abs()));
     let dc = wave.iter().sum::<f32>() / wave.len() as f32;
@@ -233,6 +256,12 @@ pub(super) fn inspect(instrument: &Instrument, clamped: usize) -> Report {
     }
     if peak < 0.5 {
         diagnostics.push(shape(format!("waveform peaks at only {peak:.3}")));
+    }
+    for (name, count) in curves.iter().filter(|(_, count)| *count > 0) {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticKind::Range,
+            format!("envelope.{name} left 0..1 at {count} points and was clamped"),
+        ));
     }
     if instrument.release.is_empty() {
         diagnostics.push(shape(

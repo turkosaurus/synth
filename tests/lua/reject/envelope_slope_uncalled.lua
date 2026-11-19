@@ -1,5 +1,5 @@
--- expect: slope.exponential(amount) returns a slope; it is not one itself
--- the mistake is the missing (), so Rust would call the constructor itself
+-- expect: envelope.attack_curve returned a function, not a number: a curve constructor needs its (), as in synth.slope.exponential(2)
+-- the mistake is the missing (): the constructor is sampled as if it were the curve
 local synth = require("synth")
 return synth.instrument({
 	envelope = synth.envelope({ attack = 10, attack_curve = synth.slope.exponential }),

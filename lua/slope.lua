@@ -1,35 +1,27 @@
+-- A curve is a shape: a function from t, 0 to 1 across one envelope stage,
+-- to how far along that stage's change the envelope is, also 0 to 1. Rust
+-- samples it and scales it into each stage, so one curve serves a rising
+-- attack and a falling release alike. Any function of that shape works:
+--   attack_curve = function(t) return t * t end
 local slope = {}
 
--- 0 is linear, higher is steeper, negative bends the other way
-function slope.exponential(curve, extra)
-	assert(extra == nil, "slope.exponential(amount) returns a slope; it is not one itself")
-
-	return function(initial, final, steps)
-		if steps <= 0 then
-			return {}
+-- 0 is linear, higher moves faster at the start of the stage, negative
+-- faster at the end
+function slope.exponential(curve)
+	-- exp(0) == 1 would divide by zero
+	if curve == 0 then
+		return function(t)
+			return t
 		end
-		local result = {}
-
-		-- linear (avoids division by zero and exp(0) == 1)
-		if curve == 0 then
-			for i = 1, steps do
-				result[i] = initial + (final - initial) * (i - 1) / steps
-			end
-			return result
-		end
-
-		local scale = 1 - math.exp(-curve)
-		for i = 1, steps do
-			local t = (i - 1) / steps
-			result[i] = initial + (final - initial) * (1 - math.exp(-curve * t)) / scale
-		end
-		return result
+	end
+	local scale = 1 - math.exp(-curve)
+	return function(t)
+		return (1 - math.exp(-curve * t)) / scale
 	end
 end
 
--- linear slope for signed values
-function slope.linear(extra)
-	assert(extra == nil, "slope.linear() returns a slope; it is not one itself")
+-- the same rate of change across the whole stage
+function slope.linear()
 	return slope.exponential(0)
 end
 
