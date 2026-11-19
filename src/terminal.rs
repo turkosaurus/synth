@@ -3,8 +3,9 @@ use crossterm::{
     execute, terminal,
 };
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::panic;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Once, OnceLock};
 
 use crate::input::keyboard::Gating;
 
@@ -13,21 +14,83 @@ use crate::input::keyboard::Gating;
 /// reads this and leaves through [`leave`] like any other exit.
 static INTERRUPTED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
-/// Whether a termination signal has arrived. False on a platform with no
-/// handler registered, which leaves the old behaviour untouched.
+/// Set by the panic hook once it has restored the terminal. A panic on
+/// another thread, such as the audio callback's, leaves the view running,
+/// and it must stop drawing over the screen the message was printed to.
+static PANICKED: AtomicBool = AtomicBool::new(false);
+
+/// What [`enter`] has done to the terminal so far, one bit per step. The
+/// panic hook does not know the gating mode, and a step that failed must not
+/// be undone, so [`leave`] reads this rather than being told.
+static ENTERED: AtomicU8 = AtomicU8::new(0);
+const RAW: u8 = 1;
+const ALTERNATE: u8 = 1 << 1;
+const ENHANCED: u8 = 1 << 2;
+
+/// Whether a termination signal has arrived, or a panic has restored the
+/// terminal under the view. False on a platform with no signal handler
+/// registered, which leaves the old behaviour untouched.
 pub(crate) fn interrupted() -> bool {
-    INTERRUPTED
-        .get()
-        .is_some_and(|flag| flag.load(Ordering::Relaxed))
+    PANICKED.load(Ordering::Relaxed)
+        || INTERRUPTED
+            .get()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
 }
 
-/// Put the terminal into the state an interactive view needs, and report
-/// whether gating ended up Held.
-pub(crate) fn enter(gating: Gating) -> io::Result<()> {
+/// Restores the terminal when dropped, so a normal return, an error passed
+/// up with `?` and an unwinding panic all leave through [`leave`].
+///
+/// A panic is covered by the hook from [`watch_panics`] under either panic
+/// strategy; with `panic = "abort"` the hook is the only thing that runs.
+/// Under unwinding this guard drops after the hook and finds nothing left
+/// to undo. Errors and normal returns are this guard's alone.
+#[must_use = "the terminal is restored when the guard drops"]
+pub(crate) struct Guard(());
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        leave();
+    }
+}
+
+/// Put the terminal into the state an interactive view needs. The returned
+/// guard puts it back when dropped.
+pub(crate) fn enter(gating: Gating) -> io::Result<Guard> {
     watch_signals()?;
+    watch_panics();
+    // made before the first step, so a step that fails drops it and undoes
+    // the steps before it
+    let guard = Guard(());
     terminal::enable_raw_mode()?;
+    ENTERED.fetch_or(RAW, Ordering::SeqCst);
     execute!(io::stdout(), terminal::EnterAlternateScreen)?;
-    enable_gating(gating)
+    ENTERED.fetch_or(ALTERNATE, Ordering::SeqCst);
+    enable_gating(gating)?;
+    Ok(guard)
+}
+
+/// Restore the terminal before the previous hook prints the message, so it
+/// lands on the normal screen in cooked mode where it can be read.
+///
+/// The hook runs on whichever thread panics, the audio callback's included.
+/// That is safe: [`leave`] takes the steps to undo with one atomic swap, so
+/// the hook and the guard never both undo a step, and stdout is behind std's
+/// lock. Restoring from that thread is acceptable because the sound has
+/// already stopped, and the view sees [`PANICKED`] and quits within a frame
+/// instead of drawing over the message.
+fn watch_panics() {
+    // one hook per process. a second would chain to the first and run the
+    // restore twice for every panic.
+    static HOOK: Once = Once::new();
+    HOOK.call_once(|| {
+        let previous = panic::take_hook();
+        panic::set_hook(Box::new(move |info| {
+            if leave() {
+                PANICKED.store(true, Ordering::Relaxed);
+            }
+            previous(info);
+        }));
+    });
 }
 
 // SIGINT is absent on purpose: raw mode disables ISIG, so ctrl-c arrives as
@@ -54,12 +117,23 @@ fn watch_signals() -> io::Result<()> {
     Ok(())
 }
 
-/// Reverse of [`enter`], in reverse order. Errors are discarded: on the way
-/// out there is nothing useful to do about them.
-pub(crate) fn leave(gating: Gating) {
-    let _ = disable_gating(gating);
-    let _ = execute!(io::stdout(), terminal::LeaveAlternateScreen);
-    let _ = terminal::disable_raw_mode();
+/// Reverse of [`enter`], in reverse order, and only the steps it finished.
+/// Reports whether there was anything to undo. A second call finds nothing:
+/// popping the keyboard flags twice would pop an entry the shell pushed.
+/// Errors are discarded: on the way out there is nothing useful to do about
+/// them.
+fn leave() -> bool {
+    let entered = ENTERED.swap(0, Ordering::SeqCst);
+    if entered & ENHANCED != 0 {
+        let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+    }
+    if entered & ALTERNATE != 0 {
+        let _ = execute!(io::stdout(), terminal::LeaveAlternateScreen);
+    }
+    if entered & RAW != 0 {
+        let _ = terminal::disable_raw_mode();
+    }
+    entered != 0
 }
 
 fn enable_gating(gating: Gating) -> io::Result<()> {
@@ -76,16 +150,7 @@ fn enable_gating(gating: Gating) -> io::Result<()> {
                     | KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
             )
         )?;
-    }
-    Ok(())
-}
-
-fn disable_gating(gating: Gating) -> io::Result<()> {
-    if cfg!(windows) {
-        return Ok(());
-    }
-    if let Gating::Held = gating {
-        execute!(io::stdout(), PopKeyboardEnhancementFlags)?;
+        ENTERED.fetch_or(ENHANCED, Ordering::SeqCst);
     }
     Ok(())
 }
@@ -101,4 +166,27 @@ pub fn reports_key_release() -> bool {
         crossterm::terminal::supports_keyboard_enhancement(),
         Ok(true)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{leave, Guard, ENTERED, RAW};
+    use std::sync::atomic::Ordering;
+
+    // one test, because the steps live in a static the others would race on.
+    // only RAW is set: with no raw mode really entered, crossterm's undo is a
+    // no-op, and the escape-code steps would write to the test's stdout.
+    #[test]
+    fn each_step_is_undone_once() {
+        assert!(!leave(), "nothing entered, nothing to undo");
+
+        ENTERED.store(RAW, Ordering::SeqCst);
+        assert!(leave(), "the first leave undoes the step");
+        assert!(!leave(), "the second finds nothing, as the hook's would");
+
+        ENTERED.store(RAW, Ordering::SeqCst);
+        drop(Guard(()));
+        assert_eq!(ENTERED.load(Ordering::SeqCst), 0, "the guard left");
+        assert!(!leave(), "and a hook after the guard does nothing");
+    }
 }
