@@ -18,6 +18,8 @@ pub struct Patch {
     pub filter: Option<Filter>,
     /// what `check` shows about `filter`
     pub filter_report: Option<FilterReport>,
+    /// warnings about `freqs`, such as notes tuned above Nyquist
+    pub tuning_diagnostics: Vec<Diagnostic>,
     /// every table a constructor built, by where it sits in the patch
     pub(crate) structure: Vec<Node>,
 }
@@ -36,11 +38,13 @@ pub(crate) struct Node {
 }
 
 impl Patch {
-    /// Neither an instrument nor the filter raised a warning, so the patch is safe to play as written.
+    /// No instrument, the filter, or the tuning raised a warning, so the patch is safe to play as written.
     pub fn clean(&self) -> bool {
-        self.reports
-            .iter()
-            .all(|(_, report)| report.diagnostics.is_empty())
+        self.tuning_diagnostics.is_empty()
+            && self
+                .reports
+                .iter()
+                .all(|(_, report)| report.diagnostics.is_empty())
             && self
                 .filter_report
                 .as_ref()
