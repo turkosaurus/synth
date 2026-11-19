@@ -1,6 +1,6 @@
 use crate::audio::Snapshot;
 use crate::input::keyboard::Gating;
-use crate::spec::Patch;
+use crate::spec::{Config, Patch};
 
 use super::table;
 
@@ -31,6 +31,20 @@ pub fn environment(gating: Gating) {
     if in_tmux {
         println!("  tmux blocks the kitty keyboard protocol; re-run outside tmux");
     }
+}
+
+/// Where `config.lua` is looked for, and the settings in effect.
+pub fn config(path: Option<&std::path::Path>, config: &Config) {
+    let file = match path {
+        Some(path) if path.exists() => path.display().to_string(),
+        Some(path) => format!("{} (none; defaults)", path.display()),
+        None => "no XDG_CONFIG_HOME or HOME (defaults)".to_string(),
+    };
+    let buffer = match config.buffer_frames {
+        Some(frames) => format!("{frames} frames"),
+        None => "platform default".to_string(),
+    };
+    table::pairs("config", &[("file", file), ("buffer", buffer)], false);
 }
 
 /// Everything `check` reports about a loaded patch. Computes nothing:

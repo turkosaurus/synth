@@ -116,6 +116,10 @@ fn run() -> anyhow::Result<ExitCode> {
     match args.command {
         Commands::Doctor { path, rate } => {
             view::report::environment(gating());
+            println!();
+            // a config that does not load is reported as the error it is
+            let config_path = script::config_path();
+            view::report::config(config_path.as_deref(), &script::config()?);
             // only patch problems fail; being in tmux is a fact, not an error
             if let Some(path) = path {
                 println!();

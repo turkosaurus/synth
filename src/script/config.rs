@@ -18,10 +18,16 @@ const FILE: [&str; 2] = ["synth", "config.lua"];
 /// Reads `config.lua` from the user's config directory. A missing file,
 /// or no directory to look in, is the default config.
 pub fn config() -> anyhow::Result<Config> {
-    match path(env::var_os(XDG_CONFIG_HOME), env::var_os(HOME)) {
+    match config_path() {
         Some(path) => load(&path),
         None => Ok(Config::default()),
     }
+}
+
+/// Where `config` looks, whether or not a file is there. `None` when
+/// neither `XDG_CONFIG_HOME` nor `HOME` is an absolute path.
+pub fn config_path() -> Option<PathBuf> {
+    path(env::var_os(XDG_CONFIG_HOME), env::var_os(HOME))
 }
 
 /// `$XDG_CONFIG_HOME/synth/config.lua`, else `~/.config/synth/config.lua`.

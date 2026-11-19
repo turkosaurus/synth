@@ -16,6 +16,20 @@ curl -fsSL https://raw.githubusercontent.com/turkosaurus/synth/main/install.sh |
 > [!NOTE]
 > `update` and `uninstall` act on the binary being run; defer to package manager if installed through one.
 
+## config
+
+Settings for the machine live in `$XDG_CONFIG_HOME/synth/config.lua`, or `~/.config/synth/config.lua`. The file is optional and returns a plain table:
+
+```lua
+return {
+	-- frames per audio callback; smaller is lower latency, larger is
+	-- steadier. Left out, the platform decides.
+	buffer_frames = 256,
+}
+```
+
+Song files hold the music, and `config.lua` holds what depends on the machine, so a song plays the same way wherever it is opened. `synth doctor` shows the file it read and the settings in effect.
+
 ## requirements
 
 ### linux
