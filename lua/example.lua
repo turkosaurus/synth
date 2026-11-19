@@ -5,6 +5,8 @@ return synth.sequence({
 	division = 4, -- subdivisions per beat; 4 = 16th notes, 8 = 32nd notes, etc.
 	instrument = "tri", -- default for every pattern; stickiness resets per pattern
 	filter = synth.filter.lowpass({ cutoff = 2000, resonance = 0.3 }), -- on the summed output
+	-- qwerty, qwertz, azerty, dvorak, colemak, or your own { name, notes }
+	keyboard = synth.keyboard({ layout = synth.keyboard.qwerty }),
 
 	instruments = {
 		tri = synth.instrument({

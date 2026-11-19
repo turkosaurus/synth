@@ -121,9 +121,8 @@ pub(super) const INSTRUMENT: Schema = Schema {
 pub(super) const KEYBOARD: Schema = Schema {
     what: "keyboard",
     fields: &[
-        optional(field::NAME, Ty::Text, Bound::Any),
-        // each entry is checked by keymap::notes
-        field(field::NOTES, Ty::Table, Bound::Any),
+        // its name and notes are checked by keymap
+        field(field::LAYOUT, Ty::Table, Bound::Any),
         field(field::OCTAVE_UP, Ty::Table, Bound::Any),
         field(field::OCTAVE_DOWN, Ty::Table, Bound::Any),
         field(field::STOP, Ty::Table, Bound::Any),

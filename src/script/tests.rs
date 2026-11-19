@@ -360,7 +360,7 @@ fn changing_offset_keeps_the_anchor_on_pitch() {
         return instrument({
             waveform = wave.triangle,
             envelope = envelope({}),
-            keyboard = keyboard({ notes = keyboard.grid({ offset = 7 }) }),
+            keyboard = keyboard({ layout = keyboard.grid({ offset = 7 }) }),
         })
     "#;
     let patch = load_source(source, "test", 48000).unwrap();
@@ -378,8 +378,8 @@ fn an_explicit_shifted_row_of_the_wrong_length_is_rejected() {
         local keyboard = require("synth.keyboard")
         return instrument({
             keyboard = keyboard({
-                notes = keyboard.grid({
-                    template = { rows = { "asdfghjkl" }, shifted = { "ASD" } },
+                layout = keyboard.grid({
+                    template = { anchor = "a", rows = { "asdfghjkl" }, shifted = { "ASD" } },
                 }),
             }),
         })
@@ -410,7 +410,8 @@ fn with_keyboard(keyboard: &str) -> anyhow::Result<Patch> {
 
 #[test]
 fn a_patch_can_write_its_own_notes() {
-    let patch = with_keyboard(r#"synth.keyboard({ notes = { a = 60, ["é"] = 62 } })"#).unwrap();
+    let patch = with_keyboard(r#"synth.keyboard({ layout = { notes = { a = 60, ["é"] = 62 } } })"#)
+        .unwrap();
 
     assert_eq!(patch.keymap.notes.len(), 2);
     assert_eq!(patch.keymap.notes.get(&'a'), Some(&60));
@@ -427,9 +428,9 @@ fn the_default_layout_is_named() {
 #[test]
 fn the_grid_reads_keys_outside_ascii() {
     let patch = with_keyboard(
-        r#"synth.keyboard({ notes = synth.keyboard.grid({
-            anchor = { key = "ö", note = 60 },
-            template = { rows = { "äöü" }, shifted = { "ÄÖÜ" } },
+        r#"synth.keyboard({ layout = synth.keyboard.grid({
+            note = 60,
+            template = { anchor = "ö", rows = { "äöü" }, shifted = { "ÄÖÜ" } },
         }) })"#,
     )
     .unwrap();
@@ -441,8 +442,56 @@ fn the_grid_reads_keys_outside_ascii() {
 }
 
 #[test]
+fn every_built_in_layout_loads_with_a4_on_its_anchor() {
+    for (layout, anchor) in [
+        ("qwerty", 'a'),
+        ("qwertz", 'a'),
+        ("azerty", 'q'),
+        ("dvorak", 'a'),
+        ("colemak", 'a'),
+    ] {
+        let patch = with_keyboard(&format!(
+            "synth.keyboard({{ layout = synth.keyboard.{layout} }})"
+        ))
+        .unwrap_or_else(|error| panic!("{layout}: {error:#}"));
+        let keymap = &patch.keymap;
+        assert_eq!(keymap.name.as_deref(), Some(layout));
+        assert_eq!(keymap.notes.get(&anchor), Some(&69), "{layout}");
+    }
+}
+
+#[test]
+fn a_position_plays_the_same_note_in_every_layout() {
+    // the top row's fourth key: r on qwerty, p on dvorak, r on azerty
+    for (layout, key) in [
+        ("qwerty", 'r'),
+        ("dvorak", 'p'),
+        ("azerty", 'r'),
+        ("colemak", 'p'),
+    ] {
+        let patch = with_keyboard(&format!(
+            "synth.keyboard({{ layout = synth.keyboard.{layout} }})"
+        ))
+        .unwrap();
+        assert_eq!(patch.keymap.notes.get(&key), Some(&77), "{layout}");
+    }
+}
+
+#[test]
+fn a_key_that_is_both_a_note_and_a_control_is_named() {
+    let error = with_keyboard(r#"synth.keyboard({ layout = { notes = { ["="] = 60 } } })"#)
+        .err()
+        .expect("= is octave_up");
+    assert!(
+        format!("{error:#}")
+            .contains("keyboard.layout plays note 60 on '=', which keyboard.octave_up also binds"),
+        "unexpected: {error:#}"
+    );
+}
+
+#[test]
 fn a_notes_key_longer_than_one_character_is_named() {
-    let error = with_keyboard(r"synth.keyboard({ notes = { ab = 60 } })")
+    let error = with_keyboard(r"synth.keyboard({ layout = { notes = { ab = 60 } } })")
         .err()
         .expect("a two-character key cannot be pressed");
     assert!(
@@ -454,11 +503,13 @@ fn a_notes_key_longer_than_one_character_is_named() {
 #[test]
 fn a_note_outside_midi_is_named() {
     for (note, shown) in [("128", "128"), ("-1", "-1"), ("60.5", "60.5")] {
-        let error = with_keyboard(&format!("synth.keyboard({{ notes = {{ a = {note} }} }})"))
-            .err()
-            .expect("not a MIDI note");
+        let error = with_keyboard(&format!(
+            "synth.keyboard({{ layout = {{ notes = {{ a = {note} }} }} }})"
+        ))
+        .err()
+        .expect("not a MIDI note");
         assert!(
-            format!("{error:#}").contains(&format!("keyboard.notes['a'] is {shown}")),
+            format!("{error:#}").contains(&format!("keyboard.layout.notes['a'] is {shown}")),
             "unexpected: {error:#}"
         );
     }
@@ -466,7 +517,7 @@ fn a_note_outside_midi_is_named() {
 
 #[test]
 fn the_grid_names_an_unknown_field() {
-    let error = with_keyboard("synth.keyboard({ notes = synth.keyboard.grid({ offest = 7 }) })")
+    let error = with_keyboard("synth.keyboard({ layout = synth.keyboard.grid({ offest = 7 }) })")
         .err()
         .expect("offest is misspelled");
     assert!(
@@ -477,7 +528,7 @@ fn the_grid_names_an_unknown_field() {
 
 #[test]
 fn grid_fields_on_the_keyboard_are_named() {
-    // the layout used to take these directly; they now belong to the grid
+    // the keyboard used to take these directly; they now belong to the grid
     let error = with_keyboard("synth.keyboard({ offset = 7 })")
         .err()
         .expect("offset is a grid field");

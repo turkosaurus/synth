@@ -11,63 +11,60 @@ local keyboard = setmetatable({}, {
 	end,
 })
 
--- `notes` maps each character to a MIDI note. Rust reads only that map, so
--- any layout works: `keyboard.grid` below, or a patch's own table. Left out,
--- it is `keyboard.grid()`. `name` is shown by the TUI; a patch's own `notes`
--- with no `name` reads as custom.
-local defaults = {
-	octave_up = { "=", "+" },
-	octave_down = { "-", "_" },
-	stop = { "escape" }, -- silence everything; must not be empty
-	help = { "/", "?" },
-	-- note length when the terminal cannot report key release
-	gate = 200, -- ms
-	-- when the terminal cannot report key release, a press of a key this
-	-- soon after its last press is taken as OS autorepeat and ignored. It
-	-- must outlast the OS repeat delay (GNOME defaults to 500ms, X11 to
-	-- 660ms), and one key cannot retrigger faster than this. 0 turns it off.
-	repeat_window = 550, -- ms
-	-- a key has no depth to time, so every note gets this velocity; 1 to 127
-	velocity = 100,
-	-- how many octaves octave_up and octave_down may move from the start
-	octave_range = 4,
-}
-
--- Grid of character keys in their lowercase and shifted forms.
+-- Physical rows of a character keyboard, bottom to top, each in its plain
+-- and shifted forms. Every template lines its rows up on the same keys, so
+-- one position plays the same note whatever the layout. `anchor` is the key
+-- in the home row's first position.
+--
+-- A space holds a position with no note: the key there is a control
+-- binding below (octave or help), and a key cannot be both.
 keyboard.templates = {
 	qwerty = {
 		name = "qwerty",
+		anchor = "a",
 		rows = { "zxcvbnm,.", "asdfghjkl;", "qwertyuiop", "1234567890" },
 		shifted = { "ZXCVBNM<>", "ASDFGHJKL:", "QWERTYUIOP", "!@#$%^&*()" },
 	},
+	qwertz = {
+		name = "qwertz",
+		anchor = "a",
+		rows = { "yxcvbnm,.", "asdfghjklö", "qwertzuiop", "1234567890" },
+		-- shift 7 is `/`, help; shift 0 is `=`, octave up
+		shifted = { "YXCVBNM;:", "ASDFGHJKLÖ", "QWERTZUIOP", '!"§$%& () ' },
+	},
+	azerty = {
+		name = "azerty",
+		anchor = "q",
+		-- the number row's `-` and `_` are octave down
+		rows = { "wxcvbn,;:", "qsdfghjklm", "azertyuiop", "&é\"'( è çà" },
+		-- `?` and `/` are help
+		shifted = { "WXCVBN . ", "QSDFGHJKLM", "AZERTYUIOP", "1234567890" },
+	},
 	dvorak = {
 		name = "dvorak",
-		rows = { "qjkxbmwvz", "aoeuidhtns", "pyfgcrl", "1234567890" },
-		shifted = { "QJKXBMWVZ", "AOEUIDHTNS", "PYFGCRL", "!@#$%^&*()" },
+		anchor = "a",
+		rows = { ";qjkxbmwv", "aoeuidhtns", "',.pyfgcrl", "1234567890" },
+		shifted = { ":QJKXBMWV", "AOEUIDHTNS", '"<>PYFGCRL', "!@#$%^&*()" },
+	},
+	colemak = {
+		name = "colemak",
+		anchor = "a",
+		rows = { "zxcvbkm,.", "arstdhneio", "qwfpgjluy;", "1234567890" },
+		shifted = { "ZXCVBKM<>", "ARSTDHNEIO", "QWFPGJLUY:", "!@#$%^&*()" },
 	},
 }
-
-function keyboard.template(name)
-	local template = keyboard.templates[name]
-	if not template then
-		error("keyboard.template: unknown template '" .. tostring(name) .. "'", 2)
-	end
-	return template
-end
 
 -- A fretboard like layout, where each row is a string.
 -- Offset represents the semitones between rows.
 --   4 (major third):     SP-404 pad grid (nice for macro/numpads or ortholinear)
 --   5 (perfect fourth):  bass or guitar (good for character keyboards)
 --   7 (perfect fifth):   mandolin or violin (also good for character keyboards)
--- Anchor is the character for A4, around which all others are derived.
+-- Note is the MIDI note of the template's anchor key, around which all others
+-- are derived.
 local grid_defaults = {
-	anchor = {
-		key = "a", -- second string "open"
-		note = 69, -- MIDI A4
-	},
-	offset = 5, -- semitones offset between rows
 	template = keyboard.templates.qwerty,
+	offset = 5, -- semitones offset between rows
+	note = 69, -- MIDI A4, on the second string "open"
 }
 
 -- The characters of a UTF-8 string. LuaJIT has no utf8 library, and a
@@ -80,10 +77,10 @@ local function chars(text)
 	return out
 end
 
--- The fretboard as a `notes` map: along a row each key is a semitone up,
--- each row is `offset` above the one below it, and a shifted key is its
--- plain key an octave up. Keys that land outside MIDI's 0 to 127 are left
--- out.
+-- A layout from a template laid out as a fretboard: along a row each key is
+-- a semitone up, each row is `offset` above the one below it, and a shifted
+-- key is its plain key an octave up. Keys that land outside MIDI's 0 to 127
+-- are left out.
 function keyboard.grid(opts)
 	opts = opts or {}
 	for key in pairs(opts) do
@@ -91,9 +88,9 @@ function keyboard.grid(opts)
 			error("keyboard.grid: unknown field '" .. tostring(key) .. "'", 2)
 		end
 	end
-	local anchor = opts.anchor or grid_defaults.anchor
-	local offset = opts.offset or grid_defaults.offset
 	local template = opts.template or grid_defaults.template
+	local offset = opts.offset or grid_defaults.offset
+	local note = opts.note or grid_defaults.note
 
 	if #template.rows ~= #template.shifted then
 		error("keyboard.grid: a template's rows and shifted must have the same number of rows", 2)
@@ -111,29 +108,59 @@ function keyboard.grid(opts)
 	local base
 	for r = 1, #rows do
 		for c, ch in ipairs(rows[r]) do
-			if ch == anchor.key then
-				base = anchor.note - (r - 1) * offset - (c - 1)
+			if ch == template.anchor then
+				base = note - (r - 1) * offset - (c - 1)
 			end
 		end
 	end
 	if base == nil then
-		error("keyboard.grid: anchor key '" .. tostring(anchor.key) .. "' does not appear in the template", 2)
+		error("keyboard.grid: anchor key '" .. tostring(template.anchor) .. "' does not appear in the template", 2)
 	end
 
 	local notes = {}
-	for r = 1, #rows do
-		for c = 1, #rows[r] do
-			local note = base + (r - 1) * offset + (c - 1)
-			if note >= 0 and note <= 127 then
-				notes[rows[r][c]] = note
-			end
-			if note + 12 >= 0 and note + 12 <= 127 then
-				notes[shifted[r][c]] = note + 12
-			end
+	local function put(ch, n)
+		if ch ~= " " and n >= 0 and n <= 127 then
+			notes[ch] = n
 		end
 	end
-	return notes
+	for r = 1, #rows do
+		for c = 1, #rows[r] do
+			local n = base + (r - 1) * offset + (c - 1)
+			put(rows[r][c], n)
+			put(shifted[r][c], n + 12)
+		end
+	end
+	return { name = template.name, notes = notes }
 end
+
+-- Every template as a ready layout, for `keyboard({ layout = ... })`.
+-- Spelled out rather than looped so editors can complete the names.
+keyboard.qwerty = keyboard.grid({ template = keyboard.templates.qwerty })
+keyboard.qwertz = keyboard.grid({ template = keyboard.templates.qwertz })
+keyboard.azerty = keyboard.grid({ template = keyboard.templates.azerty })
+keyboard.dvorak = keyboard.grid({ template = keyboard.templates.dvorak })
+keyboard.colemak = keyboard.grid({ template = keyboard.templates.colemak })
+
+local defaults = {
+	-- `{ name, notes }`, where `notes` maps each character to a MIDI note.
+	-- Rust reads only that map, so a patch may write its own.
+	layout = keyboard.qwerty,
+	octave_up = { "=", "+" },
+	octave_down = { "-", "_" },
+	stop = { "escape" }, -- silence everything; must not be empty
+	help = { "/", "?" },
+	-- note length when the terminal cannot report key release
+	gate = 200, -- ms
+	-- when the terminal cannot report key release, a press of a key this
+	-- soon after its last press is taken as OS autorepeat and ignored. It
+	-- must outlast the OS repeat delay (GNOME defaults to 500ms, X11 to
+	-- 660ms), and one key cannot retrigger faster than this. 0 turns it off.
+	repeat_window = 550, -- ms
+	-- a key has no depth to time, so every note gets this velocity; 1 to 127
+	velocity = 100,
+	-- how many octaves octave_up and octave_down may move from the start
+	octave_range = 4,
+}
 
 -- A new table: the caller's fields, then defaults for any left out. The
 -- caller's table is left alone, and nothing is discarded, so a misspelled
@@ -146,12 +173,6 @@ new = function(opts)
 	for key, default in pairs(defaults) do
 		if out[key] == nil then
 			out[key] = default
-		end
-	end
-	if out.notes == nil then
-		out.notes = keyboard.grid()
-		if out.name == nil then
-			out.name = grid_defaults.template.name
 		end
 	end
 	return out

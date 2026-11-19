@@ -9,12 +9,7 @@ use crate::spec::{Key, Keymap};
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct KeyboardConfig {
-    /// Absent when a patch supplies its own `notes` without naming them.
-    #[serde(default)]
-    name: Option<String>,
-    /// Character to MIDI note. A float survives here so the range check
-    /// below can name it, rather than serde rejecting it unnamed.
-    notes: HashMap<String, f64>,
+    layout: Layout,
     octave_up: Vec<String>,
     octave_down: Vec<String>,
     stop: Vec<String>,
@@ -28,13 +23,25 @@ struct KeyboardConfig {
     octave_range: i32,
 }
 
+/// Which character plays which note.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Layout {
+    /// Absent when a patch writes its own `notes` without naming them.
+    #[serde(default)]
+    name: Option<String>,
+    /// Character to MIDI note. A float survives here so the range check
+    /// below can name it, rather than serde rejecting it unnamed.
+    notes: HashMap<String, f64>,
+}
+
 pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Keymap> {
     super::schema::KEYBOARD.check(table, None)?;
     let config: KeyboardConfig =
         mlua::LuaSerdeExt::from_value(lua, mlua::Value::Table(table.clone()))
             .context("keyboard layout")?;
 
-    let notes = notes(config.notes)?;
+    let notes = notes(config.layout.notes)?;
 
     // a binding is a character or a key name; an unrecognised name is an
     // error rather than a silently dead key
@@ -54,17 +61,41 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
         "keyboard.stop must name at least one key to silence with"
     );
 
+    let octave_up = bindings(config.octave_up, "octave_up")?;
+    let octave_down = bindings(config.octave_down, "octave_down")?;
+    // may be empty: a layout that would rather not spend a key on it
+    // just leaves help unreachable
+    let help = bindings(config.help, "help")?;
+
+    // a control is checked before a note, so a key bound to both never
+    // plays its note
+    for (what, keys) in [
+        ("octave_up", &octave_up),
+        ("octave_down", &octave_down),
+        ("stop", &stop),
+        ("help", &help),
+    ] {
+        for key in keys {
+            if let Key::Char(ch) = key {
+                if let Some(note) = notes.get(ch) {
+                    anyhow::bail!(
+                        "keyboard.layout plays note {note} on '{ch}', \
+                         which keyboard.{what} also binds"
+                    );
+                }
+            }
+        }
+    }
+
     // gate, repeat_window, velocity, and octave_range ranges: schema::KEYBOARD
 
     Ok(Keymap {
         notes,
-        name: config.name,
-        octave_up: bindings(config.octave_up, "octave_up")?,
-        octave_down: bindings(config.octave_down, "octave_down")?,
+        name: config.layout.name,
+        octave_up,
+        octave_down,
         stop,
-        // may be empty: a layout that would rather not spend a key on it
-        // just leaves help unreachable
-        help: bindings(config.help, "help")?,
+        help,
         gate: std::time::Duration::from_secs_f64(config.gate_ms / 1000.0),
         repeat: std::time::Duration::from_secs_f64(config.repeat_ms / 1000.0),
         velocity: config.velocity,
@@ -80,11 +111,11 @@ fn notes(raw: HashMap<String, f64>) -> anyhow::Result<HashMap<char, u8>> {
     for (key, note) in raw {
         let mut chars = key.chars();
         let (Some(ch), None) = (chars.next(), chars.next()) else {
-            anyhow::bail!("keyboard.notes: key '{key}' must be one character");
+            anyhow::bail!("keyboard.layout.notes: key '{key}' must be one character");
         };
         anyhow::ensure!(
             note.fract() == 0.0 && (0.0..=127.0).contains(&note),
-            "keyboard.notes['{key}'] is {note}; must be a whole number 0 to 127"
+            "keyboard.layout.notes['{key}'] is {note}; must be a whole number 0 to 127"
         );
         notes.insert(ch, note as u8);
     }
