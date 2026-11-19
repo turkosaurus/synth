@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="lua-language-server on lua/, once per runtime; any warning fails"
+#MISE description="lua-language-server on lua/ and tests/lua/, once per runtime; any warning fails"
 
 # Patches run on LuaJIT everywhere it runs; 
 # Lua 5.4 is kept passing for microcontroller targets 
@@ -14,9 +14,11 @@ failed=0
 for runtime in LuaJIT 'Lua 5.4'; do
   printf '{"runtime.version": "%s"}' "$runtime" >"$config"
   echo "lua-language-server: $runtime"
-  if ! lua-language-server --check lua --configpath="$config"; then
-    echo "::error title=lint:lua::lua-language-server found problems under $runtime"
-    failed=1
-  fi
+  for dir in lua tests/lua; do
+    if ! lua-language-server --check "$dir" --configpath="$config"; then
+      echo "::error title=lint:lua::lua-language-server found problems in $dir/ under $runtime"
+      failed=1
+    fi
+  done
 done
 exit "$failed"

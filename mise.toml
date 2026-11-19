@@ -80,13 +80,13 @@ description = "clippy pedantic, for review; reports but never fails"
 run = "cargo clippy --all-targets -- -W clippy::pedantic"
 
 [tasks."lint:stylua"]
-description = "stylua formatting check on lua/; any difference fails"
+description = "stylua formatting check on lua/ and tests/lua/; any difference fails"
 run = '''
 code=0
-stylua --check lua || code=$?
+stylua --check lua tests/lua || code=$?
 case $code in
   0) ;;
-  1) echo '::error title=lint:stylua::lua/ is not formatted; run stylua lua'; exit 1 ;;
+  1) echo '::error title=lint:stylua::Lua is not formatted; run stylua lua tests/lua'; exit 1 ;;
   *) echo '::error title=lint:stylua::stylua could not run; see its error above (stylua.toml or Lua syntax)'; exit 1 ;;
 esac
 '''

@@ -1347,70 +1347,32 @@ fn every_lua_default_passes_rust_validation() {
     }
 }
 
-/// A fresh folder holding `files`, each a relative path and its source, for
-/// tests that need modules on disk beside a patch.
-fn patch_dir(test: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("synth-{test}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    for (path, source) in files {
-        let path = dir.join(path);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, source).unwrap();
-    }
-    dir
+/// A patch in `tests/lua/loader/{case}/`, the folder its modules sit in.
+fn fixture(case: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/lua/loader")
+        .join(case)
+        .join("song.lua")
 }
-
-const USES_MODULES: &str = r#"
-    local synth = require("synth")
-    local voice = require("voice")
-    local bass = require("instrument.bass")
-    local kit = require("kit")
-    assert(voice.voice_count == 3, "voice.lua")
-    assert(bass.voice_count == 2, "instrument/bass.lua")
-    assert(kit == "kit", "kit/init.lua")
-    return synth.instrument({ voice_count = voice.voice_count })
-"#;
 
 #[test]
 fn a_patch_requires_modules_beside_it() {
-    let dir = patch_dir(
-        "beside",
-        &[
-            ("song.lua", USES_MODULES),
-            ("voice.lua", "return { voice_count = 3 }"),
-            ("instrument/bass.lua", "return { voice_count = 2 }"),
-            ("kit/init.lua", "return 'kit'"),
-        ],
-    );
-    load(&dir.join("song.lua"), 48000).unwrap();
+    load(&fixture("beside"), 48000).unwrap();
 }
 
 #[test]
 fn a_file_named_like_a_built_in_does_not_replace_it() {
-    let dir = patch_dir(
-        "shadow",
-        &[
-            (
-                "song.lua",
-                "local wave = require('synth.wave') \
-                 assert(wave.triangle, 'the built-in wave') \
-                 return require('synth').instrument({})",
-            ),
-            ("synth/wave.lua", "error('the patch folder copy loaded')"),
-        ],
-    );
-    load(&dir.join("song.lua"), 48000).unwrap();
+    load(&fixture("shadow"), 48000).unwrap();
 }
 
 #[test]
 fn a_missing_module_lists_only_the_patch_folder() {
-    let dir = patch_dir("missing", &[("song.lua", "return require('nowhere')")]);
-    let error = load(&dir.join("song.lua"), 48000)
-        .err()
-        .expect("nowhere.lua");
+    let song = fixture("missing");
+    let error = load(&song, 48000).err().expect("nowhere.lua");
     let message = format!("{error:#}");
+    let looked = song.with_file_name("nowhere.lua");
     assert!(
-        message.contains(&format!("no file '{}'", dir.join("nowhere.lua").display())),
+        message.contains(&format!("no file '{}'", looked.display())),
         "{message}"
     );
     // neither the cwd nor the system's Lua folders are searched
