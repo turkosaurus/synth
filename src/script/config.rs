@@ -208,7 +208,11 @@ fn settings(table: &mlua::Table) -> anyhow::Result<Config> {
             .get::<Option<u32>>(field::BUFFER_FRAMES)?
             .filter(|&frames| frames > 0),
         queue: table.get(field::QUEUE)?,
-        patch_dir: patch_dir(&table.get::<String>(field::PATCH_DIR)?, &Dirs::current())?,
+        // absent is the default; "" says the same thing explicitly
+        patch_dir: patch_dir(
+            &table.get::<Option<String>>(field::PATCH_DIR)?.unwrap_or_default(),
+            &Dirs::current(),
+        )?,
         tui: TuiConfig {
             poll: ms(field::POLL)?,
             meter_hold: ms(field::METER_HOLD)?,
@@ -376,8 +380,7 @@ mod tests {
         assert!(!written.contains(DEFAULT_PATCH_DIR));
 
         let written = template_for(&unix(None, None));
-        assert!(!written.contains("-- patch_dir"));
-        assert!(written.contains("\tpatch_dir = \"\""));
+        assert!(!written.contains("patch_dir"));
     }
 
     #[test]
