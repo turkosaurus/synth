@@ -78,9 +78,21 @@ jobs:
     steps:
       - name: Every platform passed
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          LINUX: ${{ needs.linux.result }}
+          MACOS: ${{ needs.macos.result }}
+          WINDOWS: ${{ needs.windows.result }}
         run: |
-          echo "linux, macos, windows: $RESULTS"
-          for result in $RESULTS; do
-            [ "$result" = success ] || exit 1
-          done
+          failed=0
+          if [ "$LINUX" != success ]; then
+            echo "::error title=test::linux: $LINUX"
+            failed=1
+          fi
+          if [ "$MACOS" != success ]; then
+            echo "::error title=test::macos: $MACOS"
+            failed=1
+          fi
+          if [ "$WINDOWS" != success ]; then
+            echo "::error title=test::windows: $WINDOWS"
+            failed=1
+          fi
+          exit "$failed"
