@@ -453,9 +453,8 @@ pub(super) struct Tally {
 /// Full scale. A sample beyond this cannot be represented, so `fill`
 /// clamps it here.
 ///
-/// The wavetable is clamped at bake, so one mono voice stays within this
-/// as long as its envelope stays within 0.0..1.0. Nothing enforces that
-/// yet (#83), and summed voices and a resonant filter can cross it anyway.
+/// A baked wavetable stays within it, but an envelope above 1.0,
+/// summed voices, or a resonant filter can each push a sample past it.
 const CLIP: f32 = 1.0;
 
 /// Lay one sample per frame across every channel. Split out of the callback
