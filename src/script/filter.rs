@@ -82,7 +82,9 @@ impl mlua::FromLua for FilterSpec {
 
         let cutoff: f64 = spec_entry(&table, WHAT, field::CUTOFF, "number")?;
         if !(cutoff > 0.0 && cutoff.is_finite()) {
-            return Err(invalid(format!("`cutoff` must be positive Hz, got {cutoff}")));
+            return Err(invalid(format!(
+                "`cutoff` must be positive Hz, got {cutoff}"
+            )));
         }
 
         let resonance = if has_resonance {
