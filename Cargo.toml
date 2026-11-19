@@ -1,7 +1,9 @@
 [package]
 name = "synth"
-version = "0.3.4"
+version = "0.4.0"
 edition = "2021"
+# the dependencies' floor; ratatui, mlua, and comfy-table need 1.88
+rust-version = "1.88"
 license = "GPL-3.0-or-later"
 
 [dependencies]
@@ -9,8 +11,11 @@ anyhow = "1.0.104"
 comfy-table = "8.0.1"
 cpal = "0.18.2"
 crossterm = "0.29.0"
+flate2 = "1.1.11"
 ratatui = "0.30"
 rtrb = "0.4.0"
+serde_json = "1.0.154"
+sha2 = "0.10.9"
 signal-hook = "0.3"
 tracing = "0.1.44"
 
@@ -26,6 +31,18 @@ features = ["luajit", "vendored", "serialize", "error-send"]
 version = "1.0.229"
 features = ["derive"]
 
+# reads release archives without a tar on the machine
+[dependencies.tar]
+version = "0.4.46"
+default-features = false
+
+# HTTPS for `update`, on rustls with ring and webpki-roots compiled in, so a
+# static binary needs no system TLS library or certificate store
+[dependencies.ureq]
+version = "3.5.2"
+default-features = false
+features = ["rustls"]
+
 [dependencies.tracing-subscriber]
 version = "0.3.23"
 features = ["env-filter"]
@@ -34,6 +51,7 @@ features = ["env-filter"]
 # main.rs and tests/ cannot reach is flagged
 [lints.rust]
 unreachable_pub = "warn"
+unsafe_code = "forbid"
 
 # modules live in `name.rs` beside a `name/` directory, never `name/mod.rs`
 [lints.clippy]
