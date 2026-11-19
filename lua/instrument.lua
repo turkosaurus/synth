@@ -15,7 +15,7 @@ local instrument = setmetatable({}, {
 })
 
 -- Copies the caller's fields, then fills in defaults.
--- Unknown fields are kept, so Rust can name them.
+-- Unknown fields are propagated for error reporting.
 new = function(opts)
 	local out = {}
 	for key, value in pairs(opts or {}) do
