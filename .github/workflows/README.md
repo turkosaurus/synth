@@ -13,11 +13,11 @@ flowchart LR
     windows["windows: test-platform"] --> test
 ```
 
-- `test` is the check main's ruleset requires. It runs even when a platform fails, since a skipped required check counts as passed, and fails with an annotation naming each platform that did not succeed.
-- Lua, license and version checks give the same answer everywhere, so they run on Linux only.
-- Every step runs a mise task, the same one a contributor runs locally; see [`mise-tasks`](../../mise-tasks).
+- `test` is required per ruleset, so `test` requires all platform-specific workflows to pass
+- Lua, license, and version checks never vary, so they run only on Linux.
+- `mise` defines CI and manual checks through [`mise-tasks`](../../mise-tasks).
 
-## settings set here, not in mise.toml
+## workflow settings
 
 | variable | why |
 | --- | --- |
