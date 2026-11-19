@@ -159,6 +159,12 @@ mod field {
     pub(super) const PACKAGE: &str = "package";
 
     pub(super) const BUFFER_FRAMES: &str = "buffer_frames";
+    pub(super) const QUEUE: &str = "queue";
+    pub(super) const TUI: &str = "tui";
+    pub(super) const POLL: &str = "poll";
+    pub(super) const METER_HOLD: &str = "meter_hold";
+    pub(super) const METER_FALL: &str = "meter_fall";
+    pub(super) const METER_FLOOR: &str = "meter_floor";
     pub(super) const PRELOAD: &str = "preload";
     pub(super) const LOADED: &str = "loaded";
     pub(super) const PATH: &str = "path";

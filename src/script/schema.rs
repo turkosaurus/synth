@@ -31,12 +31,14 @@ impl Ty {
     }
 }
 
-/// The values a number may take. Bounds are inclusive unless named `Above`.
+/// The values a number may take. Bounds are inclusive unless named `Above`
+/// or `Below`.
 #[derive(Clone, Copy)]
 enum Bound {
     Any,
     AtLeast(f64),
     Above(f64),
+    Below(f64),
     Between(f64, f64),
 }
 
@@ -47,6 +49,7 @@ impl Bound {
                 Self::Any => true,
                 Self::AtLeast(low) => value >= low,
                 Self::Above(low) => value > low,
+                Self::Below(high) => value < high,
                 Self::Between(low, high) => (low..=high).contains(&value),
             }
     }
@@ -56,6 +59,7 @@ impl Bound {
             Self::Any => "finite".to_string(),
             Self::AtLeast(low) => format!("at least {low}"),
             Self::Above(low) => format!("above {low}"),
+            Self::Below(high) => format!("below {high}"),
             Self::Between(low, high) => format!("{low} to {high}"),
         }
     }
@@ -120,10 +124,27 @@ pub(super) const INSTRUMENT: Schema = Schema {
 
 pub(super) const CONFIG: Schema = Schema {
     what: "config.lua",
+    // every field optional: the built-in file supplies what a user's leaves out
     fields: &[
         // 0 leaves it to the platform; the device decides the upper limit,
         // checked when it opens
         optional(field::BUFFER_FRAMES, Ty::Integer, Bound::AtLeast(0.0)),
+        // fewer slots than a chord's worth of events would drop keys
+        optional(field::QUEUE, Ty::Integer, Bound::AtLeast(16.0)),
+        optional(field::TUI, Ty::Table, Bound::Any),
+    ],
+};
+
+pub(super) const CONFIG_TUI: Schema = Schema {
+    what: "config.lua tui",
+    fields: &[
+        // ms; 0 would spin, and a second between key reads is unusable
+        optional(field::POLL, Ty::Number, Bound::Between(1.0, 1000.0)),
+        optional(field::METER_HOLD, Ty::Number, Bound::AtLeast(0.0)),
+        // the fall rate divides by it
+        optional(field::METER_FALL, Ty::Number, Bound::Above(0.0)),
+        // the meter's scale divides by it, and 0 dB is full scale
+        optional(field::METER_FLOOR, Ty::Number, Bound::Below(0.0)),
     ],
 };
 

@@ -4,42 +4,34 @@
 
 use std::time::Duration;
 
-/// Bottom of the scale. Amplitudes at or below this read as empty.
-pub(crate) const FLOOR_DB: f32 = -60.0;
-
-/// How long a new maximum holds before the marker starts to fall.
-const HOLD: Duration = Duration::from_millis(560);
-
-/// How long a fall across the whole scale takes, once falling.
-const FALL: Duration = Duration::from_millis(280);
-
-/// Amplitude to a 0.0..1.0 scale position, logarithmically.
+/// Amplitude to a 0.0..1.0 scale position, logarithmically, with `floor_db`
+/// (below 0) at the bottom. Amplitudes at or below the floor read as empty.
 ///
 /// Meters on real gear are logarithmic because hearing is: -20 dBFS is a
 /// healthy signal that a linear bar would draw one tenth full.
-pub(crate) fn scale(amplitude: f32) -> f32 {
+pub(crate) fn scale(amplitude: f32, floor_db: f32) -> f32 {
     if amplitude <= 0.0 {
         return 0.0;
     }
     let db = 20.0 * amplitude.log10();
-    ((db - FLOOR_DB) / -FLOOR_DB).clamp(0.0, 1.0)
+    ((db - floor_db) / -floor_db).clamp(0.0, 1.0)
 }
 
 /// Inverse of [`scale`], for labelling a bar in the units it is drawn in.
-pub(crate) fn db(scaled: f32) -> f32 {
-    FLOOR_DB + scaled.clamp(0.0, 1.0) * -FLOOR_DB
+pub(crate) fn db(scaled: f32, floor_db: f32) -> f32 {
+    floor_db + scaled.clamp(0.0, 1.0) * -floor_db
 }
 
 /// A scale position as dB, padded for a label.
 ///
-/// An empty bar reads -∞ rather than [`FLOOR_DB`]: everything from silence
-/// up to a thousandth of full scale lands on 0.0, and printing -60.0 would
-/// claim the quietest audible signal when there may be none at all.
-pub(crate) fn db_label(scaled: f32) -> String {
+/// An empty bar reads -∞ rather than the floor: everything from silence up
+/// to the floor lands on 0.0, and printing the floor would claim the
+/// quietest audible signal when there may be none at all.
+pub(crate) fn db_label(scaled: f32, floor_db: f32) -> String {
     if scaled <= 0.0 {
         return format!("{:>5}", "-∞");
     }
-    format!("{:>5.1}", db(scaled))
+    format!("{:>5.1}", db(scaled, floor_db))
 }
 
 /// Frames of history kept. A wider terminal shows more of it; the oldest
@@ -97,19 +89,35 @@ impl Activity {
 ///
 /// Both positions are scale fractions, not amplitudes: the ballistics run
 /// in the decibel domain, which is how a PPM's decay is specified.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct Meter {
     level: f32,
     hold: f32,
     /// time left before the marker begins to fall
     hold_left: Duration,
+    /// how long a new maximum holds before the marker starts to fall
+    hold_time: Duration,
+    /// how long a fall across the whole scale takes, once falling
+    fall_time: Duration,
 }
 
 impl Meter {
+    /// An empty meter. `fall` must be above zero: the fall rate divides by
+    /// it, and `config.lua` checks it.
+    pub(crate) fn new(hold: Duration, fall: Duration) -> Self {
+        Self {
+            level: 0.0,
+            hold: 0.0,
+            hold_left: Duration::ZERO,
+            hold_time: hold,
+            fall_time: fall,
+        }
+    }
+
     /// Fold in one reading, `dt` after the last.
     pub(crate) fn update(&mut self, scaled: f32, dt: Duration) {
         let scaled = scaled.clamp(0.0, 1.0);
-        let fall = dt.as_secs_f32() / FALL.as_secs_f32();
+        let fall = dt.as_secs_f32() / self.fall_time.as_secs_f32();
 
         // attack is instant: a peak drawn late is a peak not drawn
         self.level = if scaled >= self.level {
@@ -120,7 +128,7 @@ impl Meter {
 
         if scaled >= self.hold {
             self.hold = scaled;
-            self.hold_left = HOLD;
+            self.hold_left = self.hold_time;
             return;
         }
         match self.hold_left.checked_sub(dt) {
@@ -128,7 +136,7 @@ impl Meter {
             None => {
                 // only the part of dt past the window falls, so one long
                 // frame cannot wipe the marker out in a single step
-                let fall = (dt - self.hold_left).as_secs_f32() / FALL.as_secs_f32();
+                let fall = (dt - self.hold_left).as_secs_f32() / self.fall_time.as_secs_f32();
                 self.hold_left = Duration::ZERO;
                 // the marker never falls below the bar it marks
                 self.hold = (self.hold - fall).max(self.level);
@@ -147,8 +155,28 @@ impl Meter {
 
 #[cfg(test)]
 mod tests {
-    use super::{db, db_label, scale, Activity, Meter, FALL, FLOOR_DB, HOLD, STEPS};
+    use super::{Activity, Meter, STEPS};
     use std::time::Duration;
+
+    const FLOOR_DB: f32 = -60.0;
+    const HOLD: Duration = Duration::from_millis(560);
+    const FALL: Duration = Duration::from_millis(280);
+
+    fn scale(amplitude: f32) -> f32 {
+        super::scale(amplitude, FLOOR_DB)
+    }
+
+    fn db(scaled: f32) -> f32 {
+        super::db(scaled, FLOOR_DB)
+    }
+
+    fn db_label(scaled: f32) -> String {
+        super::db_label(scaled, FLOOR_DB)
+    }
+
+    fn meter() -> Meter {
+        Meter::new(HOLD, FALL)
+    }
 
     const FRAME: Duration = Duration::from_millis(16);
 
@@ -236,18 +264,18 @@ mod tests {
 
     #[test]
     fn attack_is_instant() {
-        let mut meter = Meter::default();
+        let mut meter = meter();
         meter.update(1.0, FRAME);
         assert_eq!(meter.level(), 1.0);
         assert_eq!(meter.hold(), 1.0);
     }
 
     // durations come from the constants, so retuning the feel of the meter
-    // cannot turn these into failures
+    // in config.lua cannot turn these into failures
 
     #[test]
     fn level_falls_across_the_fall_time() {
-        let mut meter = Meter::default();
+        let mut meter = meter();
         meter.update(1.0, FRAME);
         meter.update(0.0, FALL / 2);
 
@@ -257,7 +285,7 @@ mod tests {
 
     #[test]
     fn hold_waits_out_its_window() {
-        let mut meter = Meter::default();
+        let mut meter = meter();
         meter.update(1.0, FRAME);
         meter.update(0.0, HOLD / 2);
         assert_eq!(meter.hold(), 1.0);
@@ -265,7 +293,7 @@ mod tests {
 
     #[test]
     fn hold_falls_once_its_window_expires() {
-        let mut meter = Meter::default();
+        let mut meter = meter();
         meter.update(1.0, FRAME);
 
         // a quarter of a fall past the window, so the marker has left the
@@ -280,7 +308,7 @@ mod tests {
 
     #[test]
     fn hold_never_falls_below_the_bar() {
-        let mut meter = Meter::default();
+        let mut meter = meter();
         meter.update(1.0, FRAME);
         for _ in 0..200 {
             meter.update(0.4, Duration::from_millis(100));
@@ -291,7 +319,7 @@ mod tests {
 
     #[test]
     fn a_reading_above_full_scale_is_clamped() {
-        let mut meter = Meter::default();
+        let mut meter = meter();
         meter.update(1.5, FRAME);
         assert_eq!(meter.level(), 1.0);
     }

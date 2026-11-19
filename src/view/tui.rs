@@ -16,11 +16,9 @@ use ratatui::{Frame, Terminal};
 use crate::audio::{Snapshot, Stats};
 use crate::input::keyboard::{code, Gating, Keyboard, Outcome};
 use crate::session::Session;
-use crate::spec::Key;
+use crate::spec::{Key, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
-
-const POLL: Duration = Duration::from_millis(16);
 
 const POPUP_FILL: Color = Color::Yellow;
 const POPUP_INK: Color = Color::Black;
@@ -33,7 +31,7 @@ const SPARK_ROWS: u16 = 2;
 const STATS_ROWS: u16 = 2 + SPARK_ROWS;
 
 /// Draw `session` and feed it keys until the player quits.
-pub fn run(session: &mut Session) -> anyhow::Result<()> {
+pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
     let gating = session.keyboard.gating();
 
     // built before enter(), so a failure here needs no teardown.
@@ -49,6 +47,7 @@ pub fn run(session: &mut Session) -> anyhow::Result<()> {
         &session.stats,
         &session.freqs,
         gating,
+        config,
     )
 }
 
@@ -58,10 +57,11 @@ fn update(
     stats: &Stats,
     freqs: &[f32],
     gating: Gating,
+    config: &TuiConfig,
 ) -> anyhow::Result<()> {
     // ballistics are the view's, not the device's: the callback has no
     // business knowing the frame rate a bar falls at
-    let mut peak = Meter::default();
+    let mut peak = Meter::new(config.meter_hold, config.meter_fall);
     let mut activity = Activity::default();
     let mut last = Instant::now();
     let mut help = false;
@@ -80,8 +80,8 @@ fn update(
         let now = Instant::now();
         let dt = now - last;
         last = now;
-        peak.update(meter::scale(snap.peak), dt);
-        activity.update(meter::scale(snap.peak), snap.clips);
+        peak.update(meter::scale(snap.peak, config.meter_floor_db), dt);
+        activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clips);
 
         let view = View {
             keyboard,
@@ -91,10 +91,11 @@ fn update(
             freqs,
             gating,
             help,
+            floor_db: config.meter_floor_db,
         };
         terminal.draw(|frame| draw(frame, &view))?;
 
-        if event::poll(POLL)? {
+        if event::poll(config.poll)? {
             // drain immediately
             while event::poll(Duration::ZERO)? {
                 if let event::Event::Key(key) = event::read()? {
@@ -134,6 +135,8 @@ struct View<'a> {
     freqs: &'a [f32],
     gating: Gating,
     help: bool,
+    /// the meter's floor, from `config.lua`
+    floor_db: f32,
 }
 
 fn draw(frame: &mut Frame, view: &View) {
@@ -145,6 +148,7 @@ fn draw(frame: &mut Frame, view: &View) {
         freqs,
         gating,
         help,
+        floor_db,
     } = *view;
 
     let footer = vec![Line::from("(ctrl-c) quit | (?) help")];
@@ -232,17 +236,19 @@ fn draw(frame: &mut Frame, view: &View) {
         ),
         load_area,
     );
-    // peak is logarithmic, so the thresholds are dB
+    // peak is logarithmic, so the thresholds are dB, placed on whatever
+    // floor the scale has
+    let at = |db: f32| meter::scale(10f32.powf(db / 20.0), floor_db);
     frame.render_widget(
         bar(
             format!(
                 "gain {} dB  hold {} dB",
-                meter::db_label(peak.level()),
-                meter::db_label(peak.hold()),
+                meter::db_label(peak.level(), floor_db),
+                meter::db_label(peak.hold(), floor_db),
             ),
             peak.level(),
-            0.8,
-            0.99,
+            at(-12.0),
+            at(-0.6),
         ),
         peak_area,
     );
@@ -259,7 +265,7 @@ fn draw(frame: &mut Frame, view: &View) {
         // the bar it sits next to rather than the gauge above
         Line::from(format!(
             " peak {} dB ",
-            meter::db_label(meter::scale(snap.peak))
+            meter::db_label(meter::scale(snap.peak, floor_db), floor_db)
         ))
         .style(over),
         peak_row,
