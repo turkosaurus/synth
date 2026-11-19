@@ -100,13 +100,15 @@ pub struct Snapshot {
 pub struct Output {
     pub(crate) device: cpal::Device,
     pub(crate) config: cpal::SupportedStreamConfig,
+    pub(crate) buffer: cpal::BufferSize,
     pub sample_rate: u32,
     pub channels: usize,
 }
 
-/// Open the default output device. Separated from playback so every view and
-/// command negotiates the device the same way.
-pub fn open() -> anyhow::Result<Output> {
+/// Open the default output device, asking for `buffer_frames` per callback
+/// if given. Separated from playback so every view and command negotiates
+/// the device the same way.
+pub fn open(buffer_frames: Option<u32>) -> anyhow::Result<Output> {
     let device = cpal::default_host()
         .default_output_device()
         .context("no default output device")?;
@@ -117,16 +119,38 @@ pub fn open() -> anyhow::Result<Output> {
         config.sample_format()
     );
 
+    let buffer = buffer_size(buffer_frames, config.buffer_size())?;
+
     let sample_rate = config.sample_rate();
     let channels = config.channels() as usize;
-    debug!(sample_rate, channels, format = ?config.sample_format(), "device");
+    debug!(sample_rate, channels, format = ?config.sample_format(), ?buffer, "device");
 
     Ok(Output {
         device,
         config,
+        buffer,
         sample_rate,
         channels,
     })
+}
+
+/// The buffer to ask for. A size outside the range the device reports is
+/// named here, rather than failing later inside the driver. A device that
+/// reports no range gets the request as written.
+fn buffer_size(
+    frames: Option<u32>,
+    supported: &cpal::SupportedBufferSize,
+) -> anyhow::Result<cpal::BufferSize> {
+    let Some(frames) = frames else {
+        return Ok(cpal::BufferSize::Default);
+    };
+    if let cpal::SupportedBufferSize::Range { min, max } = *supported {
+        anyhow::ensure!(
+            (min..=max).contains(&frames),
+            "config.lua: `buffer_frames` is {frames}; this device takes {min} to {max}"
+        );
+    }
+    Ok(cpal::BufferSize::Fixed(frames))
 }
 
 /// Build and start a stream that drives `player`, reporting into `stats`.
@@ -138,45 +162,96 @@ pub fn stream(
     let channels = output.channels;
     let sample_rate = output.sample_rate;
     let faults = Arc::clone(&stats);
-    let stream = output.device.build_output_stream(
-        output.config.into(),
-        move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            let start = Instant::now();
-            let tally = fill(out, channels, &mut player);
+    let config = cpal::StreamConfig {
+        buffer_size: output.buffer,
+        ..output.config.config()
+    };
+    let stream = output
+        .device
+        .build_output_stream(
+            config,
+            move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                let start = Instant::now();
+                let tally = fill(out, channels, &mut player);
 
-            // accumulated in `fill`, then written once per callback rather
-            // than once per sample
-            stats
-                .frames
-                .fetch_add(tally.frames as u64, Ordering::Relaxed);
-            stats.clips.fetch_add(tally.clips, Ordering::Relaxed);
-            stats
-                .non_finite
-                .fetch_add(tally.non_finite, Ordering::Relaxed);
-            stats.record_peak(tally.peak);
+                // accumulated in `fill`, then written once per callback rather
+                // than once per sample
+                stats
+                    .frames
+                    .fetch_add(tally.frames as u64, Ordering::Relaxed);
+                stats.clips.fetch_add(tally.clips, Ordering::Relaxed);
+                stats
+                    .non_finite
+                    .fetch_add(tally.non_finite, Ordering::Relaxed);
+                stats.record_peak(tally.peak);
 
-            let used_us = start.elapsed().as_micros() as u32;
-            stats.callback_us_max.fetch_max(used_us, Ordering::Relaxed);
+                let used_us = start.elapsed().as_micros() as u32;
+                stats.callback_us_max.fetch_max(used_us, Ordering::Relaxed);
 
-            // the deadline comes from this callback's own frame count. the
-            // driver may vary the buffer, so a ratio of two independent
-            // maxima would describe no callback that ever ran.
-            let budget_us = tally.frames as f32 / sample_rate as f32 * 1e6;
-            if budget_us > 0.0 {
-                stats.budget_us.store(budget_us as u32, Ordering::Relaxed);
-                stats.record_load(used_us as f32 / budget_us);
-                if used_us as f32 > budget_us {
-                    stats.overruns.fetch_add(1, Ordering::Relaxed);
+                // the deadline comes from this callback's own frame count. the
+                // driver may vary the buffer, so a ratio of two independent
+                // maxima would describe no callback that ever ran.
+                let budget_us = tally.frames as f32 / sample_rate as f32 * 1e6;
+                if budget_us > 0.0 {
+                    stats.budget_us.store(budget_us as u32, Ordering::Relaxed);
+                    stats.record_load(used_us as f32 / budget_us);
+                    if used_us as f32 > budget_us {
+                        stats.overruns.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
-            }
-        },
-        // counted, not printed: the tui owns the screen, and this callback
-        // may run on the audio thread, where formatting is not allowed
-        move |_| {
-            faults.errors.fetch_add(1, Ordering::Relaxed);
-        },
-        None,
-    )?;
+            },
+            // counted, not printed: the tui owns the screen, and this callback
+            // may run on the audio thread, where formatting is not allowed
+            move |_| {
+                faults.errors.fetch_add(1, Ordering::Relaxed);
+            },
+            None,
+        )
+        .with_context(|| format!("opening the output stream ({:?})", output.buffer))?;
     stream.play()?;
     Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RANGE: cpal::SupportedBufferSize =
+        cpal::SupportedBufferSize::Range { min: 64, max: 4096 };
+
+    #[test]
+    fn no_setting_leaves_the_buffer_to_the_platform() {
+        assert_eq!(
+            buffer_size(None, &RANGE).unwrap(),
+            cpal::BufferSize::Default
+        );
+    }
+
+    #[test]
+    fn a_size_in_range_is_asked_for() {
+        assert_eq!(
+            buffer_size(Some(128), &RANGE).unwrap(),
+            cpal::BufferSize::Fixed(128)
+        );
+    }
+
+    #[test]
+    fn a_size_outside_the_device_range_is_named() {
+        let error = buffer_size(Some(32), &RANGE).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("`buffer_frames` is 32; this device takes 64 to 4096"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_device_with_no_range_gets_the_request() {
+        let unknown = cpal::SupportedBufferSize::Unknown;
+        assert_eq!(
+            buffer_size(Some(32), &unknown).unwrap(),
+            cpal::BufferSize::Fixed(32)
+        );
+    }
 }

@@ -174,7 +174,7 @@ fn lint(path: &std::path::Path, rate: u32) -> anyhow::Result<ExitCode> {
 }
 
 fn play(path: &std::path::Path) -> anyhow::Result<()> {
-    let output = audio::open()?;
+    let output = audio::open(script::config()?.buffer_frames)?;
     let (sample_rate, channels) = (output.sample_rate, output.channels);
 
     let patch = script::load(path, sample_rate)?;

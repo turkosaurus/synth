@@ -2,6 +2,7 @@ use anyhow::Context;
 use tracing::instrument;
 
 mod bake;
+mod config;
 mod feed;
 mod filter;
 mod keymap;
@@ -9,6 +10,7 @@ mod schema;
 mod structure;
 
 use crate::spec::Patch;
+pub use config::config;
 use feed::{sequence, single, SINGLE};
 use keymap::keymap;
 
@@ -155,6 +157,8 @@ mod field {
     // identically, and `PATH` is also written to
     pub(super) const CALL: &str = "__call";
     pub(super) const PACKAGE: &str = "package";
+
+    pub(super) const BUFFER_FRAMES: &str = "buffer_frames";
     pub(super) const PRELOAD: &str = "preload";
     pub(super) const LOADED: &str = "loaded";
     pub(super) const PATH: &str = "path";
