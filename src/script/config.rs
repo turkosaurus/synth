@@ -376,7 +376,9 @@ mod tests {
 
     #[test]
     fn the_template_names_the_default_patches_folder() {
-        let dir = abs("/d/synth/patches").display().to_string();
+        // joined as the code joins it, so Windows gets its own separators
+        let dir = abs("/d").join("synth").join("patches");
+        let dir = dir.display().to_string();
         let written = template_for(&unix(Some("/d"), None));
         assert!(written.contains(&format!("-- patch_dir = [[{dir}]]")));
         assert!(!written.contains(DEFAULT_PATCH_DIR));
