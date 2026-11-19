@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#MISE description="lua stays in script.rs and script/, cpal stays in audio/device.rs, spec/ depends on neither"
+set -euo pipefail
+
+failed=0
+
+# allowed paths are extended regexes, anchored at the start
+for rule in 'mlua:src/script(\.rs|/)' 'cpal:src/audio/device\.rs'; do
+    name=${rule%%:*}
+    allowed=${rule#*:}
+    if offenders=$(grep -rln "use $name\|$name::" src/ | grep -vE "^($allowed)"); then
+        echo "::error title=test:separation::$name must stay in $allowed"
+        echo "$name must stay in $allowed, found in:" >&2
+        echo "$offenders" >&2
+        failed=1
+    fi
+done
+
+# spec is plain data between script and audio, so it names neither
+if offenders=$(grep -rlE "(crate|mlua|cpal)::" src/spec.rs src/spec/); then
+    echo "spec must not depend on the rest of the crate, found in:" >&2
+    echo "$offenders" >&2
+    failed=1
+fi
+
+exit $failed

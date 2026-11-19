@@ -1,15 +1,9 @@
 [tools]
-# clippy and rustfmt are not in every rustup profile;
-# CI's minimal install lacks them
 rust = { version = "1.98", components = "clippy,rustfmt" }
-# the release workflow reads Cargo.toml's version with it
 yq = "4"
-# `mise run lint` checks lua/ with both
 lua-language-server = "3"
 stylua = "2"
-# `mise run lint:licenses` checks every dependency's license and source
 cargo-deny = "0.20"
-# `mise run notices` writes the release archive's third-party notices
 "ubi:EmbarkStudios/cargo-about" = "0.9"
 
 # cargo-edit compiles for minutes, so it is fetched here on first use rather
@@ -18,39 +12,21 @@ cargo-deny = "0.20"
 description = "bump the crate version in Cargo.toml and Cargo.lock: mise run bump <patch|minor|major>"
 run = "mise exec cargo:cargo-edit@0.13 -- cargo set-version --bump"
 
-[tasks."test:separation"]
-description = "lua stays in script.rs and script/, cpal stays in audio/device.rs, spec/ depends on neither"
-run = '''
-set -eu
-failed=0
-# allowed paths are extended regexes, anchored at the start
-for rule in 'mlua:src/script(\.rs|/)' 'cpal:src/audio/device\.rs'; do
-  name=${rule%%:*}
-  allowed=${rule#*:}
-  if offenders=$(grep -rln "use $name\|$name::" src/ | grep -vE "^($allowed)"); then
-    echo "::error title=test:separation::$name must stay in $allowed"
-    echo "$name must stay in $allowed, found in:" >&2
-    echo "$offenders" >&2
-    failed=1
-  fi
-done
-# spec is plain data between script and audio, so it names neither
-if offenders=$(grep -rlE "(crate|mlua|cpal)::" src/spec.rs src/spec/); then
-  echo "spec must not depend on the rest of the crate, found in:" >&2
-  echo "$offenders" >&2
-  failed=1
-fi
-exit $failed
-'''
-
-# test:core is a file task: mise-tasks/test/core
+# test:core and test:separation are file tasks: mise-tasks/test/
 
 [tasks.test]
 depends = ["test:rust", "test:separation", "test:core", "test:example"]
 description = "run the offline tests: cargo tests and the example patch lint; test:network is separate"
 
 [tasks.lint]
-depends = ["lint:fmt", "lint:rust", "lint:pedantic", "lint:lua", "lint:stylua", "lint:licenses"]
+depends = [
+    "lint:fmt",
+    "lint:rust",
+    "lint:pedantic",
+    "lint:lua",
+    "lint:stylua",
+    "lint:licenses",
+]
 description = "run all linters; any warning fails, except pedantic"
 
 [tasks."lint:fmt"]
