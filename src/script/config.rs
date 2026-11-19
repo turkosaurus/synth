@@ -200,27 +200,44 @@ fn settings(table: &mlua::Table) -> anyhow::Result<Config> {
 mod tests {
     use super::*;
 
+    /// `path`, a Unix-style absolute path, made absolute on the test host:
+    /// Windows needs a drive, so `/h` becomes `C:/h` there.
+    fn abs(path: &str) -> PathBuf {
+        match cfg!(windows) {
+            true => PathBuf::from(format!("C:{path}")),
+            false => PathBuf::from(path),
+        }
+    }
+
+    /// An environment value: absolute ones go through [`abs`], relative
+    /// ones are passed as written.
+    fn var(value: &str) -> OsString {
+        match value.starts_with('/') {
+            true => abs(value).into_os_string(),
+            false => OsString::from(value),
+        }
+    }
+
     /// A Unix environment with these XDG and HOME values.
     fn unix(xdg: Option<&str>, home: Option<&str>) -> Dirs {
         Dirs {
-            xdg_config: xdg.map(OsString::from),
-            xdg_data: xdg.map(OsString::from),
-            home: home.map(OsString::from),
+            xdg_config: xdg.map(var),
+            xdg_data: xdg.map(var),
+            home: home.map(var),
             appdata: None,
             userprofile: None,
             windows: false,
         }
     }
 
-    /// A Windows environment with these APPDATA and USERPROFILE values,
-    /// written as Unix paths so `is_absolute` holds on the test host.
+    /// A Windows environment with these APPDATA and USERPROFILE values.
     fn windows(appdata: Option<&str>, userprofile: Option<&str>) -> Dirs {
         Dirs {
             xdg_config: None,
             xdg_data: None,
             home: None,
-            appdata: appdata.map(OsString::from),
-            userprofile: userprofile.map(OsString::from),
+            appdata: appdata.map(var),
+            userprofile: userprofile.map(var),
             windows: true,
         }
     }
@@ -231,13 +248,10 @@ mod tests {
 
     #[test]
     fn the_path_prefers_xdg() {
-        assert_eq!(
-            at(Some("/x"), Some("/h")),
-            Some("/x/synth/config.lua".into())
-        );
+        assert_eq!(at(Some("/x"), Some("/h")), Some(abs("/x/synth/config.lua")));
         assert_eq!(
             at(None, Some("/h")),
-            Some("/h/.config/synth/config.lua".into())
+            Some(abs("/h/.config/synth/config.lua"))
         );
     }
 
@@ -245,7 +259,7 @@ mod tests {
     fn the_path_ignores_relative_dirs() {
         assert_eq!(
             at(Some("x"), Some("/h")),
-            Some("/h/.config/synth/config.lua".into())
+            Some(abs("/h/.config/synth/config.lua"))
         );
         assert_eq!(at(None, Some("h")), None);
         assert_eq!(at(None, None), None);
@@ -318,11 +332,11 @@ mod tests {
     fn the_patches_folder_defaults_to_the_data_dir() {
         assert_eq!(
             patches("", Some("/d"), Some("/h")),
-            Some("/d/synth/patches".into())
+            Some(abs("/d/synth/patches"))
         );
         assert_eq!(
             patches("", None, Some("/h")),
-            Some("/h/.local/share/synth/patches".into())
+            Some(abs("/h/.local/share/synth/patches"))
         );
         assert_eq!(patches("", Some("d"), None), None);
     }
@@ -331,12 +345,9 @@ mod tests {
     fn the_patches_folder_takes_absolute_and_home_paths() {
         assert_eq!(
             patches("/music/synth", None, Some("/h")),
-            Some("/music/synth".into())
+            Some(abs("/music/synth"))
         );
-        assert_eq!(
-            patches("~/music", None, Some("/h")),
-            Some("/h/music".into())
-        );
+        assert_eq!(patches("~/music", None, Some("/h")), Some(abs("/h/music")));
     }
 
     #[test]
@@ -344,34 +355,34 @@ mod tests {
         let dirs = windows(Some("/appdata"), Some("/users/me"));
         assert_eq!(
             dirs.config().map(|dir| under(dir, &FILE)),
-            Some("/appdata/synth/config.lua".into())
+            Some(abs("/appdata/synth/config.lua"))
         );
         assert_eq!(
             patches_dir("", &dirs).unwrap(),
-            Some("/appdata/synth/patches".into())
+            Some(abs("/appdata/synth/patches"))
         );
         // with no HOME, ~/ is the user profile
         assert_eq!(
             patches_dir("~/music", &dirs).unwrap(),
-            Some("/users/me/music".into())
+            Some(abs("/users/me/music"))
         );
     }
 
     #[test]
     fn xdg_wins_on_windows_too() {
         let dirs = Dirs {
-            xdg_config: Some("/x/config".into()),
-            xdg_data: Some("/x/data".into()),
+            xdg_config: Some(abs("/x/config")),
+            xdg_data: Some(abs("/x/data")),
             ..windows(Some("/appdata"), None)
         };
-        assert_eq!(dirs.config(), Some("/x/config".into()));
-        assert_eq!(dirs.data(), Some("/x/data".into()));
+        assert_eq!(dirs.config(), Some(abs("/x/config")));
+        assert_eq!(dirs.data(), Some(abs("/x/data")));
     }
 
     #[test]
     fn userprofile_stands_in_for_home_only_on_windows() {
         let unix = Dirs {
-            userprofile: Some("/users/me".into()),
+            userprofile: Some(abs("/users/me")),
             ..unix(None, None)
         };
         assert_eq!(unix.home(), None);

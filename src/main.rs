@@ -158,7 +158,14 @@ fn run() -> anyhow::Result<ExitCode> {
                 println!("installed synth {} to {}", release::VERSION, to.display());
                 if !on_path {
                     let dir = to.parent().unwrap_or(&to).display();
-                    eprintln!("{dir} is not on PATH; add it, e.g. export PATH=\"{dir}:$PATH\"");
+                    if cfg!(windows) {
+                        eprintln!(
+                            "{dir} is not on PATH; add it under Settings, \
+                             Environment Variables, then open a new terminal"
+                        );
+                    } else {
+                        eprintln!("{dir} is not on PATH; add it, e.g. export PATH=\"{dir}:$PATH\"");
+                    }
                 }
             }
         },
