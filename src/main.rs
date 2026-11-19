@@ -1,5 +1,5 @@
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -55,6 +55,8 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Print the version, as --version does
+    Version,
 }
 
 /// At most one channel; none means stable.
@@ -155,6 +157,7 @@ fn run() -> anyhow::Result<ExitCode> {
                 println!("synth {to} verified; would replace {}", path.display());
             }
         },
+        Commands::Version => print!("{}", Args::command().render_version()),
     }
     Ok(ExitCode::SUCCESS)
 }

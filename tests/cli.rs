@@ -1,15 +1,17 @@
 use std::process::Command;
 
-/// `--version` prints one line a script can split on the space.
+/// `--version` and `version` print one line a script can split on the space.
 #[test]
-fn version_flag() {
-    let out = Command::new(env!("CARGO_BIN_EXE_synth"))
-        .arg("--version")
-        .output()
-        .expect("run synth --version");
-    assert!(out.status.success());
+fn version() {
     let expected = format!("synth {}\n", synth::release::VERSION);
-    assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
+    for arg in ["--version", "version"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_synth"))
+            .arg(arg)
+            .output()
+            .expect("run synth");
+        assert!(out.status.success(), "{arg}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "{arg}");
+    }
 }
 
 /// `install` copies the running binary to `XDG_BIN_HOME`,
