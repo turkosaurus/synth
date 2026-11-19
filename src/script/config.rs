@@ -325,7 +325,12 @@ mod tests {
     }
 
     fn patches(setting: &str, xdg: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
-        patches_dir(setting, &unix(xdg, home)).unwrap()
+        // an absolute setting is made absolute on the host, as `var` does
+        let setting = match setting.starts_with('/') {
+            true => abs(setting).display().to_string(),
+            false => setting.to_string(),
+        };
+        patches_dir(&setting, &unix(xdg, home)).unwrap()
     }
 
     #[test]
@@ -371,8 +376,8 @@ mod tests {
     #[test]
     fn xdg_wins_on_windows_too() {
         let dirs = Dirs {
-            xdg_config: Some(abs("/x/config")),
-            xdg_data: Some(abs("/x/data")),
+            xdg_config: Some(var("/x/config")),
+            xdg_data: Some(var("/x/data")),
             ..windows(Some("/appdata"), None)
         };
         assert_eq!(dirs.config(), Some(abs("/x/config")));
@@ -382,7 +387,7 @@ mod tests {
     #[test]
     fn userprofile_stands_in_for_home_only_on_windows() {
         let unix = Dirs {
-            userprofile: Some(abs("/users/me")),
+            userprofile: Some(var("/users/me")),
             ..unix(None, None)
         };
         assert_eq!(unix.home(), None);
