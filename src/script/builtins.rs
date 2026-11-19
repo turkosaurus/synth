@@ -151,13 +151,70 @@ pub fn write(patches: &Path) -> anyhow::Result<Vec<(&'static str, Wrote)>> {
         wrote.push((name, outcome));
     }
 
+    save_bases(&dir, &bases)?;
+    Ok(wrote)
+}
+
+fn save_bases(dir: &Path, bases: &BTreeMap<String, String>) -> anyhow::Result<()> {
     let record: String = bases
         .iter()
         .map(|(file, hash)| format!("{hash}  {file}\n"))
         .collect();
     let path = dir.join(BASES);
-    fs::write(&path, record).with_context(|| format!("write {}", path.display()))?;
-    Ok(wrote)
+    fs::write(&path, record).with_context(|| format!("write {}", path.display()))
+}
+
+/// An edited copy whose built-in has changed since it was written: the one
+/// case `synth patches` asks about.
+pub struct Behind {
+    pub name: &'static str,
+    pub path: PathBuf,
+    pub copy: String,
+    pub built_in: &'static str,
+}
+
+/// The copy of `name` and its new built-in, for the prompt, if the copy is
+/// behind.
+pub fn behind(patches: &Path, name: &str) -> anyhow::Result<Option<Behind>> {
+    let Some((name, source)) = MODULES.iter().find(|(n, _)| *n == name) else {
+        return Ok(None);
+    };
+    let path = patches.join(DIR).join(file_name(name));
+    if !matches!(
+        states(patches).into_iter().find(|(n, _)| n == name),
+        Some((_, State::EditedBehind(_)))
+    ) {
+        return Ok(None);
+    }
+    let copy = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    Ok(Some(Behind {
+        name,
+        path,
+        copy,
+        built_in: source,
+    }))
+}
+
+/// Replaces the copy with the current built-in, as the user chose, and
+/// records it as unedited.
+pub fn overwrite(patches: &Path, behind: &Behind) -> anyhow::Result<()> {
+    fs::write(&behind.path, behind.built_in)
+        .with_context(|| format!("write {}", behind.path.display()))?;
+    rebase(patches, behind)
+}
+
+/// Keeps the copy, as the user chose, and records the current built-in as
+/// its base, so it counts as edited but no longer behind until the
+/// built-in changes again.
+pub fn keep(patches: &Path, behind: &Behind) -> anyhow::Result<()> {
+    rebase(patches, behind)
+}
+
+fn rebase(patches: &Path, behind: &Behind) -> anyhow::Result<()> {
+    let dir = patches.join(DIR);
+    let mut bases = bases(&dir);
+    bases.insert(file_name(behind.name), hash(behind.built_in.as_bytes()));
+    save_bases(&dir, &bases)
 }
 
 #[cfg(test)]
@@ -275,6 +332,33 @@ mod tests {
         assert_eq!(fs::read_to_string(wave(&dir)).unwrap(), "mine");
         // still behind, so the next run still knows
         assert_eq!(outcome(&write(&dir).unwrap(), "synth.wave"), "kept behind");
+    }
+
+    #[test]
+    fn overwrite_takes_the_new_built_in_and_keep_stops_asking() {
+        let dir = patches("resolve");
+        write(&dir).unwrap();
+        fs::write(wave(&dir), "mine").unwrap();
+        set_base(&dir, b"old");
+
+        let stale = behind(&dir, "synth.wave").unwrap().expect("behind");
+        assert_eq!(stale.copy, "mine");
+        keep(&dir, &stale).unwrap();
+        assert!(
+            behind(&dir, "synth.wave").unwrap().is_none(),
+            "kept, so not asked again"
+        );
+        assert_eq!(fs::read_to_string(wave(&dir)).unwrap(), "mine");
+        assert!(
+            edited(&dir, "synth.wave").is_some(),
+            "still the user's edit"
+        );
+
+        set_base(&dir, b"old");
+        let stale = behind(&dir, "synth.wave").unwrap().expect("behind again");
+        overwrite(&dir, &stale).unwrap();
+        assert_eq!(fs::read_to_string(wave(&dir)).unwrap(), stale.built_in);
+        assert!(edited(&dir, "synth.wave").is_none(), "now unedited");
     }
 
     #[test]
