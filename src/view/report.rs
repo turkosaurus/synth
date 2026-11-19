@@ -44,7 +44,21 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
         Some(frames) => format!("{frames} frames"),
         None => "platform default".to_string(),
     };
-    table::pairs("config", &[("file", file), ("buffer", buffer)], false);
+    let ms = |d: std::time::Duration| format!("{} ms", d.as_millis());
+    let tui = &config.tui;
+    table::pairs(
+        "config",
+        &[
+            ("file", file),
+            ("buffer", buffer),
+            ("queue", format!("{} events", config.queue)),
+            ("tui poll", ms(tui.poll)),
+            ("meter hold", ms(tui.meter_hold)),
+            ("meter fall", ms(tui.meter_fall)),
+            ("meter floor", format!("{} dB", tui.meter_floor_db)),
+        ],
+        false,
+    );
 }
 
 /// Everything `check` reports about a loaded patch. Computes nothing:

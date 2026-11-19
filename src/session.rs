@@ -10,10 +10,7 @@ use std::sync::Arc;
 use crate::audio::{self, Player, Stats};
 use crate::input::keyboard::{Gating, Keyboard};
 use crate::script;
-use crate::spec::Event;
-
-/// Key events the UI thread can queue before the audio callback drains them.
-const QUEUE: usize = 256;
+use crate::spec::{Config, Event};
 
 /// A patch playing live on the default output device.
 pub struct Session {
@@ -29,8 +26,8 @@ pub struct Session {
 impl Session {
     /// Open the device, load the patch at `path` (or the default without
     /// one), and start it playing from the keyboard.
-    pub fn open(path: Option<&Path>, gating: Gating) -> anyhow::Result<Self> {
-        let output = audio::open(script::config()?.buffer_frames)?;
+    pub fn open(path: Option<&Path>, gating: Gating, config: &Config) -> anyhow::Result<Self> {
+        let output = audio::open(config.buffer_frames)?;
         let patch = match path {
             Some(path) => script::load(path, output.sample_rate)?,
             None => script::load_default(output.sample_rate)?,
@@ -42,7 +39,7 @@ impl Session {
         let freqs = patch.freqs.clone();
 
         // the producer stays here; the consumer moves into the audio callback
-        let (tx, rx) = rtrb::RingBuffer::<Event>::new(QUEUE);
+        let (tx, rx) = rtrb::RingBuffer::<Event>::new(config.queue);
         let player = Player::live(
             patch.timeline.instruments,
             patch.freqs,

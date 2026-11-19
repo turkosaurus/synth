@@ -130,10 +130,11 @@ fn run() -> anyhow::Result<ExitCode> {
             }
         }
         Commands::Check { path, rate } => return lint(&path, rate),
-        Commands::Play { path } => play(&path)?,
+        Commands::Play { path } => play(&path, &script::config()?)?,
         Commands::Tui { path } => {
-            let mut session = Session::open(path.as_deref(), gating())?;
-            view::tui::run(&mut session)?;
+            let config = script::config()?;
+            let mut session = Session::open(path.as_deref(), gating(), &config)?;
+            view::tui::run(&mut session, &config.tui)?;
         }
         Commands::Config => return edit_config(),
         Commands::Install => match install::install()? {
@@ -231,8 +232,8 @@ fn lint(path: &std::path::Path, rate: u32) -> anyhow::Result<ExitCode> {
     }
 }
 
-fn play(path: &std::path::Path) -> anyhow::Result<()> {
-    let output = audio::open(script::config()?.buffer_frames)?;
+fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<()> {
+    let output = audio::open(config.buffer_frames)?;
     let (sample_rate, channels) = (output.sample_rate, output.channels);
 
     let patch = script::load(path, sample_rate)?;
