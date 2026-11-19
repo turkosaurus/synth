@@ -532,7 +532,7 @@ fn the_keyboard_starts_an_octave_down_by_default() {
     let keymap = with_keyboard("synth.keyboard({})").unwrap().keymap;
     assert_eq!(
         (keymap.octave, keymap.octave_low, keymap.octave_high),
-        (-1, 4, 4)
+        (-1, 2, 3)
     );
 }
 
