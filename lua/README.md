@@ -10,7 +10,7 @@ Lua defines not only configuration, but provides functions to the Rust audio eng
 | [`wave.lua`](./wave.lua) | waveform shapes |
 | [`envelope.lua`](./envelope.lua) | envelope generator |
 | [`tuning.lua`](./tuning.lua) | tunings: MIDI note to Hz, equal temperament by default |
-| [`instrument.lua`](./instrument.lua) | default mono instrument |
+| [`instrument.lua`](./instrument.lua) | default instrument |
 | [`keyboard.lua`](./keyboard.lua) | mapping character keyboards to MIDI |
 | [`filter.lua`](./filter.lua) | filters for the summed output |
 | [`sequence.lua`](./sequence.lua) | sequencer blocks composed with chains |

@@ -1,5 +1,4 @@
--- What synth plays when no file is given. Every setting is written out, so
--- this doubles as a template for a new instrument.
+-- All instrument default settings, to provide a template.
 local synth = require("synth")
 
 return synth.instrument({
@@ -14,10 +13,13 @@ return synth.instrument({
 		release_curve = synth.slope.exponential(2),
 	}),
 	voice_count = 4,
-	tuning = synth.tuning.equal({ reference_hz = 440, reference_note = 69, tones = 12 }),
+	tuning = synth.tuning.equal({
+		reference_hz = 440,
+		reference_note = 69,
+		tones = 12,
+	}),
 	keyboard = synth.keyboard({
-		-- qwerty, qwertz, azerty, dvorak, colemak, or your own (see keyboard.lua)
-		layout = synth.keyboard.qwerty,
-		gate = 400, -- ms; note length when the terminal cannot report key release
+		layout = synth.keyboard.qwerty, -- see also: keyboard.lua
+		gate = 400, -- ms; note length when key release is unreported
 	}),
 })

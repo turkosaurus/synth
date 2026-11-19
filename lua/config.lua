@@ -1,10 +1,8 @@
 -- Optional settings for this machine, evaluated when program starts.
 return {
-	buffer_frames = 0, -- audio callback frames (0: defer to system default)
-	queue = 256, -- events buffered between input and audio
-	-- folder of your own patches ("": ~/.local/share/synth/patches, or
-	-- %APPDATA%\synth\patches on Windows); in a path, write \ as / or \\
-	patches = "",
+	buffer_frames = 0, -- audio callback frames (0: system default)
+	queue = 256, -- buffer size: input -> audio
+	-- patch_dir = [[{default}]] -- custom patches folder
 	tui = {
 		poll = 16, -- ms between redraws and key reads
 		meter_hold = 560, -- ms a peak holds before it falls
