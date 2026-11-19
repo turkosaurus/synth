@@ -6,6 +6,9 @@ stylua = "2"
 cargo-deny = "0.20"
 "ubi:EmbarkStudios/cargo-about" = "0.9"
 
+
+### RUN ###
+
 [tasks.doctor]
 description = "report terminal capabilities and gating mode"
 run = "cargo run -- doctor"
@@ -44,6 +47,7 @@ run = "cargo test --test network -- --ignored || { echo '::error title=test:netw
 description = "lint example.lua; nonzero exit on warnings"
 run = "cargo run -- check lua/example.lua || { echo '::error file=lua/example.lua,title=test:example::synth check found warnings'; exit 1; }"
 
+
 ### LINT ###
 
 [tasks.lint]
@@ -80,6 +84,7 @@ case $code in
   *) echo '::error title=lint:stylua::stylua could not run; see its error above (stylua.toml or Lua syntax)'; exit 1 ;;
 esac
 '''
+
 
 ### RELEASE ###
 
