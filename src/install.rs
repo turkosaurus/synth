@@ -8,11 +8,19 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
 
-/// The binary's file name, installed and inside release archives.
+/// The binary's name, without the platform's executable suffix.
 pub(crate) const BIN: &str = "synth";
+
+/// The binary's file name, installed and inside release archives.
+#[cfg(windows)]
+pub(crate) const FILE: &str = "synth.exe";
+#[cfg(not(windows))]
+pub(crate) const FILE: &str = "synth";
 
 const XDG_BIN_HOME: &str = "XDG_BIN_HOME";
 const HOME: &str = "HOME";
+/// Windows' home, used when `HOME` is not set
+const USERPROFILE: &str = "USERPROFILE";
 const PATH: &str = "PATH";
 /// The XDG spec's user bin directory, under `$HOME`.
 const LOCAL_BIN: [&str; 2] = [".local", "bin"];
@@ -34,13 +42,20 @@ pub(crate) fn exe() -> anyhow::Result<PathBuf> {
         .context("find the running binary")
 }
 
-/// `$XDG_BIN_HOME`, else `~/.local/bin`.
+/// `$XDG_BIN_HOME`, else `~/.local/bin`, where `~` is `HOME`, or on
+/// Windows, which does not set `HOME`, `USERPROFILE`.
 /// The XDG spec names only `~/.local/bin`; `XDG_BIN_HOME` is not in it,
-/// but installers such as uv honor it, and the spec ignores relative paths.
-fn bin_dir(xdg: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
-    let xdg = xdg.map(PathBuf::from).filter(|p| p.is_absolute());
-    xdg.or_else(|| {
-        let home = home.map(PathBuf::from).filter(|p| p.is_absolute())?;
+/// but installers such as uv honor it, uv uses the same folder on Windows,
+/// and the spec ignores relative paths.
+fn bin_dir(
+    xdg: Option<OsString>,
+    home: Option<OsString>,
+    userprofile: Option<OsString>,
+    windows: bool,
+) -> Option<PathBuf> {
+    let absolute = |value: Option<OsString>| value.map(PathBuf::from).filter(|p| p.is_absolute());
+    absolute(xdg).or_else(|| {
+        let home = absolute(home).or_else(|| windows.then(|| absolute(userprofile)).flatten())?;
         Some(LOCAL_BIN.iter().fold(home, |dir, part| dir.join(part)))
     })
 }
@@ -48,10 +63,15 @@ fn bin_dir(xdg: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
 /// Copies the running binary into the user's bin directory.
 pub fn install() -> anyhow::Result<Installed> {
     let exe = exe()?;
-    let Some(dir) = bin_dir(env::var_os(XDG_BIN_HOME), env::var_os(HOME)) else {
-        bail!("neither {XDG_BIN_HOME} nor {HOME} is an absolute path");
+    let Some(dir) = bin_dir(
+        env::var_os(XDG_BIN_HOME),
+        env::var_os(HOME),
+        env::var_os(USERPROFILE),
+        cfg!(windows),
+    ) else {
+        bail!("none of {XDG_BIN_HOME}, {HOME} or {USERPROFILE} is an absolute path");
     };
-    let to = dir.join(BIN);
+    let to = dir.join(FILE);
     if fs::canonicalize(&to).is_ok_and(|installed| installed == exe) {
         return Ok(Installed::Already(to));
     }
@@ -72,15 +92,13 @@ pub fn uninstall() -> anyhow::Result<PathBuf> {
 }
 
 /// Writes `binary` beside `to` and renames it over `to`.
-/// A rename within one directory is atomic, and a running binary keeps its
-/// old inode, so a process that replaces itself is unaffected.
-#[cfg(unix)]
+/// A rename within one directory is atomic. On Unix a running binary keeps
+/// its old inode, so a process that replaces itself is unaffected.
 pub(crate) fn place(binary: &[u8], to: &Path) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
     let staged = to.with_file_name(format!(".{BIN}-{}.tmp", std::process::id()));
     fs::write(&staged, binary).with_context(|| format!("write {}", staged.display()))?;
-    let result = fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))
+    let result = executable(&staged)
+        .and_then(|()| set_aside(to))
         .and_then(|()| fs::rename(&staged, to));
     if let Err(e) = result {
         let _ = fs::remove_file(&staged);
@@ -89,9 +107,35 @@ pub(crate) fn place(binary: &[u8], to: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn executable(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+}
+
+/// Windows has no executable bit: the `.exe` name is what makes it run.
 #[cfg(not(unix))]
-pub(crate) fn place(_binary: &[u8], _to: &Path) -> anyhow::Result<()> {
-    bail!("cannot replace a running binary on this platform yet")
+fn executable(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Nothing to do on Unix, where a rename replaces a running binary.
+#[cfg(not(windows))]
+fn set_aside(_to: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Windows refuses to replace a running `.exe` but lets it be renamed, so
+/// the old one moves to `synth.exe.old` first, which is removed the next
+/// time this runs, once nothing is running from it.
+#[cfg(windows)]
+fn set_aside(to: &Path) -> std::io::Result<()> {
+    let old = to.with_extension("exe.old");
+    let _ = fs::remove_file(&old);
+    match fs::rename(to, &old) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -99,7 +143,39 @@ mod tests {
     use super::*;
 
     fn dir(xdg: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
-        bin_dir(xdg.map(OsString::from), home.map(OsString::from))
+        bin_dir(
+            xdg.map(OsString::from),
+            home.map(OsString::from),
+            None,
+            false,
+        )
+    }
+
+    #[test]
+    fn windows_falls_back_to_userprofile() {
+        // written as Unix paths so `is_absolute` holds on the test host
+        let profile = Some(OsString::from("/users/me"));
+        assert_eq!(
+            bin_dir(None, None, profile.clone(), true),
+            Some("/users/me/.local/bin".into())
+        );
+        assert_eq!(
+            bin_dir(None, Some("/h".into()), profile.clone(), true),
+            Some("/h/.local/bin".into()),
+            "HOME still wins when set"
+        );
+        assert_eq!(bin_dir(None, None, profile, false), None, "Unix ignores it");
+    }
+
+    #[test]
+    fn place_replaces_an_existing_binary() {
+        let dir = std::env::temp_dir().join(format!("synth-place-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let to = dir.join(FILE);
+        fs::write(&to, b"old").unwrap();
+        place(b"new", &to).unwrap();
+        assert_eq!(fs::read(&to).unwrap(), b"new");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
