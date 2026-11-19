@@ -8,6 +8,7 @@ mod feed;
 mod filter;
 mod keymap;
 mod schema;
+pub mod starters;
 mod structure;
 
 use crate::spec::{Diagnostic, DiagnosticKind, Patch};

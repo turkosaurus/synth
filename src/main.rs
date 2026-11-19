@@ -232,9 +232,8 @@ fn patches(print_path: bool) -> anyhow::Result<()> {
         println!("{}", dir.display());
         return Ok(());
     }
-    for kind in script::PATCH_KINDS {
-        let sub = dir.join(kind);
-        std::fs::create_dir_all(&sub).with_context(|| format!("create {}", sub.display()))?;
+    for wrote in script::starters::write(&dir)? {
+        println!("wrote {wrote}");
     }
     view::report::builtins_written(&script::builtins::write(&dir)?);
     open_in_editor(&dir)

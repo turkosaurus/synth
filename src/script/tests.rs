@@ -1150,3 +1150,12 @@ fn an_edited_built_in_copy_loads_in_place_of_the_built_in() {
     // without the patches folder, the built-in loads and has no mark
     assert!(load_in(patch, "test", 48000, None, None).is_err());
 }
+
+#[test]
+fn every_starter_loads_in_one_patch() {
+    let patches = std::env::temp_dir().join(format!("synth-starters-load-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&patches);
+    starters::write(&patches).unwrap();
+    let patch = load(&fixture("starters"), 48000, Some(&patches)).unwrap();
+    assert!(patch.clean(), "{:?}", patch.reports);
+}
