@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# a new push to a PR cancels that PR's run still in progress, since only
+# the newest commit can merge. Runs on main are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # mise prefixes parallel task output with the task's label, and Actions only
 # reads a workflow command such as ::error:: at the start of a line.
 # One task at a time, unprefixed, keeps every annotation.
