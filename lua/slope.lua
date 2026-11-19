@@ -10,8 +10,9 @@
 --   attack_curve = function(t) return t * t end
 local slope = {}
 
--- 0 is linear, higher moves faster at the start of the stage,
--- negative faster at the end
+-- 0 is linear;
+-- positive moves faster at the start,
+-- negative faster at the end.
 function slope.exponential(curve)
 	-- exp(0) == 1 would divide by zero
 	if curve == 0 then

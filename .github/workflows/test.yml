@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# Cancel for newer runs on non-main branches.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # mise prefixes parallel task output with the task's label, and Actions only
 # reads a workflow command such as ::error:: at the start of a line.
 # One task at a time, unprefixed, keeps every annotation.
