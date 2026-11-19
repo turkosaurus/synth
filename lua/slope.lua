@@ -1,3 +1,5 @@
+-- slope defines linear and exponential slopes,
+-- composed into waves, envelopes, and other time-varying values.
 local slope = {}
 
 -- 0 is linear, higher is steeper, negative bends the other way

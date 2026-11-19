@@ -1,3 +1,6 @@
+-- Attack, Decay, Sustain, Release (ADSR) envelope generator,
+-- defined as a table of parameters and first-class functions,
+-- dispatched to Rust to produce pitched audio.
 local slope = require("synth.slope")
 
 local new -- the constructor, defined below
