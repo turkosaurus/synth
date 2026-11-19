@@ -268,6 +268,9 @@ fn resolve_behind(
 
     let mut input = std::io::stdin().lock();
     let mut output = std::io::stdout();
+    // escape codes only for a terminal; crossterm also drops them for
+    // NO_COLOR
+    let color = output.is_terminal();
     for (name, outcome) in wrote {
         if *outcome != Wrote::KeptBehind {
             continue;
@@ -279,6 +282,7 @@ fn resolve_behind(
             &stale.path,
             &stale.copy,
             stale.built_in,
+            color,
             &mut input,
             &mut output,
         )?;

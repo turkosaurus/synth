@@ -2,6 +2,8 @@
 //! holds against the new built-in. The files are a few hundred lines, so
 //! the plain longest-common-subsequence table is fast enough.
 
+use crossterm::style::{StyledContent, Stylize};
+
 /// One line of the comparison.
 #[derive(Debug, PartialEq)]
 enum Line<'a> {
@@ -50,8 +52,14 @@ fn compare<'a>(yours: &'a str, new: &'a str) -> Vec<Line<'a>> {
 /// The changes between `yours` and `new`, each with `context` unchanged
 /// lines around it: `-` for a line only in yours, `+` for one only in the
 /// new built-in, and `@@ line N @@` where a group starts in yours.
-/// Empty when the two are the same.
-pub(crate) fn diff(yours: &str, new: &str, context: usize) -> String {
+/// Empty when the two are the same. With `color`, removed lines are red,
+/// added ones green, and group headers cyan; crossterm leaves the colors
+/// out when `NO_COLOR` is set.
+pub(crate) fn diff(yours: &str, new: &str, context: usize, color: bool) -> String {
+    let paint = |text: String, as_color: fn(String) -> StyledContent<String>| match color {
+        true => format!("{}\n", as_color(text)),
+        false => format!("{text}\n"),
+    };
     let lines = compare(yours, new);
     let changed: Vec<bool> = lines
         .iter()
@@ -75,7 +83,10 @@ pub(crate) fn diff(yours: &str, new: &str, context: usize) -> String {
             continue;
         }
         if !in_group {
-            out.push_str(&format!("@@ line {} @@\n", yours_line + 1));
+            out.push_str(&paint(
+                format!("@@ line {} @@", yours_line + 1),
+                Stylize::cyan,
+            ));
             in_group = true;
         }
         match line {
@@ -84,10 +95,10 @@ pub(crate) fn diff(yours: &str, new: &str, context: usize) -> String {
                 yours_line += 1;
             }
             Line::Yours(text) => {
-                out.push_str(&format!("- {text}\n"));
+                out.push_str(&paint(format!("- {text}"), Stylize::red));
                 yours_line += 1;
             }
-            Line::New(text) => out.push_str(&format!("+ {text}\n")),
+            Line::New(text) => out.push_str(&paint(format!("+ {text}"), Stylize::green)),
         }
     }
     out
@@ -99,7 +110,7 @@ mod tests {
 
     #[test]
     fn the_same_text_has_no_diff() {
-        assert_eq!(diff("a\nb\n", "a\nb\n", 2), "");
+        assert_eq!(diff("a\nb\n", "a\nb\n", 2, false), "");
     }
 
     #[test]
@@ -107,7 +118,7 @@ mod tests {
         let yours = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n";
         let new = "one\ntwo\nthree\nFOUR\nfive\nsix\nseven\n";
         assert_eq!(
-            diff(yours, new, 1),
+            diff(yours, new, 1, false),
             "@@ line 3 @@\n  three\n- four\n+ FOUR\n  five\n"
         );
     }
@@ -116,15 +127,27 @@ mod tests {
     fn changes_far_apart_are_separate_groups() {
         let yours = "a\nb\nc\nd\ne\nf\ng\nh\n";
         let new = "A\nb\nc\nd\ne\nf\ng\nH\n";
-        let out = diff(yours, new, 1);
+        let out = diff(yours, new, 1, false);
         assert_eq!(out.matches("@@").count(), 4, "two groups: {out}");
         assert!(out.starts_with("@@ line 1 @@\n- a\n+ A\n  b\n"), "{out}");
         assert!(out.ends_with("@@ line 7 @@\n  g\n- h\n+ H\n"), "{out}");
     }
 
     #[test]
+    fn color_marks_each_kind_of_line() {
+        let out = diff("a\n", "b\n", 0, true);
+        // red, green and cyan, unless NO_COLOR is set where the test runs
+        if std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty()) {
+            assert!(out.contains("\u{1b}[38;5;9m- a"), "{out:?}");
+            assert!(out.contains("\u{1b}[38;5;10m+ b"), "{out:?}");
+            assert!(out.contains("\u{1b}[38;5;14m@@"), "{out:?}");
+        }
+        assert_eq!(diff("a\n", "b\n", 0, false), "@@ line 1 @@\n- a\n+ b\n");
+    }
+
+    #[test]
     fn added_and_removed_lines() {
-        assert_eq!(diff("a\nc\n", "a\nb\nc\n", 0), "@@ line 2 @@\n+ b\n");
-        assert_eq!(diff("a\nb\nc\n", "a\nc\n", 0), "@@ line 2 @@\n- b\n");
+        assert_eq!(diff("a\nc\n", "a\nb\nc\n", 0, false), "@@ line 2 @@\n+ b\n");
+        assert_eq!(diff("a\nb\nc\n", "a\nc\n", 0, false), "@@ line 2 @@\n- b\n");
     }
 }

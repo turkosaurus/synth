@@ -20,13 +20,14 @@ pub enum Choice {
 }
 
 /// Asks whether to overwrite `path`, the user's `copy`, with `new`. `d`
-/// shows the difference and asks again; anything else unrecognised asks
-/// again. The end of input keeps the copy, so nothing is lost when no one
-/// is there to answer.
+/// shows the difference, colored when `color` is set, and asks again;
+/// anything else unrecognised asks again. The end of input keeps the copy,
+/// so nothing is lost when no one is there to answer.
 pub fn overwrite(
     path: &Path,
     copy: &str,
     new: &str,
+    color: bool,
     input: &mut impl BufRead,
     output: &mut impl Write,
 ) -> io::Result<Choice> {
@@ -47,7 +48,7 @@ pub fn overwrite(
             "n" | "no" => return Ok(Choice::Keep),
             "d" | "diff" => {
                 writeln!(output, "--- yours\n+++ new default")?;
-                write!(output, "{}", diff(copy, new, CONTEXT))?;
+                write!(output, "{}", diff(copy, new, CONTEXT, color))?;
             }
             _ => writeln!(
                 output,
@@ -67,6 +68,7 @@ mod tests {
             Path::new("patches/synth/envelope.lua"),
             "attack = 5\n",
             "attack = 15\n",
+            false,
             &mut answers.as_bytes(),
             &mut output,
         )
