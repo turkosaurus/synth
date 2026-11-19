@@ -237,26 +237,6 @@ fn instrument_sticks_until_a_step_changes_it() {
     assert_ne!(used[1], used[2], "step 3 switches");
 }
 
-#[test]
-fn an_unknown_instrument_name_is_rejected() {
-    let source = r#"
-        local sequence = require("synth.sequence")
-        local instrument = require("synth.instrument")
-        return sequence({
-            bpm = 60,
-            instruments = { a = instrument({}) },
-            steps = { { note = 69, instrument = "nope" } },
-        })
-    "#;
-    let error = load_source(source, "test", 48000)
-        .err()
-        .expect("instrument `nope` is not defined");
-    assert!(
-        format!("{error:#}").contains("not defined"),
-        "unexpected: {error:#}"
-    );
-}
-
 fn with_voices(voice_count: &str) -> anyhow::Result<Patch> {
     let source = format!(
         r#"
@@ -282,15 +262,6 @@ fn voice_count_defaults_to_mono() {
 fn voice_count_reaches_the_instrument() {
     let patch = with_voices("voice_count = 8").unwrap();
     assert_eq!(patch.timeline.instruments[0].voice_count, 8);
-}
-
-#[test]
-fn zero_voices_is_rejected() {
-    let error = with_voices("voice_count = 0").err().expect("0 voices");
-    assert!(
-        format!("{error:#}").contains("`voice_count` is 0; must be at least 1"),
-        "unexpected: {error:#}"
-    );
 }
 
 #[test]
@@ -367,30 +338,6 @@ fn changing_offset_keeps_the_anchor_on_pitch() {
 
     assert_eq!(patch.keymap.notes.get(&'a'), Some(&69), "anchor holds");
     assert_eq!(patch.keymap.notes.get(&'q'), Some(&76), "a 5th above");
-}
-
-#[test]
-fn an_explicit_shifted_row_of_the_wrong_length_is_rejected() {
-    // derived rows cannot mismatch; an override still can, so the
-    // validation stays as a guard on that one path
-    let source = r#"
-        local instrument = require("synth.instrument")
-        local keyboard = require("synth.keyboard")
-        return instrument({
-            keyboard = keyboard({
-                layout = keyboard.grid({
-                    template = { anchor = "a", rows = { "asdfghjkl" }, shifted = { "ASD" } },
-                }),
-            }),
-        })
-    "#;
-    let error = load_source(source, "test", 48000)
-        .err()
-        .expect("row and its shifted form differ in length");
-    assert!(
-        format!("{error:#}").contains("differ in length"),
-        "unexpected: {error:#}"
-    );
 }
 
 /// Loads an instrument whose keyboard is `keyboard`, a Lua expression.
@@ -517,17 +464,6 @@ fn a_keyboard_control_replaces_the_layouts() {
 }
 
 #[test]
-fn a_control_override_on_a_note_key_is_named() {
-    let error = with_keyboard(r#"synth.keyboard({ help = { "q" } })"#)
-        .err()
-        .expect("q plays a note on qwerty");
-    assert!(
-        format!("{error:#}").contains("on 'q', which keyboard.layout.help also binds"),
-        "unexpected: {error:#}"
-    );
-}
-
-#[test]
 fn the_keyboard_starts_an_octave_down_by_default() {
     let keymap = with_keyboard("synth.keyboard({})").unwrap().keymap;
     assert_eq!(
@@ -566,38 +502,6 @@ fn an_octave_out_of_bounds_is_named() {
 }
 
 #[test]
-fn a_key_that_is_both_a_note_and_a_control_is_named() {
-    let error = with_keyboard(
-        r#"synth.keyboard({ layout = {
-            notes = { ["="] = 60 }, octave_up = { "=" }, octave_down = {}, help = {},
-        } })"#,
-    )
-    .err()
-    .expect("= is octave_up");
-    assert!(
-        format!("{error:#}").contains(
-            "keyboard.layout plays note 60 on '=', which keyboard.layout.octave_up also binds"
-        ),
-        "unexpected: {error:#}"
-    );
-}
-
-#[test]
-fn a_notes_key_longer_than_one_character_is_named() {
-    let error = with_keyboard(
-        r"synth.keyboard({ layout = {
-            notes = { ab = 60 }, octave_up = {}, octave_down = {}, help = {},
-        } })",
-    )
-    .err()
-    .expect("a two-character key cannot be pressed");
-    assert!(
-        format!("{error:#}").contains("key 'ab' must be one character"),
-        "unexpected: {error:#}"
-    );
-}
-
-#[test]
 fn a_note_outside_midi_is_named() {
     for (note, shown) in [("128", "128"), ("-1", "-1"), ("60.5", "60.5")] {
         let error = with_keyboard(&format!(
@@ -612,29 +516,6 @@ fn a_note_outside_midi_is_named() {
             "unexpected: {error:#}"
         );
     }
-}
-
-#[test]
-fn the_grid_names_an_unknown_field() {
-    let error = with_keyboard("synth.keyboard({ layout = synth.keyboard.grid({ offest = 7 }) })")
-        .err()
-        .expect("offest is misspelled");
-    assert!(
-        format!("{error:#}").contains("keyboard.grid: unknown field 'offest'"),
-        "unexpected: {error:#}"
-    );
-}
-
-#[test]
-fn grid_fields_on_the_keyboard_are_named() {
-    // the keyboard used to take these directly; they now belong to the grid
-    let error = with_keyboard("synth.keyboard({ offset = 7 })")
-        .err()
-        .expect("offset is a grid field");
-    assert!(
-        format!("{error:#}").contains("unknown field `offset`"),
-        "unexpected: {error:#}"
-    );
 }
 
 #[test]
@@ -672,30 +553,6 @@ fn constructors_leave_the_callers_table_alone() {
         return synth.instrument({ envelope = first })
     "#;
     load_source(source, "test", 48000).unwrap();
-}
-
-#[test]
-fn the_old_new_entry_points_are_gone() {
-    let source = r#"
-        local synth = require("synth")
-        return synth.instrument.new({})
-    "#;
-    assert!(load_source(source, "test", 48000).is_err());
-}
-
-#[test]
-fn tuning_equal_rejects_unknown_fields() {
-    let source = r#"
-        local synth = require("synth")
-        return synth.instrument({ tuning = synth.tuning.equal({ A4 = 440 }) })
-    "#;
-    let error = load_source(source, "test", 48000)
-        .err()
-        .expect("A4 is the old name");
-    assert!(
-        format!("{error:#}").contains("unknown field 'A4'"),
-        "unexpected: {error:#}"
-    );
 }
 
 #[test]
@@ -776,24 +633,6 @@ fn a_reused_pattern_resolves_to_the_same_instrument_each_time() {
     assert_ne!(used[0], used[1], "`y` switches away");
 }
 
-#[test]
-fn a_chain_naming_an_undefined_pattern_is_rejected() {
-    let source = r#"
-        local sequence = require("synth.sequence")
-        return sequence({
-            patterns = { x = {} },
-            chain = { "nope" },
-        })
-    "#;
-    let error = load_source(source, "test", 48000)
-        .err()
-        .expect("pattern `nope` is not defined");
-    assert!(
-        format!("{error:#}").contains("not defined"),
-        "unexpected: {error:#}"
-    );
-}
-
 // The slopes are Lua, so they are exercised through a real bake. Rate
 // 1000 makes milliseconds map 1:1 to samples, so `ms` is the step count.
 // attack rises 0 -> 1, release falls sustain -> 0.
@@ -855,27 +694,6 @@ fn an_exponential_slope_runs_in_both_directions() {
     }
     // the classic quick drop and long tail: past halfway in one eighth
     assert!(release[1] < 0.7);
-}
-
-#[test]
-fn handing_over_a_slope_constructor_uncalled_is_caught() {
-    // the mistake is the missing (), which Rust then calls with three
-    // arguments; the guard names it rather than failing on a type
-    let source = r#"
-        local slope = require("synth.slope")
-        local instrument = require("synth.instrument")
-        local envelope = require("synth.envelope")
-        return instrument({
-            envelope = envelope({ attack = 10, attack_curve = slope.exponential }),
-        })
-    "#;
-    let error = load_source(source, "test", 1000)
-        .err()
-        .expect("slope.exponential handed over uncalled");
-    assert!(
-        format!("{error:#}").contains("it is not one itself"),
-        "unexpected: {error:#}"
-    );
 }
 
 #[test]
@@ -1018,15 +836,6 @@ fn with_filter(filter: &str) -> anyhow::Result<Patch> {
     load_source(&source, "test", 48000)
 }
 
-#[track_caller]
-fn rejects(filter: &str, needle: &str) {
-    let error = with_filter(filter).err().expect("should be rejected");
-    assert!(
-        format!("{error:#}").contains(needle),
-        "expected `{needle}` in: {error:#}"
-    );
-}
-
 #[test]
 fn no_filter_means_none() {
     assert_eq!(with_filter("").unwrap().filter, None);
@@ -1074,29 +883,6 @@ fn filter_in_sequence_file() {
     "#;
     let patch = load_source(source, "test", 48000).unwrap();
     assert_eq!(patch.filter.unwrap().kind, crate::spec::Kind::Highpass);
-}
-
-#[test]
-fn misspelled_filter_field_is_named() {
-    rejects("filter.lowpass({ cutoff = 800, cutof = 900 })", "cutof");
-}
-
-#[test]
-fn gain_on_lowpass_is_rejected() {
-    rejects("filter.lowpass({ cutoff = 800, gain = 3 })", "gain");
-}
-
-#[test]
-fn resonance_out_of_range_is_rejected() {
-    rejects(
-        "filter.lowpass({ cutoff = 800, resonance = 1.5 })",
-        "resonance",
-    );
-}
-
-#[test]
-fn cutoff_must_be_positive() {
-    rejects("filter.lowpass({ cutoff = 0 })", "cutoff");
 }
 
 #[test]
@@ -1157,17 +943,6 @@ fn the_root_reexports_every_module() {
     }
 }
 
-// expects `load_source` to fail with a message containing `needle`
-fn rejects_patch(source: &str, needle: &str) {
-    let error = load_source(source, "test", 48000)
-        .err()
-        .unwrap_or_else(|| panic!("expected an error containing {needle:?}"));
-    assert!(
-        format!("{error:#}").contains(needle),
-        "unexpected: {error:#}"
-    );
-}
-
 #[test]
 fn structure_records_every_constructed_table_by_path() {
     let source = r#"
@@ -1189,47 +964,6 @@ fn structure_records_every_constructed_table_by_path() {
             ("instruments.tri", "instrument", "song.lua:3"),
             ("instruments.tri.envelope", "envelope", "song.lua:3"),
         ]
-    );
-}
-
-#[test]
-fn a_plain_root_is_rejected() {
-    rejects_patch("return {}", "a patch must return synth.instrument");
-}
-
-#[test]
-fn a_plain_table_where_a_kind_belongs_names_the_constructor() {
-    rejects_patch(
-        r#"
-        local synth = require("synth")
-        return synth.instrument({ envelope = { attack = 5 } })
-        "#,
-        "envelope: expected an envelope, got a plain table; build it with synth.envelope({…})",
-    );
-}
-
-#[test]
-fn the_wrong_kind_names_where_it_was_made() {
-    rejects_patch(
-        r#"
-        local synth = require("synth")
-        local keys = synth.keyboard({})
-        return synth.instrument({ envelope = keys })
-        "#,
-        "envelope: expected an envelope, got a keyboard made at test:3",
-    );
-}
-
-#[test]
-fn a_cycle_is_rejected() {
-    rejects_patch(
-        r#"
-        local synth = require("synth")
-        local loop = {}
-        loop.self = loop
-        return synth.instrument({ extra = loop })
-        "#,
-        "contains itself",
     );
 }
 
@@ -1263,52 +997,6 @@ fn diagnostics_name_the_line_that_built_the_value() {
     assert_eq!(peak.at.as_deref(), Some("song.lua:5"));
     let cutoff = &patch.filter_report.as_ref().unwrap().diagnostics[0];
     assert_eq!(cutoff.at.as_deref(), Some("song.lua:8"));
-}
-
-#[test]
-fn out_of_range_values_name_the_field_and_the_line() {
-    rejects_patch(
-        r#"
-        local synth = require("synth")
-        return synth.instrument({
-            envelope = synth.envelope({ sustain = 1.5 }),
-        })
-        "#,
-        "envelope made at test:4: `sustain` is 1.5; must be 0 to 1",
-    );
-    rejects_patch(
-        r#"
-        local synth = require("synth")
-        return synth.instrument({ keyboard = synth.keyboard({ velocity = 0 }) })
-        "#,
-        "keyboard made at test:3: `velocity` is 0; must be 1 to 127",
-    );
-}
-
-#[test]
-fn a_bad_step_is_named_by_its_position() {
-    rejects_patch(
-        r#"
-        local synth = require("synth")
-        return synth.sequence({
-            instruments = { a = synth.instrument({}) },
-            instrument = "a",
-            steps = { { note = 60 }, { note = 200 } },
-        })
-        "#,
-        "step 2: `note` is 200; must be 0 to 127",
-    );
-}
-
-#[test]
-fn a_fractional_count_is_rejected() {
-    rejects_patch(
-        r#"
-        local synth = require("synth")
-        return synth.instrument({ voice_count = 2.5 })
-        "#,
-        "`voice_count` must be a whole number, got 2.5",
-    );
 }
 
 /// Calls a constructor module, which is a table with `__call`, as Lua would.
@@ -1393,13 +1081,43 @@ fn a_module_name_cannot_leave_its_folder() {
     }
 }
 
+/// Every patch in `tests/lua/reject/` fails to load with the error on its
+/// first line, `-- expect: …`, where `{file}` stands for the file's name.
+/// Each file is loaded under its bare name, so an expected error never
+/// holds a path that differs between machines.
 #[test]
-fn an_unknown_built_in_is_named() {
-    let error = load_source("return require('synth.nope')", "test", 48000)
-        .err()
-        .expect("no such built-in");
-    assert!(
-        format!("{error:#}").contains("no built-in module 'synth.nope'"),
-        "{error:#}"
-    );
+fn every_rejected_patch_fails_with_its_expected_error() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lua/reject");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "lua"))
+        .collect();
+    files.sort();
+    assert!(!files.is_empty(), "no cases in {}", dir.display());
+
+    let mut failures = Vec::new();
+    for path in &files {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let source = std::fs::read_to_string(path).unwrap();
+        let Some(expected) = source
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("-- expect: "))
+        else {
+            failures.push(format!("{name}: the first line must be `-- expect: …`"));
+            continue;
+        };
+        let expected = expected.replace("{file}", &name);
+        match load_source(&source, &name, 48000) {
+            Ok(_) => failures.push(format!("{name}: loaded, expected `{expected}`")),
+            Err(error) => {
+                let message = format!("{error:#}");
+                if !message.contains(&expected) {
+                    failures.push(format!("{name}: expected `{expected}`\n    got {message}"));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
