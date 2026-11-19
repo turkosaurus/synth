@@ -1,5 +1,4 @@
-//! Editable copies of the built-in modules, in `synth/` under the patches
-//! folder.
+//! Editable copies of the built-in modules, in `synth/` under the patches folder.
 //!
 //! `.base.sha256` records the hash of the built-in each copy was written
 //! from, in `sha256sum`'s format, so `sha256sum -c .base.sha256` lists the
