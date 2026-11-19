@@ -1,12 +1,12 @@
 -- A curve is a shape: a function from t (0..1) across one envelope stage,
--- to how far along that stage's change the envelope is (also 0..1). 
--- Rust samples and scales a curve to each stage, so one curve serves 
--- a rising attack and a falling release alike. 
+-- to how far along that stage's change the envelope is (also 0..1).
+-- Rust samples and scales a curve to each stage, so one curve serves
+-- a rising attack and a falling release alike.
 -- Any function of that shape works:
 --   attack_curve = function(t) return t * t end
 local slope = {}
 
--- 0 is linear, higher moves faster at the start of the stage, 
+-- 0 is linear, higher moves faster at the start of the stage,
 -- negative faster at the end
 function slope.exponential(curve)
 	-- exp(0) == 1 would divide by zero
