@@ -2,7 +2,7 @@
 -- composed into waves, envelopes, and other time-varying values.
 --
 -- A curve is a shape;
--- a function from t (0..1; x-axis, time through an envelope stage) 
+-- a function from t (0..1; x-axis, time through an envelope stage)
 -- to progression through the envelope's amplitude (also 0..1; y-axis, level).
 -- Rust samples and scales a curve to each stage, so one curve serves
 -- a rising attack and a falling release alike.
