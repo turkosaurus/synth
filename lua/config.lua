@@ -4,6 +4,7 @@ return {
 	queue = 256, -- events buffered between input and audio
 	-- folder of your own patches ("": ~/.local/share/synth/patches, or
 	-- %APPDATA%\synth\patches on Windows); in a path, write \ as / or \\
+	-- patch_dir = [[{default}]]
 	patch_dir = "",
 	tui = {
 		poll = 16, -- ms between redraws and key reads

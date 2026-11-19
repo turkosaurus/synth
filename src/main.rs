@@ -211,7 +211,7 @@ fn edit_config() -> anyhow::Result<ExitCode> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
         }
-        std::fs::write(&path, script::CONFIG_TEMPLATE)
+        std::fs::write(&path, script::config_template())
             .with_context(|| format!("write {}", path.display()))?;
     }
 

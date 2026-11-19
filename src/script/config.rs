@@ -79,8 +79,30 @@ fn under(dir: PathBuf, parts: &[&str]) -> PathBuf {
 
 /// The defaults, and what `synth config` writes when there is no file yet.
 /// A user's file is laid over it, so it need set only what it changes.
-pub const TEMPLATE: &str = include_str!("../../lua/config.lua");
+const TEMPLATE: &str = include_str!("../../lua/config.lua");
 const TEMPLATE_NAME: &str = "config.lua (built in)";
+/// Stands in for the default patches folder in [`TEMPLATE`]'s comment.
+const DEFAULT_PATCH_DIR: &str = "{default}";
+
+/// [`TEMPLATE`] as `synth config` writes it, with the default patches
+/// folder filled in, so the file shows a real path in the form to copy.
+pub fn template() -> String {
+    template_for(&Dirs::current())
+}
+
+/// The line naming the default is dropped when there is no data directory,
+/// or when the path holds `]]` and would end the long string early.
+fn template_for(dirs: &Dirs) -> String {
+    let dir = patch_dir("", dirs).ok().flatten();
+    match dir.map(|dir| dir.display().to_string()) {
+        Some(dir) if !dir.contains("]]") => TEMPLATE.replace(DEFAULT_PATCH_DIR, &dir),
+        _ => TEMPLATE
+            .lines()
+            .filter(|line| !line.contains(DEFAULT_PATCH_DIR))
+            .map(|line| format!("{line}\n"))
+            .collect(),
+    }
+}
 
 /// Reads `config.lua` from the user's config directory over the defaults.
 /// A missing file, or no directory to look in, is the defaults alone.
@@ -344,6 +366,18 @@ mod tests {
             Some(abs("/h/.local/share/synth/patches"))
         );
         assert_eq!(patches("", Some("d"), None), None);
+    }
+
+    #[test]
+    fn the_template_names_the_default_patches_folder() {
+        let dir = abs("/d/synth/patches").display().to_string();
+        let written = template_for(&unix(Some("/d"), None));
+        assert!(written.contains(&format!("-- patch_dir = [[{dir}]]")));
+        assert!(!written.contains(DEFAULT_PATCH_DIR));
+
+        let written = template_for(&unix(None, None));
+        assert!(!written.contains("-- patch_dir"));
+        assert!(written.contains("\tpatch_dir = \"\""));
     }
 
     #[test]
