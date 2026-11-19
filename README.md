@@ -92,7 +92,7 @@ sequenceDiagram
 
 Lua waveforms are built as a single oscillation across `TABLE_SIZE` samples, expected to be sub-sonic, such that one can produce a particular pitch by selecting 1-in-10 samples, then produce a pitch one octave higher by selecting 1-in-20 samples. Phase is usually fractional, so playback interpolates between neighbouring entries.
 
-Lua states the two shapes differently. A waveform is a function of phase, so Rust calls it once per point across the table. An envelope segment is a function of its endpoints and length, so Rust calls it once and Lua returns the whole run.
+Lua states both shapes as functions Rust samples. A waveform is a function of phase, so Rust calls it once per point across the table. An envelope curve is a function of t, from 0 to 1 across one stage, so Rust calls it once per point of the stage and scales the result from the stage's start level to its end.
 
 2048 points means every note above 23.4 Hz advances at least one entry per output sample, so no playable pitch stretches the shape; at 8 KB it also stays in L1.
 
