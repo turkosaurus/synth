@@ -13,7 +13,7 @@ curl -fsSL https://raw.githubusercontent.com/turkosaurus/synth/main/install.sh |
 
 [`install.sh`](./install.sh) downloads and verifies the latest stable release, installing it to `$XDG_BIN_HOME`, or `~/.local/bin`.
 
-> [NOTE!]
+> [!NOTE]
 > `update` and `uninstall` act on the binary being run; defer to package manager if installed through one.
 
 ## requirements
