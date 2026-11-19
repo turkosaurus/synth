@@ -1,3 +1,4 @@
+-- expect: keyboard.layout.notes: key 'ab' must be one character
 -- a key event carries one character, so "ab" could never be pressed
 local synth = require("synth")
 return synth.instrument({

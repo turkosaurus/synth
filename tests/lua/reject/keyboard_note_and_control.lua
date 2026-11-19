@@ -1,3 +1,4 @@
+-- expect: keyboard.layout plays note 60 on '=', which keyboard.layout.octave_up also binds
 local synth = require("synth")
 return synth.instrument({
 	keyboard = synth.keyboard({
