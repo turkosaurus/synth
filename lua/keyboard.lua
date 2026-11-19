@@ -165,7 +165,8 @@ keyboard.colemak = keyboard.grid({ template = keyboard.templates.colemak })
 local defaults = {
 	-- `{ name, notes, octave_up, octave_down, help }`, where `notes` maps
 	-- each character to a MIDI note. Rust reads only this table, so a patch
-	-- may write its own. `help` may be empty.
+	-- may write its own. `help` may be empty. `octave_up`, `octave_down`, and
+	-- `help` given on the keyboard itself replace the layout's.
 	layout = keyboard.qwerty,
 	stop = { "escape" }, -- silence everything; must not be empty
 	-- note length when the terminal cannot report key release
@@ -194,6 +195,25 @@ new = function(opts)
 			out[key] = default
 		end
 	end
+
+	-- `octave_up`, `octave_down`, and `help` on the keyboard replace the
+	-- layout's. The layout is copied first, so a shared one such as
+	-- `keyboard.qwerty` is left alone.
+	local layout
+	for _, key in ipairs({ "octave_up", "octave_down", "help" }) do
+		-- a layout that is not a table is left for Rust to name
+		if out[key] ~= nil and type(out.layout) == "table" then
+			if layout == nil then
+				layout = {}
+				for k, v in pairs(out.layout) do
+					layout[k] = v
+				end
+			end
+			layout[key] = out[key]
+			out[key] = nil
+		end
+	end
+	out.layout = layout or out.layout
 	return out
 end
 

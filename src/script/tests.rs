@@ -497,6 +497,37 @@ fn a_layout_brings_its_own_control_keys() {
 }
 
 #[test]
+fn a_keyboard_control_replaces_the_layouts() {
+    let source = r#"
+        local synth = require("synth")
+        local patch = synth.instrument({
+            waveform = synth.wave.triangle,
+            envelope = synth.envelope({}),
+            keyboard = synth.keyboard({ layout = synth.keyboard.qwerty, octave_up = { "]" } }),
+        })
+        -- the shared layout is copied, not changed
+        assert(synth.keyboard.qwerty.octave_up[1] == "=")
+        return patch
+    "#;
+    let keymap = load_source(source, "test", 48000).unwrap().keymap;
+
+    assert_eq!(keymap.octave_up, vec![Key::Char(']')]);
+    assert_eq!(keymap.octave_down, vec![Key::Char('-'), Key::Char('_')]);
+    assert_eq!(keymap.name.as_deref(), Some("qwerty"));
+}
+
+#[test]
+fn a_control_override_on_a_note_key_is_named() {
+    let error = with_keyboard(r#"synth.keyboard({ help = { "q" } })"#)
+        .err()
+        .expect("q plays a note on qwerty");
+    assert!(
+        format!("{error:#}").contains("on 'q', which keyboard.layout.help also binds"),
+        "unexpected: {error:#}"
+    );
+}
+
+#[test]
 fn a_key_that_is_both_a_note_and_a_control_is_named() {
     let error = with_keyboard(
         r#"synth.keyboard({ layout = {
