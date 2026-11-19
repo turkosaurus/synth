@@ -37,10 +37,10 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # compiles the #[cfg(windows)] and #[cfg(target_os = "macos")] code
-      # nothing on Linux does
-      - name: Lint
-        run: mise run lint:rust
-
+      # compiles and runs the #[cfg(windows)] and #[cfg(target_os = "macos")]
+      # code nothing on Linux does
       - name: Test
         run: mise run test:rust
+
+      - name: Lint
+        run: mise run lint:rust
