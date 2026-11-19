@@ -437,12 +437,11 @@ fn state(keyboard: &Keyboard, freqs: &[f32], gating: Gating) -> Table<'static> {
     };
 
     let keymap = keyboard.keymap();
-    let layout = match keymap.template.as_deref() {
+    let layout = match keymap.name.as_deref() {
         Some(name) => (name.to_string(), Style::new().fg(Color::Reset)),
-        // a patch supplying its own rows has no name to report
+        // a patch supplying its own notes without a name
         None => ("custom".to_string(), dim),
     };
-    let offset = (format!("{} semitones", keymap.offset), dim);
 
     let rows = [
         ("note", note),
@@ -450,7 +449,6 @@ fn state(keyboard: &Keyboard, freqs: &[f32], gating: Gating) -> Table<'static> {
         ("octave", octave),
         ("gating", gating),
         ("layout", layout),
-        ("offset", offset),
     ];
     // fixed rather than measured, so the table's width matches the pane's
     // and neither drifts when a row is added

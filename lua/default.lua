@@ -16,6 +16,8 @@ return synth.instrument({
 	voice_count = 4,
 	tuning = synth.tuning.equal({ reference_hz = 440, reference_note = 69, tones = 12 }),
 	keyboard = synth.keyboard({
+		-- qwerty, qwertz, azerty, dvorak, colemak, or your own (see keyboard.lua)
+		layout = synth.keyboard.qwerty,
 		gate = 400, -- ms; note length when the terminal cannot report key release
 	}),
 })

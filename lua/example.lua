@@ -5,6 +5,19 @@ return synth.sequence({
 	division = 4, -- subdivisions per beat; 4 = 16th notes, 8 = 32nd notes, etc.
 	instrument = "tri", -- default for every pattern; stickiness resets per pattern
 	filter = synth.filter.lowpass({ cutoff = 2000, resonance = 0.3 }), -- on the summed output
+	keyboard = synth.keyboard({
+		-- qwerty, qwertz, azerty, dvorak, colemak, or your own (see keyboard.lua)
+		layout = synth.keyboard.qwerty,
+		-- replace the layout's octave keys; a key name or a single character
+		octave_up = { "pageup" },
+		octave_down = { "pagedown" },
+		octave_range = 4, -- octaves either way from the start
+		help = { "/", "?" },
+		stop = { "escape" }, -- silence everything; must not be empty
+		gate = 200, -- ms; note length when the terminal cannot report key release
+		repeat_window = 550, -- ms; a repeat press this soon is OS autorepeat
+		velocity = 100, -- 1 to 127, for every note
+	}),
 
 	instruments = {
 		tri = synth.instrument({

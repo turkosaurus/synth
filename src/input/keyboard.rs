@@ -289,8 +289,7 @@ mod tests {
     fn keyboard(gating: Gating, gate: Duration) -> (Keyboard, rtrb::Consumer<Event>) {
         let keymap = Keymap {
             notes: HashMap::from([('a', 60), ('s', 62), ('A', 72)]),
-            template: None,
-            offset: 5,
+            name: None,
             octave_up: vec![],
             octave_down: vec![],
             stop: vec![Key::Backspace],

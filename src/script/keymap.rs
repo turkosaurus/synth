@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::Context;
 
 use crate::spec::{Key, Keymap};
@@ -7,13 +9,8 @@ use crate::spec::{Key, Keymap};
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct KeyboardConfig {
-    anchor: Anchor,
-    offset: i32,
-    template: Template,
-    octave_up: Vec<String>,
-    octave_down: Vec<String>,
+    layout: Layout,
     stop: Vec<String>,
-    help: Vec<String>,
     // ms, implied rather than spelled in the Lua name
     #[serde(rename = "gate")]
     gate_ms: f64,
@@ -23,24 +20,21 @@ struct KeyboardConfig {
     octave_range: i32,
 }
 
-/// The physical grid, kept nested because rows and their shifted forms are
-/// one unit: a template is a layout, not two parallel lists.
+/// Which character plays which note, and which keys a layout keeps for
+/// control, since a key one layout spends on a note another spends on an
+/// octave.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Template {
-    /// Absent when a patch supplies its own rows rather than naming one of
-    /// the built-in layouts.
+struct Layout {
+    /// Absent when a patch writes its own `notes` without naming them.
     #[serde(default)]
     name: Option<String>,
-    rows: Vec<String>,
-    shifted: Vec<String>,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Anchor {
-    key: String,
-    note: i32,
+    /// Character to MIDI note. A float survives here so the range check
+    /// below can name it, rather than serde rejecting it unnamed.
+    notes: HashMap<String, f64>,
+    octave_up: Vec<String>,
+    octave_down: Vec<String>,
+    help: Vec<String>,
 }
 
 pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Keymap> {
@@ -49,52 +43,7 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
         mlua::LuaSerdeExt::from_value(lua, mlua::Value::Table(table.clone()))
             .context("keyboard layout")?;
 
-    anyhow::ensure!(
-        config.template.rows.len() == config.template.shifted.len(),
-        "a template's rows and shifted must have the same number of rows"
-    );
-    let anchor_char = config
-        .anchor
-        .key
-        .chars()
-        .next()
-        .context("keyboard.anchor.key is empty")?;
-
-    // the anchor fixes the grid, so changing `offset` keeps that key on pitch
-    let mut base = None;
-    for (r, row) in config.template.rows.iter().enumerate() {
-        if let Some(c) = row.chars().position(|ch| ch == anchor_char) {
-            base = Some(config.anchor.note - r as i32 * config.offset - c as i32);
-        }
-    }
-    let base = base.with_context(|| {
-        format!("keyboard.anchor.key '{anchor_char}' does not appear in the template")
-    })?;
-
-    let mut notes = std::collections::HashMap::new();
-    for (r, (row, up)) in config
-        .template
-        .rows
-        .iter()
-        .zip(&config.template.shifted)
-        .enumerate()
-    {
-        anyhow::ensure!(
-            row.chars().count() == up.chars().count(),
-            "template row {} and its shifted form differ in length",
-            r + 1
-        );
-        for (c, (plain, raised)) in row.chars().zip(up.chars()).enumerate() {
-            let note = base + r as i32 * config.offset + c as i32;
-            if (0..128).contains(&note) {
-                notes.insert(plain, note as u8);
-            }
-            // the shifted form of a key is the same position, one octave up
-            if (0..128).contains(&(note + 12)) {
-                notes.insert(raised, (note + 12) as u8);
-            }
-        }
-    }
+    let notes = notes(config.layout.notes)?;
 
     // a binding is a character or a key name; an unrecognised name is an
     // error rather than a silently dead key
@@ -114,23 +63,65 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
         "keyboard.stop must name at least one key to silence with"
     );
 
+    let octave_up = bindings(config.layout.octave_up, "layout.octave_up")?;
+    let octave_down = bindings(config.layout.octave_down, "layout.octave_down")?;
+    // may be empty: a layout that would rather not spend a key on it
+    // just leaves help unreachable
+    let help = bindings(config.layout.help, "layout.help")?;
+
+    // a control is checked before a note, so a key bound to both never
+    // plays its note
+    for (what, keys) in [
+        ("layout.octave_up", &octave_up),
+        ("layout.octave_down", &octave_down),
+        ("stop", &stop),
+        ("layout.help", &help),
+    ] {
+        for key in keys {
+            if let Key::Char(ch) = key {
+                if let Some(note) = notes.get(ch) {
+                    anyhow::bail!(
+                        "keyboard.layout plays note {note} on '{ch}', \
+                         which keyboard.{what} also binds"
+                    );
+                }
+            }
+        }
+    }
+
     // gate, repeat_window, velocity, and octave_range ranges: schema::KEYBOARD
 
     Ok(Keymap {
         notes,
-        template: config.template.name,
-        offset: config.offset,
-        octave_up: bindings(config.octave_up, "octave_up")?,
-        octave_down: bindings(config.octave_down, "octave_down")?,
+        name: config.layout.name,
+        octave_up,
+        octave_down,
         stop,
-        // may be empty: a layout that would rather not spend a key on it
-        // just leaves help unreachable
-        help: bindings(config.help, "help")?,
+        help,
         gate: std::time::Duration::from_secs_f64(config.gate_ms / 1000.0),
         repeat: std::time::Duration::from_secs_f64(config.repeat_ms / 1000.0),
         velocity: config.velocity,
         octave_range: config.octave_range,
     })
+}
+
+/// Checks each entry of `notes`: one character to one MIDI note. A
+/// key event carries a single character, so a longer string could never
+/// be pressed.
+fn notes(raw: HashMap<String, f64>) -> anyhow::Result<HashMap<char, u8>> {
+    let mut notes = HashMap::with_capacity(raw.len());
+    for (key, note) in raw {
+        let mut chars = key.chars();
+        let (Some(ch), None) = (chars.next(), chars.next()) else {
+            anyhow::bail!("keyboard.layout.notes: key '{key}' must be one character");
+        };
+        anyhow::ensure!(
+            note.fract() == 0.0 && (0.0..=127.0).contains(&note),
+            "keyboard.layout.notes['{key}'] is {note}; must be a whole number 0 to 127"
+        );
+        notes.insert(ch, note as u8);
+    }
+    Ok(notes)
 }
 
 /// Parses a binding from the keymap. A single character is that key; anything
