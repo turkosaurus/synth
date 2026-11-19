@@ -121,8 +121,9 @@ pub(super) const INSTRUMENT: Schema = Schema {
 pub(super) const CONFIG: Schema = Schema {
     what: "config.lua",
     fields: &[
-        // the device decides the upper limit, checked when it opens
-        optional(field::BUFFER_FRAMES, Ty::Integer, Bound::AtLeast(1.0)),
+        // 0 leaves it to the platform; the device decides the upper limit,
+        // checked when it opens
+        optional(field::BUFFER_FRAMES, Ty::Integer, Bound::AtLeast(0.0)),
     ],
 };
 

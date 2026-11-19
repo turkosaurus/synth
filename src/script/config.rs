@@ -71,7 +71,10 @@ fn parse(source: &str, name: &str) -> anyhow::Result<Config> {
     super::schema::CONFIG.check(&table, None)?;
 
     Ok(Config {
-        buffer_frames: table.get(field::BUFFER_FRAMES)?,
+        // 0 asks for nothing, the same as leaving it out
+        buffer_frames: table
+            .get::<Option<u32>>(field::BUFFER_FRAMES)?
+            .filter(|&frames| frames > 0),
     })
 }
 
@@ -122,6 +125,12 @@ mod tests {
     }
 
     #[test]
+    fn zero_leaves_the_buffer_to_the_platform() {
+        let config = parse("return { buffer_frames = 0 }", "test").unwrap();
+        assert_eq!(config.buffer_frames, None);
+    }
+
+    #[test]
     fn buffer_frames_is_read() {
         let config = parse("return { buffer_frames = 128 }", "test").unwrap();
         assert_eq!(config.buffer_frames, Some(128));
@@ -130,7 +139,7 @@ mod tests {
     #[test]
     fn a_bad_value_is_named() {
         for (source, expected) in [
-            ("return { buffer_frames = 0 }", "`buffer_frames` is 0"),
+            ("return { buffer_frames = -1 }", "`buffer_frames` is -1"),
             (
                 "return { buffer_frames = 2.5 }",
                 "`buffer_frames` must be a whole number",

@@ -3,6 +3,6 @@
 -- settings in effect. Every setting is optional.
 return {
 	-- frames per audio callback; smaller is lower latency, larger is
-	-- steadier. Left out, the platform decides.
-	-- buffer_frames = 256,
+	-- steadier. 0 lets the platform decide.
+	buffer_frames = 0,
 }
