@@ -210,7 +210,9 @@ fn settings(table: &mlua::Table) -> anyhow::Result<Config> {
         queue: table.get(field::QUEUE)?,
         // absent is the default; "" says the same thing explicitly
         patch_dir: patch_dir(
-            &table.get::<Option<String>>(field::PATCH_DIR)?.unwrap_or_default(),
+            &table
+                .get::<Option<String>>(field::PATCH_DIR)?
+                .unwrap_or_default(),
             &Dirs::current(),
         )?,
         tui: TuiConfig {
