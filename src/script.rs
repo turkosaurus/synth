@@ -40,18 +40,65 @@ const MODULES: [(&str, &str); 9] = [
     (module::ROOT, LUA_ROOT),
 ];
 
-// require checks package.preload before any filesystem search, so the
-// embedded libraries resolve with no cwd dependency
-fn lua_register(lua: &mlua::Lua) -> anyhow::Result<()> {
+/// Installs the one module searcher `require` uses, in place of Lua's own,
+/// so nothing resolves from the shell's cwd, the system's Lua folders, or a
+/// native library.
+///
+/// `synth` and `synth.*` come from the embedded copies. Any other name is
+/// looked for in each of `roots` in order, as `a/b.lua` or `a/b/init.lua`
+/// for `a.b`.
+fn lua_register(lua: &mlua::Lua, roots: Vec<std::path::PathBuf>) -> anyhow::Result<()> {
     let package: mlua::Table = lua.globals().get(field::PACKAGE)?;
-    let preload: mlua::Table = package.get(field::PRELOAD)?;
 
-    for (name, src) in MODULES {
-        let loader = lua.create_function(move |lua, _: mlua::Value| {
-            lua.load(src).set_name(name).eval::<mlua::Value>()
-        })?;
-        preload.set(name, loader)?;
-    }
+    let searcher = lua.create_function(move |lua, name: String| -> mlua::Result<mlua::Value> {
+        if name == module::ROOT || name.starts_with("synth.") {
+            return Ok(match MODULES.iter().find(|(module, _)| *module == name) {
+                Some((module, src)) => {
+                    mlua::Value::Function(lua.load(*src).set_name(*module).into_function()?)
+                }
+                None => mlua::Value::String(
+                    lua.create_string(format!("\n\tno built-in module '{name}'"))?,
+                ),
+            });
+        }
+        let Some(relative) = module_path(&name) else {
+            return Ok(mlua::Value::String(lua.create_string(format!(
+                "\n\t'{name}' is not a module name: use letters, digits, `_` and `-`, \
+                 separated by dots"
+            ))?));
+        };
+        let mut tried = String::new();
+        for root in &roots {
+            let file = root.join(&relative).with_extension("lua");
+            let init = root.join(&relative).join("init.lua");
+            for path in [file, init] {
+                match std::fs::read_to_string(&path) {
+                    Ok(source) => {
+                        let chunk = lua
+                            .load(source)
+                            .set_name(path.display().to_string())
+                            .into_function()?;
+                        return Ok(mlua::Value::Function(chunk));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        tried.push_str(&format!("\n\tno file '{}'", path.display()));
+                    }
+                    Err(error) => {
+                        return Err(mlua::Error::external(format!(
+                            "reading {}: {error}",
+                            path.display()
+                        )))
+                    }
+                }
+            }
+        }
+        Ok(mlua::Value::String(lua.create_string(tried)?))
+    })?;
+    // LuaJIT is Lua 5.1, where the searchers are `package.loaders`
+    package.set(field::LOADERS, lua.create_sequence_from([searcher])?)?;
+    // unused once the searchers are replaced; cleared so nothing reads them
+    package.set(field::PATH, "")?;
+    package.set(field::CPATH, "")?;
 
     // `synth.site` is a Rust function, not Lua: it names the line that
     // called a constructor by reading the call stack directly, so no patch
@@ -167,7 +214,8 @@ mod field {
     pub(super) const METER_HOLD: &str = "meter_hold";
     pub(super) const METER_FALL: &str = "meter_fall";
     pub(super) const METER_FLOOR: &str = "meter_floor";
-    pub(super) const PRELOAD: &str = "preload";
+    pub(super) const LOADERS: &str = "loaders";
+    pub(super) const CPATH: &str = "cpath";
     pub(super) const LOADED: &str = "loaded";
     pub(super) const PATH: &str = "path";
 }
@@ -198,6 +246,21 @@ pub(crate) fn load_source(source: &str, name: &str, sample_rate: u32) -> anyhow:
     load_in(source, name, sample_rate, None)
 }
 
+/// `a.b` as the relative path `a/b`, or `None` when a part is empty or
+/// holds anything but letters, digits, `_` and `-`, so a name cannot reach
+/// outside the folder it is looked for in.
+fn module_path(name: &str) -> Option<std::path::PathBuf> {
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    };
+    name.split('.')
+        .all(valid)
+        .then(|| name.split('.').collect())
+}
+
 fn load_in(
     source: &str,
     name: &str,
@@ -205,20 +268,12 @@ fn load_in(
     dir: Option<&std::path::Path>,
 ) -> anyhow::Result<Patch> {
     let lua = mlua::Lua::new();
-    lua_register(&lua)?;
-
     // a patch's own requires resolve next to the patch, not next to the
-    // shell's cwd. built through the package table rather than by splicing a
-    // path into Lua source, which a path containing a quote would break.
-    if let Some(dir) = dir {
-        let package: mlua::Table = lua.globals().get(field::PACKAGE)?;
-        let existing: String = package.get(field::PATH)?;
-        let dir = dir.display();
-        package.set(
-            field::PATH,
-            format!("{dir}/?.lua;{dir}/?/init.lua;{existing}"),
-        )?;
-    }
+    // shell's cwd
+    lua_register(
+        &lua,
+        dir.map(std::path::Path::to_path_buf).into_iter().collect(),
+    )?;
 
     // eval to a Value first: a syntax error and a wrong return type both fail
     // this call, and they deserve different messages

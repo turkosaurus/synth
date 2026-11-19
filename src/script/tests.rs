@@ -1140,7 +1140,7 @@ fn cutoff_below_floor_warns() {
 #[test]
 fn the_root_reexports_every_module() {
     let lua = mlua::Lua::new();
-    lua_register(&lua).unwrap();
+    lua_register(&lua, Vec::new()).unwrap();
 
     for (name, _) in MODULES {
         let Some(short) = name.strip_prefix("synth.") else {
@@ -1324,7 +1324,7 @@ fn every_lua_default_passes_rust_validation() {
     // Lua owns the defaults and Rust owns what is valid; this keeps the two
     // from drifting apart
     let lua = mlua::Lua::new();
-    lua_register(&lua).unwrap();
+    lua_register(&lua, Vec::new()).unwrap();
     let empty = || lua.create_table().unwrap();
 
     let envelope = construct(&lua, "synth.envelope", empty());
@@ -1345,4 +1345,61 @@ fn every_lua_default_passes_rust_validation() {
     for step in steps.sequence_values::<mlua::Table>() {
         super::schema::STEP.check(&step.unwrap(), None).unwrap();
     }
+}
+
+/// A patch in `tests/lua/loader/{case}/`, the folder its modules sit in.
+fn fixture(case: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/lua/loader")
+        .join(case)
+        .join("song.lua")
+}
+
+#[test]
+fn a_patch_requires_modules_beside_it() {
+    load(&fixture("beside"), 48000).unwrap();
+}
+
+#[test]
+fn a_file_named_like_a_built_in_does_not_replace_it() {
+    load(&fixture("shadow"), 48000).unwrap();
+}
+
+#[test]
+fn a_missing_module_lists_only_the_patch_folder() {
+    let song = fixture("missing");
+    let error = load(&song, 48000).err().expect("nowhere.lua");
+    let message = format!("{error:#}");
+    let looked = song.with_file_name("nowhere.lua");
+    assert!(
+        message.contains(&format!("no file '{}'", looked.display())),
+        "{message}"
+    );
+    // neither the cwd nor the system's Lua folders are searched
+    assert!(!message.contains("'./nowhere.lua'"), "{message}");
+    assert!(!message.contains("/usr/"), "{message}");
+}
+
+#[test]
+fn a_module_name_cannot_leave_its_folder() {
+    for name in ["..secret", "a..b", "a/b", ""] {
+        let error = load_source(&format!("return require('{name}')"), "test", 48000)
+            .err()
+            .expect(name);
+        assert!(
+            format!("{error:#}").contains("is not a module name"),
+            "{name}: {error:#}"
+        );
+    }
+}
+
+#[test]
+fn an_unknown_built_in_is_named() {
+    let error = load_source("return require('synth.nope')", "test", 48000)
+        .err()
+        .expect("no such built-in");
+    assert!(
+        format!("{error:#}").contains("no built-in module 'synth.nope'"),
+        "{error:#}"
+    );
 }
