@@ -422,7 +422,7 @@ fn state(keyboard: &Keyboard, freqs: &[f32], gating: Gating) -> Table<'static> {
     let (octave, at_start) = keyboard.octave();
     let (low, high) = keyboard.reach();
     let octave = (
-        format!("{octave:+}  ({low:+} to {high:+})"),
+        format!("{octave:+}  ({low:+}..{high:+})"),
         // dim at the start, so the row lights up only once it has moved
         if at_start {
             dim
