@@ -68,6 +68,42 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
     );
 }
 
+/// What `synth patches` did to the built-in copies: one line for each file
+/// it changed or kept, nothing for those already current.
+pub fn builtins_written(wrote: &[(&str, crate::script::builtins::Wrote)]) {
+    use crate::script::builtins::Wrote;
+    for (name, outcome) in wrote {
+        match outcome {
+            Wrote::Written => println!("wrote {name}"),
+            Wrote::Refreshed => println!("refreshed {name} to the current built-in"),
+            Wrote::Kept => println!("kept {name}: edited"),
+            Wrote::KeptBehind => {
+                println!("kept {name}: edited, and the built-in has changed since")
+            }
+            Wrote::Current => {}
+        }
+    }
+}
+
+/// Each built-in module and whether an edited copy replaces it.
+pub fn builtins(states: &[(&str, crate::script::builtins::State)]) {
+    use crate::script::builtins::State;
+    let rows: Vec<(&str, String)> = states
+        .iter()
+        .map(|(name, state)| {
+            let value = match state {
+                State::BuiltIn => "built in".to_string(),
+                State::Edited(path) => format!("edited: {}", path.display()),
+                State::EditedBehind(path) => {
+                    format!("edited, built-in newer: {}", path.display())
+                }
+            };
+            (*name, value)
+        })
+        .collect();
+    table::pairs("built-in modules", &rows, false);
+}
+
 /// Everything `check` reports about a loaded patch. Computes nothing:
 /// every figure here is already a field on [`Patch`] or its reports.
 pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {

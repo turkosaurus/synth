@@ -926,7 +926,7 @@ fn cutoff_below_floor_warns() {
 #[test]
 fn the_root_reexports_every_module() {
     let lua = mlua::Lua::new();
-    lua_register(&lua, Vec::new()).unwrap();
+    lua_register(&lua, Vec::new(), None).unwrap();
 
     for (name, _) in MODULES {
         let Some(short) = name.strip_prefix("synth.") else {
@@ -1012,7 +1012,7 @@ fn every_lua_default_passes_rust_validation() {
     // Lua owns the defaults and Rust owns what is valid; this keeps the two
     // from drifting apart
     let lua = mlua::Lua::new();
-    lua_register(&lua, Vec::new()).unwrap();
+    lua_register(&lua, Vec::new(), None).unwrap();
     let empty = || lua.create_table().unwrap();
 
     let envelope = construct(&lua, "synth.envelope", empty());
@@ -1126,4 +1126,27 @@ fn every_rejected_patch_fails_with_its_expected_error() {
         }
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+#[test]
+fn an_edited_built_in_copy_loads_in_place_of_the_built_in() {
+    let patches = std::env::temp_dir().join(format!("synth-edited-load-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&patches);
+    builtins::write(&patches).unwrap();
+    let wave = patches.join("synth/wave.lua");
+    let source = std::fs::read_to_string(&wave).unwrap();
+    std::fs::write(
+        &wave,
+        source.replace("return wave", "wave.edited = true\nreturn wave"),
+    )
+    .unwrap();
+
+    let patch = r#"
+        local synth = require("synth")
+        assert(require("synth.wave").edited, "the edited copy")
+        return synth.instrument({})
+    "#;
+    load_in(patch, "test", 48000, None, Some(&patches)).unwrap();
+    // without the patches folder, the built-in loads and has no mark
+    assert!(load_in(patch, "test", 48000, None, None).is_err());
 }

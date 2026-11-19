@@ -43,7 +43,8 @@ enum Commands {
     Tui { path: Option<PathBuf> },
     /// Open config.lua in $VISUAL or $EDITOR, creating it if needed
     Config,
-    /// Open your patches folder in $VISUAL or $EDITOR, creating it if needed
+    /// Open your patches folder in $VISUAL or $EDITOR, creating it and
+    /// copying in the built-in modules if needed
     Patches {
         /// print the folder's path instead, for editors that cannot open one
         #[arg(long)]
@@ -130,7 +131,12 @@ fn run() -> anyhow::Result<ExitCode> {
             println!();
             // a config that does not load is reported as the error it is
             let config_path = script::config_path();
-            view::report::config(config_path.as_deref(), &script::config()?);
+            let config = script::config()?;
+            view::report::config(config_path.as_deref(), &config);
+            if let Some(patches) = &config.patches {
+                println!();
+                view::report::builtins(&script::builtins::states(patches));
+            }
             // only patch problems fail; being in tmux is a fact, not an error
             if let Some(path) = path {
                 println!();
@@ -223,6 +229,7 @@ fn patches(print_path: bool) -> anyhow::Result<()> {
         let sub = dir.join(kind);
         std::fs::create_dir_all(&sub).with_context(|| format!("create {}", sub.display()))?;
     }
+    view::report::builtins_written(&script::builtins::write(&dir)?);
     open_in_editor(&dir)
 }
 

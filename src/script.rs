@@ -2,6 +2,7 @@ use anyhow::Context;
 use tracing::instrument;
 
 mod bake;
+pub mod builtins;
 mod config;
 mod feed;
 mod filter;
@@ -44,14 +45,29 @@ const MODULES: [(&str, &str); 9] = [
 /// so nothing resolves from the shell's cwd, the system's Lua folders, or a
 /// native library.
 ///
-/// `synth` and `synth.*` come from the embedded copies. Any other name is
-/// looked for in each of `roots` in order, as `a/b.lua` or `a/b/init.lua`
-/// for `a.b`.
-fn lua_register(lua: &mlua::Lua, roots: Vec<std::path::PathBuf>) -> anyhow::Result<()> {
+/// `synth` and `synth.*` come from an edited copy in `patches/synth/` when
+/// there is one, else from the embedded copies. Any other name is looked
+/// for in each of `roots` in order, as `a/b.lua` or `a/b/init.lua` for
+/// `a.b`.
+fn lua_register(
+    lua: &mlua::Lua,
+    roots: Vec<std::path::PathBuf>,
+    patches: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     let package: mlua::Table = lua.globals().get(field::PACKAGE)?;
 
     let searcher = lua.create_function(move |lua, name: String| -> mlua::Result<mlua::Value> {
         if name == module::ROOT || name.starts_with("synth.") {
+            let copy = patches
+                .as_deref()
+                .and_then(|patches| builtins::edited(patches, &name));
+            if let Some((path, source)) = copy {
+                let chunk = lua
+                    .load(source)
+                    .set_name(path.display().to_string())
+                    .into_function()?;
+                return Ok(mlua::Value::Function(chunk));
+            }
             return Ok(match MODULES.iter().find(|(module, _)| *module == name) {
                 Some((module, src)) => {
                     mlua::Value::Function(lua.load(*src).set_name(*module).into_function()?)
@@ -294,7 +310,7 @@ fn load_in(
         .chain(patches)
         .map(std::path::Path::to_path_buf)
         .collect();
-    lua_register(&lua, roots)?;
+    lua_register(&lua, roots, patches.map(std::path::Path::to_path_buf))?;
 
     // eval to a Value first: a syntax error and a wrong return type both fail
     // this call, and they deserve different messages
