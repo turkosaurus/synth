@@ -178,8 +178,11 @@ local defaults = {
 	repeat_window = 550, -- ms
 	-- a key has no depth to time, so every note gets this velocity; 1 to 127
 	velocity = 100,
-	-- how many octaves octave_up and octave_down may move from the start
-	octave_range = 4,
+	-- the octave shift to start at; 0 plays the layout as written
+	octave = -1,
+	-- how many octaves octave_down and octave_up may move from the start
+	octave_low = 2,
+	octave_high = 3,
 }
 
 -- A new table: the caller's fields, then defaults for any left out. The

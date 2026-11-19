@@ -528,6 +528,44 @@ fn a_control_override_on_a_note_key_is_named() {
 }
 
 #[test]
+fn the_keyboard_starts_an_octave_down_by_default() {
+    let keymap = with_keyboard("synth.keyboard({})").unwrap().keymap;
+    assert_eq!(
+        (keymap.octave, keymap.octave_low, keymap.octave_high),
+        (-1, 2, 3)
+    );
+}
+
+#[test]
+fn octave_limits_are_set_separately() {
+    let keymap = with_keyboard("synth.keyboard({ octave = 0, octave_low = 3, octave_high = 4 })")
+        .unwrap()
+        .keymap;
+    assert_eq!(
+        (keymap.octave, keymap.octave_low, keymap.octave_high),
+        (0, 3, 4)
+    );
+}
+
+#[test]
+fn an_octave_out_of_bounds_is_named() {
+    for (field, expected) in [
+        ("octave = 11", "`octave` is 11; must be -10 to 10"),
+        ("octave_low = -1", "`octave_low` is -1; must be 0 to 10"),
+        ("octave_high = 1.5", "`octave_high` must be a whole number"),
+        ("octave_range = 4", "unknown field `octave_range`"),
+    ] {
+        let error = with_keyboard(&format!("synth.keyboard({{ {field} }})"))
+            .err()
+            .expect(field);
+        assert!(
+            format!("{error:#}").contains(expected),
+            "{field}: {error:#}"
+        );
+    }
+}
+
+#[test]
 fn a_key_that_is_both_a_note_and_a_control_is_named() {
     let error = with_keyboard(
         r#"synth.keyboard({ layout = {

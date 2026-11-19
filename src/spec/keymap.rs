@@ -38,6 +38,10 @@ pub(crate) struct Keymap {
     /// Every note's velocity: a key has no depth to time, so there is none
     /// to measure. MIDI hardware supplies a real one.
     pub velocity: u8,
-    /// How far, in octaves, the octave keys may move from the start.
-    pub octave_range: i32,
+    /// The octave shift the keyboard starts at; 0 plays `notes` as written.
+    pub octave: i32,
+    /// How many octaves the octave keys may move below the start.
+    pub octave_low: i32,
+    /// How many octaves the octave keys may move above the start.
+    pub octave_high: i32,
 }

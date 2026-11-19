@@ -76,10 +76,10 @@ pub(crate) struct Keyboard {
 impl Keyboard {
     pub(crate) fn new(keymap: Keymap, gating: Gating, tx: rtrb::Producer<Event>) -> Self {
         Self {
+            octave: keymap.octave,
             keymap,
             gating,
             tx,
-            octave: 0,
             held: HashMap::new(),
             sounding: None,
             release_at: HashMap::new(),
@@ -92,8 +92,19 @@ impl Keyboard {
         self.gating
     }
 
-    pub(crate) fn octave(&self) -> i32 {
-        self.octave
+    /// The lowest and highest shift the octave keys can reach.
+    pub(crate) fn reach(&self) -> (i32, i32) {
+        let start = self.keymap.octave;
+        (
+            start - self.keymap.octave_low,
+            start + self.keymap.octave_high,
+        )
+    }
+
+    /// The current octave shift, and whether it is the one the keyboard
+    /// started at.
+    pub(crate) fn octave(&self) -> (i32, bool) {
+        (self.octave, self.octave == self.keymap.octave)
     }
 
     pub(crate) fn sounding(&self) -> Option<u8> {
@@ -167,11 +178,11 @@ impl Keyboard {
             return;
         }
         if bound(&self.keymap.octave_up, code) {
-            self.octave = (self.octave + 1).min(self.keymap.octave_range);
+            self.octave = (self.octave + 1).min(self.reach().1);
             return;
         }
         if bound(&self.keymap.octave_down, code) {
-            self.octave = (self.octave - 1).max(-self.keymap.octave_range);
+            self.octave = (self.octave - 1).max(self.reach().0);
             return;
         }
 
@@ -297,7 +308,9 @@ mod tests {
             gate,
             repeat: REPEAT,
             velocity: 100,
-            octave_range: 4,
+            octave: 0,
+            octave_low: 4,
+            octave_high: 4,
         };
         let (tx, rx) = rtrb::RingBuffer::new(16);
         (Keyboard::new(keymap, gating, tx), rx)
@@ -305,6 +318,41 @@ mod tests {
 
     fn press(keyboard: &mut Keyboard, code: KeyCode) {
         keyboard.handle(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    /// A held-gating keyboard starting at `octave`, with `low` and `high`
+    /// octaves of room, and `-` and `=` as its octave keys.
+    fn octaves(octave: i32, low: i32, high: i32) -> (Keyboard, rtrb::Consumer<Event>) {
+        let (mut keyboard, rx) = keyboard(Gating::Held, Duration::from_millis(200));
+        keyboard.keymap.octave = octave;
+        keyboard.keymap.octave_low = low;
+        keyboard.keymap.octave_high = high;
+        keyboard.keymap.octave_down = vec![Key::Char('-')];
+        keyboard.keymap.octave_up = vec![Key::Char('=')];
+        keyboard.octave = octave;
+        (keyboard, rx)
+    }
+
+    #[test]
+    fn the_start_octave_shifts_every_note() {
+        let (mut keyboard, mut rx) = octaves(-1, 4, 4);
+        press(&mut keyboard, KeyCode::Char('a'));
+        assert_eq!(ons(&mut rx), vec![48], "60 an octave down");
+        assert_eq!(keyboard.octave(), (-1, true));
+    }
+
+    #[test]
+    fn the_octave_keys_stop_at_separate_limits() {
+        let (mut keyboard, _rx) = octaves(-1, 3, 4);
+        for _ in 0..10 {
+            press(&mut keyboard, KeyCode::Char('-'));
+        }
+        assert_eq!(keyboard.octave(), (-4, false), "three below the start");
+        for _ in 0..10 {
+            press(&mut keyboard, KeyCode::Char('='));
+        }
+        assert_eq!(keyboard.octave(), (3, false), "four above the start");
+        assert_eq!(keyboard.reach(), (-4, 3));
     }
 
     fn release(keyboard: &mut Keyboard, code: KeyCode) {

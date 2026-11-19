@@ -160,7 +160,9 @@ pub(super) const KEYBOARD: Schema = Schema {
         // 0 is MIDI's note-off spelled as a note-on; above 127 is not MIDI
         field(field::VELOCITY, Ty::Integer, Bound::Between(1.0, 127.0)),
         // past 10 octaves every shift leaves MIDI's note range
-        field(field::OCTAVE_RANGE, Ty::Integer, Bound::Between(0.0, 10.0)),
+        field(field::OCTAVE, Ty::Integer, Bound::Between(-10.0, 10.0)),
+        field(field::OCTAVE_LOW, Ty::Integer, Bound::Between(0.0, 10.0)),
+        field(field::OCTAVE_HIGH, Ty::Integer, Bound::Between(0.0, 10.0)),
     ],
 };
 

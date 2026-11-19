@@ -137,7 +137,9 @@ mod field {
     pub(super) const STOP: &str = "stop";
     pub(super) const GATE: &str = "gate";
     pub(super) const REPEAT_WINDOW: &str = "repeat_window";
-    pub(super) const OCTAVE_RANGE: &str = "octave_range";
+    pub(super) const OCTAVE: &str = "octave";
+    pub(super) const OCTAVE_LOW: &str = "octave_low";
+    pub(super) const OCTAVE_HIGH: &str = "octave_high";
 
     pub(super) const TUNING: &str = "tuning";
     pub(super) const EQUAL: &str = "equal";
