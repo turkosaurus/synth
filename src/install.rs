@@ -168,26 +168,38 @@ fn set_aside(to: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    /// `path`, a Unix-style absolute path, made absolute on the test host:
+    /// Windows needs a drive, so `/h` becomes `C:/h` there.
+    fn abs(path: &str) -> PathBuf {
+        match cfg!(windows) {
+            true => PathBuf::from(format!("C:{path}")),
+            false => PathBuf::from(path),
+        }
+    }
+
+    /// An environment value: absolute ones go through [`abs`], relative
+    /// ones are passed as written.
+    fn var(value: &str) -> OsString {
+        match value.starts_with('/') {
+            true => abs(value).into_os_string(),
+            false => OsString::from(value),
+        }
+    }
+
     fn dir(xdg: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
-        bin_dir(
-            xdg.map(OsString::from),
-            home.map(OsString::from),
-            None,
-            false,
-        )
+        bin_dir(xdg.map(var), home.map(var), None, false)
     }
 
     #[test]
     fn windows_falls_back_to_userprofile() {
-        // written as Unix paths so `is_absolute` holds on the test host
-        let profile = Some(OsString::from("/users/me"));
+        let profile = Some(var("/users/me"));
         assert_eq!(
             bin_dir(None, None, profile.clone(), true),
-            Some("/users/me/.local/bin".into())
+            Some(abs("/users/me/.local/bin"))
         );
         assert_eq!(
-            bin_dir(None, Some("/h".into()), profile.clone(), true),
-            Some("/h/.local/bin".into()),
+            bin_dir(None, Some(var("/h")), profile.clone(), true),
+            Some(abs("/h/.local/bin")),
             "HOME still wins when set"
         );
         assert_eq!(bin_dir(None, None, profile, false), None, "Unix ignores it");
@@ -206,14 +218,14 @@ mod tests {
 
     #[test]
     fn bin_dir_prefers_xdg() {
-        assert_eq!(dir(Some("/x/bin"), Some("/h")), Some("/x/bin".into()));
-        assert_eq!(dir(None, Some("/h")), Some("/h/.local/bin".into()));
+        assert_eq!(dir(Some("/x/bin"), Some("/h")), Some(abs("/x/bin")));
+        assert_eq!(dir(None, Some("/h")), Some(abs("/h/.local/bin")));
     }
 
     #[test]
     fn bin_dir_ignores_relative_paths() {
-        assert_eq!(dir(Some("bin"), Some("/h")), Some("/h/.local/bin".into()));
-        assert_eq!(dir(Some(""), Some("/h")), Some("/h/.local/bin".into()));
+        assert_eq!(dir(Some("bin"), Some("/h")), Some(abs("/h/.local/bin")));
+        assert_eq!(dir(Some(""), Some("/h")), Some(abs("/h/.local/bin")));
         assert_eq!(dir(None, Some("h")), None);
         assert_eq!(dir(None, None), None);
     }

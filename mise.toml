@@ -1,3 +1,10 @@
+# tasks are written for bash; on Windows, mise would run them with cmd,
+# so they go through Git Bash, which Windows CI runners and most
+# Windows setups for this repo have
+[settings]
+windows_default_inline_shell_args = "bash -o errexit -c"
+windows_default_file_shell_args = "bash"
+
 [tools]
 rust = { version = "1.98", components = "clippy,rustfmt" }
 yq = "4"

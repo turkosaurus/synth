@@ -16,14 +16,15 @@ fn version() {
 
 /// `install` copies the running binary to `XDG_BIN_HOME`,
 /// and the installed copy's `uninstall` removes it.
-#[cfg(unix)]
 #[test]
 fn install_then_uninstall() {
     let root = std::env::temp_dir().join(format!("synth-cli-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let (src, bin) = (root.join("src"), root.join("bin"));
     std::fs::create_dir_all(&src).unwrap();
-    let exe = src.join("synth");
+    // synth.exe on Windows, which runs nothing without it
+    let file = format!("synth{}", std::env::consts::EXE_SUFFIX);
+    let exe = src.join(&file);
     std::fs::copy(env!("CARGO_BIN_EXE_synth"), &exe).unwrap();
 
     let run = |exe: &std::path::Path, arg: &str| {
@@ -40,7 +41,7 @@ fn install_then_uninstall() {
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
 
-    let installed = bin.join("synth");
+    let installed = bin.join(&file);
     assert!(run(&exe, "install").starts_with("installed synth"));
     assert!(installed.exists());
     assert!(run(&installed, "install").starts_with("synth is installed at"));

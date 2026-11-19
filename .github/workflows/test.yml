@@ -17,7 +17,7 @@ env:
   MISE_TASK_OUTPUT: interleave
 
 jobs:
-  test:
+  linux:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -57,3 +57,30 @@ jobs:
 
       - name: Lint
         run: mise run lint
+
+  macos:
+    uses: ./.github/workflows/test-platform.yml
+    with:
+      os: macos-latest
+
+  windows:
+    uses: ./.github/workflows/test-platform.yml
+    with:
+      os: windows-latest
+
+  # the check main's ruleset requires. It runs even when a platform fails,
+  # since a skipped required check counts as passed, and fails unless every
+  # platform succeeded.
+  test:
+    needs: [linux, macos, windows]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every platform passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "linux, macos, windows: $RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || exit 1
+          done
