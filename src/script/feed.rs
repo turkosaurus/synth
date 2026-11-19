@@ -37,7 +37,7 @@ pub(super) fn single(
     keymap: crate::spec::Keymap,
 ) -> anyhow::Result<Patch> {
     let (instrument, report) = bake_instrument(spec, sample_rate)?;
-    let tail = instrument.release.len() as u64;
+    let tail = instrument.release.samples(f64::from(sample_rate)) as u64;
     let hold = (SINGLE_HOLD.as_secs_f64() * sample_rate as f64) as u64;
 
     Ok(Patch {
@@ -192,7 +192,7 @@ pub(super) fn sequence(
     events.sort_by_key(|(at, _)| *at);
     let tail = instruments
         .iter()
-        .map(|v| v.release.len() as u64)
+        .map(|v| v.release.samples(f64::from(sample_rate)) as u64)
         .max()
         .unwrap_or(0);
     let total_samples = (step_len * parsed.len() as f64) as u64 + tail;

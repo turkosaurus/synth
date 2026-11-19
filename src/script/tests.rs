@@ -20,20 +20,29 @@ fn triangle(phase: f32) -> f32 {
     }
 }
 
+/// A linear stage `ms` long; at the 1000 Hz rate `inspect` is given
+/// below, one sample per ms.
+fn segment(ms: f64) -> crate::spec::Segment {
+    crate::spec::Segment {
+        curve: vec![0.0, 1.0],
+        ms,
+    }
+}
+
 fn instrument_with(wave: Vec<f32>) -> Instrument {
     Instrument {
         wave,
-        attack: vec![0.0, 0.5],
-        decay: vec![1.0],
+        attack: segment(2.0),
+        decay: segment(1.0),
         sustain_level: 0.7,
-        release: vec![0.7, 0.35],
+        release: segment(2.0),
         voice_count: 1,
     }
 }
 
 #[test]
 fn clean_triangle_raises_nothing() {
-    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 0, &[]);
+    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 1000, 0, &[]);
     assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     assert_eq!(report.peak, 1.0);
     assert!(report.dc.abs() < 1e-6);
@@ -41,7 +50,7 @@ fn clean_triangle_raises_nothing() {
 
 #[test]
 fn flags_clamping() {
-    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 17, &[]);
+    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 1000, 17, &[]);
     assert!(report
         .diagnostics
         .iter()
@@ -53,6 +62,7 @@ fn flags_dc_offset() {
     // a triangle lifted entirely above zero
     let report = inspect(
         &instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)),
+        1000,
         0,
         &[],
     );
@@ -65,7 +75,12 @@ fn flags_dc_offset() {
 #[test]
 fn flags_wrap_discontinuity() {
     // a saw ends at +1 and restarts at -1: a step of 2.0 every cycle
-    let report = inspect(&instrument_with(wave_from(|p| 2.0 * p - 1.0, 2048)), 0, &[]);
+    let report = inspect(
+        &instrument_with(wave_from(|p| 2.0 * p - 1.0, 2048)),
+        1000,
+        0,
+        &[],
+    );
     assert!(report
         .diagnostics
         .iter()
@@ -76,6 +91,7 @@ fn flags_wrap_discontinuity() {
 fn flags_weak_peak() {
     let report = inspect(
         &instrument_with(wave_from(|p| triangle(p) * 0.2, 2048)),
+        1000,
         0,
         &[],
     );
@@ -90,8 +106,8 @@ fn flags_zero_release() {
     // sustain outside 0..1 is no longer a warning here: schema::ENVELOPE
     // rejects it before anything is baked
     let mut instrument = instrument_with(wave_from(triangle, 2048));
-    instrument.release = vec![];
-    let report = inspect(&instrument, 0, &[]);
+    instrument.release = segment(0.0);
+    let report = inspect(&instrument, 1000, 0, &[]);
     assert!(report
         .diagnostics
         .iter()
@@ -638,6 +654,15 @@ fn a_reused_pattern_resolves_to_the_same_instrument_each_time() {
     assert_ne!(used[0], used[1], "`y` switches away");
 }
 
+// A stage's levels, sample by sample, as render reads them: stretched to
+// its length at `rate` and scaled from `from` to `to`.
+fn levels(stage: &crate::spec::Segment, rate: f64, from: f32, to: f32) -> Vec<f32> {
+    let len = stage.samples(rate);
+    (0..len)
+        .map(|i| from + (to - from) * stage.along(i, len))
+        .collect()
+}
+
 // The slopes are Lua, so they are exercised through a real bake. Rate
 // 1000 makes milliseconds map 1:1 to samples, so `ms` is the step count.
 // attack rises 0 -> 1, release falls sustain -> 0.
@@ -662,7 +687,10 @@ fn baked(ctor: &str, ms: u32) -> (Vec<f32>, Vec<f32>) {
     );
     let patch = load_source(&source, "test", 1000).unwrap();
     let instrument = &patch.timeline.instruments[0];
-    (instrument.attack.clone(), instrument.release.clone())
+    (
+        levels(&instrument.attack, 1000.0, 0.0, 1.0),
+        levels(&instrument.release, 1000.0, 1.0, 0.0),
+    )
 }
 
 #[test]
@@ -721,14 +749,14 @@ fn a_curve_outside_0_to_1_is_clamped_and_named() {
         })
     "#;
     let patch = load_source(source, "test", 1000).unwrap();
-    let attack = &patch.timeline.instruments[0].attack;
-    assert!(attack.iter().all(|&level| level == 1.0), "{attack:?}");
+    let curve = &patch.timeline.instruments[0].attack.curve;
+    assert!(curve.iter().all(|&along| along == 1.0), "{curve:?}");
     let report = &patch.reports[0].1;
     assert!(
         report
             .diagnostics
             .iter()
-            .any(|d| d.message == "envelope.attack_curve left 0..1 at 10 points and was clamped"),
+            .any(|d| d.message == "envelope.attack_curve left 0..1 at 1025 points and was clamped"),
         "{:?}",
         report.diagnostics
     );
@@ -756,21 +784,48 @@ fn bakes_the_triangle_landmarks() {
     }
 }
 
+// stretching reads between baked points, so a long stage at a high rate
+// must still match the curve itself, sample by sample
 #[test]
-fn envelope_lengths_follow_the_sample_rate() {
-    // 10 ms of attack is a different number of samples per device
-    assert_eq!(
-        one_instrument(10, 48000).timeline.instruments[0]
-            .attack
-            .len(),
-        480
+fn a_stretched_curve_matches_the_curve() {
+    let source = r#"
+        local synth = require("synth")
+        return synth.instrument({
+            envelope = synth.envelope({
+                attack = 2000,
+                attack_curve = synth.slope.exponential(3),
+            }),
+        })
+    "#;
+    let rate = 96000.0;
+    let patch = load_source(source, "test", rate as u32).unwrap();
+    let attack = levels(&patch.timeline.instruments[0].attack, rate, 0.0, 1.0);
+    assert_eq!(attack.len(), 192_000);
+    let exact = |t: f64| (1.0 - (-3.0 * t).exp()) / (1.0 - (-3.0f64).exp());
+    for (i, &level) in attack.iter().enumerate() {
+        let want = exact(i as f64 / attack.len() as f64);
+        assert!(
+            (f64::from(level) - want).abs() < 1e-5,
+            "attack[{i}] = {level} want {want}"
+        );
+    }
+}
+
+#[test]
+fn a_curve_is_baked_once_whatever_its_length_or_rate() {
+    let short = one_instrument(10, 48000);
+    let long = one_instrument(2000, 96000);
+    let (short, long) = (
+        &short.timeline.instruments[0].attack,
+        &long.timeline.instruments[0].attack,
     );
-    assert_eq!(
-        one_instrument(10, 44100).timeline.instruments[0]
-            .attack
-            .len(),
-        441
-    );
+    assert_eq!(short.curve.len(), 1025);
+    assert_eq!(short.curve, long.curve);
+
+    // the length is stretched to at playback
+    assert_eq!(short.samples(48000.0), 480);
+    assert_eq!(short.samples(44100.0), 441);
+    assert_eq!(long.samples(96000.0), 192_000);
 }
 
 // the only thing worth asserting about a file the author tunes by ear is

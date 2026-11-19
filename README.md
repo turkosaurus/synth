@@ -92,7 +92,7 @@ sequenceDiagram
 
 Lua waveforms are built as a single oscillation across `TABLE_SIZE` samples, expected to be sub-sonic, such that one can produce a particular pitch by selecting 1-in-10 samples, then produce a pitch one octave higher by selecting 1-in-20 samples. Phase is usually fractional, so playback interpolates between neighbouring entries.
 
-Lua states both shapes as functions Rust samples. A waveform is a function of phase, so Rust calls it once per point across the table. An envelope curve is a function of t, from 0 to 1 across one stage, so Rust calls it once per point of the stage and scales the result from the stage's start level to its end.
+Lua states both shapes as functions Rust samples. A waveform is a function of phase, so Rust calls it once per point across the table. An envelope curve is a function of t, from 0 to 1 across one stage, so Rust calls it at the same 1025 points whatever the stage's length, and playback stretches it over the stage and scales it from the stage's start level to its end.
 
 2048 points means every note above 23.4 Hz advances at least one entry per output sample, so no playable pitch stretches the shape; at 8 KB it also stays in L1.
 
@@ -106,7 +106,7 @@ The envelope is baked in four parts:
 
 [^sustain_looping]: Sustain is a level, not a buffer. The waveform keeps looping while held, or for a duration of fixed length, or until interrupted; the envelope just stops moving.
 
-Baking is sample-rate dependent, and comes from the system, so must be handled by the Rust side.
+Baking does not depend on the sample rate: playback sizes each stage from its length in ms at the device's rate.
 
 #### triggering
 

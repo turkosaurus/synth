@@ -16,6 +16,14 @@ enum Stage {
     Done,
 }
 
+/// Attack, decay, and release in samples. The instrument holds each
+/// stage's curve and length in ms; the rate is only known here.
+struct Lengths {
+    attack: usize,
+    decay: usize,
+    release: usize,
+}
+
 // one sounding note
 struct Note {
     instrument: Arc<Instrument>,
@@ -28,6 +36,8 @@ struct Note {
     phase: f32, // 0.0..1.0
     step: f32,  // phase increment per sample
     stage: Stage,
+    /// each stage's length in samples at this note's rate
+    lengths: Lengths,
     idx: usize,                  // index into the current envelope segment
     held: usize,                 // how many samples have been held in sustain
     hold_samples: Option<usize>, // how many samples to hold in sustain
@@ -52,6 +62,11 @@ impl Note {
             ramp: (GLIDE.as_secs_f32() * sample_rate).max(1.0),
             step: freq / sample_rate,
             hold_samples: hold.map(|d| (d.as_secs_f32() * sample_rate) as usize),
+            lengths: Lengths {
+                attack: instrument.attack.samples(f64::from(sample_rate)),
+                decay: instrument.decay.samples(f64::from(sample_rate)),
+                release: instrument.release.samples(f64::from(sample_rate)),
+            },
             instrument,
             phase: 0.0,
             stage: Stage::Attack,
@@ -79,7 +94,8 @@ impl Note {
         loop {
             match self.stage {
                 Stage::Attack => {
-                    if let Some(&value) = self.instrument.attack.get(self.idx) {
+                    if self.idx < self.lengths.attack {
+                        let value = self.attack_at(self.idx);
                         self.idx += 1;
                         self.level = value;
                         return value;
@@ -88,7 +104,8 @@ impl Note {
                     self.idx = 0;
                 }
                 Stage::Decay => {
-                    if let Some(&value) = self.instrument.decay.get(self.idx) {
+                    if self.idx < self.lengths.decay {
+                        let value = self.decay_at(self.idx);
                         self.idx += 1;
                         self.level = value;
                         return value;
@@ -106,9 +123,14 @@ impl Note {
                     return self.level;
                 }
                 Stage::Release => {
-                    if let Some(&value) = self.instrument.release.get(self.idx) {
+                    if self.idx < self.lengths.release {
+                        let sustain = self.instrument.sustain_level;
+                        let along = self
+                            .instrument
+                            .release
+                            .along(self.idx, self.lengths.release);
                         self.idx += 1;
-                        self.level = value * self.release_scale;
+                        self.level = (sustain - sustain * along) * self.release_scale;
                         return self.level;
                     }
                     self.stage = Stage::Done;
@@ -119,6 +141,17 @@ impl Note {
                 }
             }
         }
+    }
+
+    // attack rises from 0 to 1
+    fn attack_at(&self, i: usize) -> f32 {
+        self.instrument.attack.along(i, self.lengths.attack)
+    }
+
+    // decay falls from 1 to the sustain level
+    fn decay_at(&self, i: usize) -> f32 {
+        let along = self.instrument.decay.along(i, self.lengths.decay);
+        1.0 + (self.instrument.sustain_level - 1.0) * along
     }
 
     fn wave(&self) -> f32 {
@@ -157,17 +190,17 @@ impl Note {
         let level = audible / self.target;
         self.phase = from.phase;
         self.level = level;
-        let attack = &self.instrument.attack;
-        self.idx = attack
-            .iter()
-            .position(|&value| value >= level)
-            .unwrap_or(attack.len());
+        self.idx = (0..self.lengths.attack)
+            .find(|&i| self.attack_at(i) >= level)
+            .unwrap_or(self.lengths.attack);
 
-        let first = attack
-            .get(self.idx)
-            .or(self.instrument.decay.first())
-            .copied()
-            .unwrap_or(self.instrument.sustain_level);
+        let first = if self.idx < self.lengths.attack {
+            self.attack_at(self.idx)
+        } else if self.lengths.decay > 0 {
+            self.decay_at(0)
+        } else {
+            self.instrument.sustain_level
+        };
         if first > 0.0 {
             self.velocity = audible / first;
             self.glide = (self.target - self.velocity).abs() / self.ramp;
@@ -491,16 +524,27 @@ pub(super) fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tal
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::Kind;
+    use crate::spec::{Kind, Segment};
+
+    /// A stage that plays `along` one point per sample at the 4 Hz test
+    /// rate, so each sample reads a point exactly.
+    fn stage(along: &[f32]) -> Segment {
+        let mut curve = along.to_vec();
+        curve.push(1.0);
+        Segment {
+            curve,
+            ms: along.len() as f64 * 250.0,
+        }
+    }
 
     // 4-entry wave so interpolation is checkable by hand
     fn instrument() -> Instrument {
         Instrument {
             wave: vec![0.0, 1.0, 0.0, -1.0],
-            attack: vec![0.0, 0.5],
-            decay: vec![1.0, 0.85],
+            attack: stage(&[0.0, 0.5]),
+            decay: stage(&[0.0, 0.5]), // 1.0, 0.85
             sustain_level: 0.7,
-            release: vec![0.7, 0.35],
+            release: stage(&[0.0, 0.5]), // 0.7, 0.35
             voice_count: 1,
         }
     }
@@ -533,9 +577,22 @@ mod tests {
     }
 
     #[test]
+    fn a_stage_longer_than_its_curve_reads_between_points() {
+        let mut instrument = instrument();
+        // two points stretched over 1 s, 4 samples at 4 Hz
+        instrument.attack = Segment {
+            curve: vec![0.0, 1.0],
+            ms: 1000.0,
+        };
+        let mut note = note(instrument);
+        let got: Vec<f32> = (0..4).map(|_| note.envelope()).collect();
+        assert_eq!(got, [0.0, 0.25, 0.5, 0.75]);
+    }
+
+    #[test]
     fn zero_length_segment_falls_through() {
         let mut instrument = instrument();
-        instrument.attack = vec![];
+        instrument.attack = stage(&[]);
         // with no attack samples the first value must come from decay
         assert_eq!(note(instrument).envelope(), 1.0);
     }
@@ -591,10 +648,10 @@ mod tests {
     fn flat_instrument() -> Instrument {
         Instrument {
             wave: vec![0.25, 0.5, 0.75, 1.0],
-            attack: vec![],
-            decay: vec![],
+            attack: stage(&[]),
+            decay: stage(&[]),
             sustain_level: 1.0,
-            release: vec![],
+            release: stage(&[]),
             voice_count: 1,
         }
     }
@@ -746,7 +803,7 @@ mod tests {
 
     fn rising() -> Instrument {
         let mut instrument = instrument();
-        instrument.attack = vec![0.0, 0.25, 0.5, 0.75];
+        instrument.attack = stage(&[0.0, 0.25, 0.5, 0.75]);
         instrument
     }
 
@@ -792,7 +849,7 @@ mod tests {
     #[test]
     fn take_over_with_no_attack_eases_up_from_the_handed_over_level() {
         let mut instrument = rising();
-        instrument.attack = vec![];
+        instrument.attack = stage(&[]);
         let mut from = Note::new(Arc::new(rising()), 1.0, 1.0, 4.0, None);
         from.level = 0.2;
         from.phase = 0.25;
@@ -867,7 +924,7 @@ mod tests {
     fn a_second_release_does_not_restart_the_fade() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let mut instrument = flat_instrument();
-        instrument.release = vec![1.0, 0.5, 0.25];
+        instrument.release = stage(&[0.0, 0.5, 0.75]); // 1.0, 0.5, 0.25
         let mut player = Player::live(vec![instrument], freqs(), rx, 4.0);
 
         tx.push(on(2)).unwrap();
@@ -882,7 +939,7 @@ mod tests {
     fn a_retrigger_while_releasing_resumes_from_the_fade() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let mut instrument = flat_instrument();
-        instrument.release = vec![1.0, 0.5, 0.25];
+        instrument.release = stage(&[0.0, 0.5, 0.75]); // 1.0, 0.5, 0.25
         let mut player = Player::live(vec![instrument], freqs(), rx, 4.0);
 
         tx.push(on(2)).unwrap();
@@ -918,7 +975,7 @@ mod tests {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let mut instrument = flat_instrument();
         instrument.voice_count = 2;
-        instrument.release = vec![1.0; 16]; // long enough to still be fading
+        instrument.release = stage(&[0.0; 16]); // long enough to still be fading
         let mut player = Player::live(vec![instrument], freqs(), rx, 4.0);
 
         for event in [on(1), on(2), off(2), on(3)] {
