@@ -2,7 +2,19 @@
 [![test](https://github.com/turkosaurus/synth/actions/workflows/test.yml/badge.svg)](https://github.com/turkosaurus/synth/actions/workflows/test.yml)
 ![GitHub Release](https://img.shields.io/github/v/release/turkosaurus/synth)
 
-_Lua defined Rust synthesizer and sequencer_
+_Lua-defined, Rust-driven synthesizer and sequencer_
+
+## install
+
+Linux x86_64 and macOS arm64:
+```sh
+curl -fsSL https://raw.githubusercontent.com/turkosaurus/synth/main/install.sh | bash
+```
+
+[`install.sh`](./install.sh) downloads and verifies the latest stable release, installing it to `$XDG_BIN_HOME`, or `~/.local/bin`.
+
+> [NOTE!]
+> `update` and `uninstall` act on the binary being run; defer to package manager if installed through one.
 
 ## requirements
 
@@ -20,7 +32,7 @@ mise run tui
 
 Except where necessary to preserve a non-blocking, non-allocating audio pipeline, care is taken to implement [the ELM architecture](https://guide.elm-lang.org/architecture/), separating data, mutation, and presentation.
 
-That exception is held by the module layout rather than by discipline, and `mise run test` enforces it: `mlua` may appear only in [`script.rs`](./src/script.rs) and under [`script/`](./src/script/), and `cpal` only in [`device.rs`](./src/audio/device.rs). [`render.rs`](./src/audio/render.rs) is therefore exactly what the audio callback executes, with no language runtime and no device within reach.
+That exception is held by the module layout rather than by discipline, and `mise run test:local` enforces it: `mlua` may appear only in [`script.rs`](./src/script.rs) and under [`script/`](./src/script/), and `cpal` only in [`device.rs`](./src/audio/device.rs). [`render.rs`](./src/audio/render.rs) is therefore exactly what the audio callback executes, with no language runtime and no device within reach.
 
 Goals:
 - fast: bad fidelity sounds cool, bad timing sounds *wrong*
