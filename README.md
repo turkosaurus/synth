@@ -2,7 +2,7 @@
 [![test](https://github.com/turkosaurus/synth/actions/workflows/test.yml/badge.svg)](https://github.com/turkosaurus/synth/actions/workflows/test.yml)
 ![GitHub Release](https://img.shields.io/github/v/release/turkosaurus/synth)
 
-_Lua defined Rust synthesizer and sequencer_
+_Lua-defined, Rust-driven synthesizer and sequencer_
 
 ## install
 
@@ -11,9 +11,10 @@ Linux x86_64 and macOS arm64:
 curl -fsSL https://raw.githubusercontent.com/turkosaurus/synth/main/install.sh | bash
 ```
 
-[`install.sh`](./install.sh) downloads the latest stable release, checks its sha256, and runs `synth install`, which copies the binary to `$XDG_BIN_HOME`, or `~/.local/bin`.
+[`install.sh`](./install.sh) downloads and verifies the latest stable release, installing it to `$XDG_BIN_HOME`, or `~/.local/bin`.
 
-`update` and `uninstall` act on the binary being run; defer to package manager if installed through one.
+> [NOTE!]
+> `update` and `uninstall` act on the binary being run; defer to package manager if installed through one.
 
 ## requirements
 
