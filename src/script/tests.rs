@@ -738,7 +738,7 @@ fn envelope_lengths_follow_the_sample_rate() {
 // that it still loads without warnings
 #[test]
 fn the_shipped_example_loads_clean() {
-    let patch = load(Path::new("lua/example.lua"), 48000).unwrap();
+    let patch = load(Path::new("lua/example.lua"), 48000, None).unwrap();
 
     assert!(patch.bpm > 0.0, "example should be a sequence");
     assert!(!patch.reports.is_empty());
@@ -926,7 +926,7 @@ fn cutoff_below_floor_warns() {
 #[test]
 fn the_root_reexports_every_module() {
     let lua = mlua::Lua::new();
-    lua_register(&lua, Vec::new()).unwrap();
+    lua_register(&lua, Vec::new(), None).unwrap();
 
     for (name, _) in MODULES {
         let Some(short) = name.strip_prefix("synth.") else {
@@ -970,7 +970,7 @@ fn structure_records_every_constructed_table_by_path() {
 #[test]
 fn the_default_patch_loads_clean() {
     // what `synth tui` plays with no file; nothing else exercises it
-    let patch = load_default(48000).unwrap();
+    let patch = load_default(48000, None).unwrap();
     assert!(patch.clean(), "default.lua raised warnings");
     assert_eq!(patch.structure[0].kind, "instrument");
 }
@@ -1012,7 +1012,7 @@ fn every_lua_default_passes_rust_validation() {
     // Lua owns the defaults and Rust owns what is valid; this keeps the two
     // from drifting apart
     let lua = mlua::Lua::new();
-    lua_register(&lua, Vec::new()).unwrap();
+    lua_register(&lua, Vec::new(), None).unwrap();
     let empty = || lua.create_table().unwrap();
 
     let envelope = construct(&lua, "synth.envelope", empty());
@@ -1045,18 +1045,24 @@ fn fixture(case: &str) -> std::path::PathBuf {
 
 #[test]
 fn a_patch_requires_modules_beside_it() {
-    load(&fixture("beside"), 48000).unwrap();
+    load(&fixture("beside"), 48000, None).unwrap();
+}
+
+#[test]
+fn a_patch_requires_from_the_patches_folder_after_its_own() {
+    let patches = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lua/loader/patches");
+    load(&fixture("from_patches"), 48000, Some(&patches)).unwrap();
 }
 
 #[test]
 fn a_file_named_like_a_built_in_does_not_replace_it() {
-    load(&fixture("shadow"), 48000).unwrap();
+    load(&fixture("shadow"), 48000, None).unwrap();
 }
 
 #[test]
 fn a_missing_module_lists_only_the_patch_folder() {
     let song = fixture("missing");
-    let error = load(&song, 48000).err().expect("nowhere.lua");
+    let error = load(&song, 48000, None).err().expect("nowhere.lua");
     let message = format!("{error:#}");
     let looked = song.with_file_name("nowhere.lua");
     assert!(
@@ -1120,4 +1126,36 @@ fn every_rejected_patch_fails_with_its_expected_error() {
         }
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+#[test]
+fn an_edited_built_in_copy_loads_in_place_of_the_built_in() {
+    let patches = std::env::temp_dir().join(format!("synth-edited-load-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&patches);
+    builtins::write(&patches).unwrap();
+    let wave = patches.join("synth/wave.lua");
+    let source = std::fs::read_to_string(&wave).unwrap();
+    std::fs::write(
+        &wave,
+        source.replace("return wave", "wave.edited = true\nreturn wave"),
+    )
+    .unwrap();
+
+    let patch = r#"
+        local synth = require("synth")
+        assert(require("synth.wave").edited, "the edited copy")
+        return synth.instrument({})
+    "#;
+    load_in(patch, "test", 48000, None, Some(&patches)).unwrap();
+    // without the patches folder, the built-in loads and has no mark
+    assert!(load_in(patch, "test", 48000, None, None).is_err());
+}
+
+#[test]
+fn every_starter_loads_in_one_patch() {
+    let patches = std::env::temp_dir().join(format!("synth-starters-load-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&patches);
+    starters::write(&patches).unwrap();
+    let patch = load(&fixture("starters"), 48000, Some(&patches)).unwrap();
+    assert!(patch.clean(), "{:?}", patch.reports);
 }

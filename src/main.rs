@@ -43,6 +43,13 @@ enum Commands {
     Tui { path: Option<PathBuf> },
     /// Open config.lua in $VISUAL or $EDITOR, creating it if needed
     Config,
+    /// Open your patches folder in $VISUAL or $EDITOR, creating it and
+    /// copying in the built-in modules if needed
+    Patches {
+        /// print the folder's path instead, for editors that cannot open one
+        #[arg(long)]
+        path: bool,
+    },
     /// Copy this binary to $XDG_BIN_HOME, or ~/.local/bin
     Install,
     /// Remove this binary
@@ -124,7 +131,12 @@ fn run() -> anyhow::Result<ExitCode> {
             println!();
             // a config that does not load is reported as the error it is
             let config_path = script::config_path();
-            view::report::config(config_path.as_deref(), &script::config()?);
+            let config = script::config()?;
+            view::report::config(config_path.as_deref(), &config);
+            if let Some(patches) = &config.patches {
+                println!();
+                view::report::builtins(&script::builtins::states(patches));
+            }
             // only patch problems fail; being in tmux is a fact, not an error
             if let Some(path) = path {
                 println!();
@@ -139,6 +151,7 @@ fn run() -> anyhow::Result<ExitCode> {
             view::tui::run(&mut session, &config.tui)?;
         }
         Commands::Config => return edit_config(),
+        Commands::Patches { path } => patches(path)?,
         Commands::Install => match install::install()? {
             install::Installed::Already(to) => println!("synth is installed at {}", to.display()),
             install::Installed::Copied { to, on_path } => {
@@ -184,8 +197,8 @@ fn gating() -> Gating {
 /// Opens `config.lua` in the user's editor, writing the template first if
 /// there is no file, then checks what was saved.
 fn edit_config() -> anyhow::Result<ExitCode> {
-    let path =
-        script::config_path().context("neither XDG_CONFIG_HOME nor HOME is an absolute path")?;
+    let path = script::config_path()
+        .context("no config directory: set XDG_CONFIG_HOME or HOME, or APPDATA on Windows")?;
     if !path.exists() {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
@@ -194,18 +207,7 @@ fn edit_config() -> anyhow::Result<ExitCode> {
             .with_context(|| format!("write {}", path.display()))?;
     }
 
-    let command = editor(std::env::var("VISUAL").ok(), std::env::var("EDITOR").ok());
-    let (program, args) = command.split_first().context("empty editor command")?;
-    let status = std::process::Command::new(program)
-        .args(args)
-        .arg(&path)
-        .status()
-        .with_context(|| format!("run {}", command.join(" ")))?;
-    anyhow::ensure!(
-        status.success(),
-        "{} exited with {status}",
-        command.join(" ")
-    );
+    open_in_editor(&path)?;
 
     match script::config() {
         Ok(config) => {
@@ -218,6 +220,40 @@ fn edit_config() -> anyhow::Result<ExitCode> {
             Ok(ExitCode::FAILURE)
         }
     }
+}
+
+/// Prints the patches folder, or creates it with a folder per kind and
+/// opens it in the user's editor.
+fn patches(print_path: bool) -> anyhow::Result<()> {
+    let dir = script::config()?.patches.context(
+        "no patches folder: set `patches` in config.lua, or HOME, or APPDATA on Windows",
+    )?;
+    if print_path {
+        println!("{}", dir.display());
+        return Ok(());
+    }
+    for wrote in script::starters::write(&dir)? {
+        println!("wrote {wrote}");
+    }
+    view::report::builtins_written(&script::builtins::write(&dir)?);
+    open_in_editor(&dir)
+}
+
+/// Opens `path`, a file or a folder, in the user's editor and waits for it.
+fn open_in_editor(path: &std::path::Path) -> anyhow::Result<()> {
+    let command = editor(std::env::var("VISUAL").ok(), std::env::var("EDITOR").ok());
+    let (program, args) = command.split_first().context("empty editor command")?;
+    let status = std::process::Command::new(program)
+        .args(args)
+        .arg(path)
+        .status()
+        .with_context(|| format!("run {}", command.join(" ")))?;
+    anyhow::ensure!(
+        status.success(),
+        "{} exited with {status}",
+        command.join(" ")
+    );
+    Ok(())
 }
 
 /// `$VISUAL`, else `$EDITOR`, else `vi`, split on whitespace so a value
@@ -233,7 +269,8 @@ fn editor(visual: Option<String>, editor: Option<String>) -> Vec<String> {
 
 /// Bakes a patch and reports it; fails when the patch has warnings.
 fn lint(path: &std::path::Path, rate: u32) -> anyhow::Result<ExitCode> {
-    let patch = script::load(path, rate)?;
+    let config = script::config()?;
+    let patch = script::load(path, rate, config.patches.as_deref())?;
     view::report::patch(path, &patch, rate);
     if patch.clean() {
         Ok(ExitCode::SUCCESS)
@@ -246,7 +283,7 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
     let output = audio::open(config.buffer_frames)?;
     let (sample_rate, channels) = (output.sample_rate, output.channels);
 
-    let patch = script::load(path, sample_rate)?;
+    let patch = script::load(path, sample_rate, config.patches.as_deref())?;
     let notes = patch.timeline.events.len();
     let player = audio::Player::new(patch.timeline, patch.freqs, sample_rate as f32)
         .with_filter(patch.filter);

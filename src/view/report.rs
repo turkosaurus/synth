@@ -52,6 +52,13 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
             ("file", file),
             ("buffer", buffer),
             ("queue", format!("{} events", config.queue)),
+            (
+                "patches",
+                match &config.patches {
+                    Some(dir) => dir.display().to_string(),
+                    None => "none (no HOME)".to_string(),
+                },
+            ),
             ("tui poll", ms(tui.poll)),
             ("meter hold", ms(tui.meter_hold)),
             ("meter fall", ms(tui.meter_fall)),
@@ -59,6 +66,42 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
         ],
         false,
     );
+}
+
+/// What `synth patches` did to the built-in copies: one line for each file
+/// it changed or kept, nothing for those already current.
+pub fn builtins_written(wrote: &[(&str, crate::script::builtins::Wrote)]) {
+    use crate::script::builtins::Wrote;
+    for (name, outcome) in wrote {
+        match outcome {
+            Wrote::Written => println!("wrote {name}"),
+            Wrote::Refreshed => println!("refreshed {name} to the current built-in"),
+            Wrote::Kept => println!("kept {name}: edited"),
+            Wrote::KeptBehind => {
+                println!("kept {name}: edited, and the built-in has changed since")
+            }
+            Wrote::Current => {}
+        }
+    }
+}
+
+/// Each built-in module and whether an edited copy replaces it.
+pub fn builtins(states: &[(&str, crate::script::builtins::State)]) {
+    use crate::script::builtins::State;
+    let rows: Vec<(&str, String)> = states
+        .iter()
+        .map(|(name, state)| {
+            let value = match state {
+                State::BuiltIn => "built in".to_string(),
+                State::Edited(path) => format!("edited: {}", path.display()),
+                State::EditedBehind(path) => {
+                    format!("edited, built-in newer: {}", path.display())
+                }
+            };
+            (*name, value)
+        })
+        .collect();
+    table::pairs("built-in modules", &rows, false);
 }
 
 /// Everything `check` reports about a loaded patch. Computes nothing:

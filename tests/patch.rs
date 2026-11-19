@@ -5,7 +5,7 @@ use synth::script;
 
 #[test]
 fn example_patch_bakes_clean() {
-    let patch = script::load(Path::new("lua/example.lua"), 48000).unwrap();
+    let patch = script::load(Path::new("lua/example.lua"), 48000, None).unwrap();
 
     // deliberately no exact tempo or envelope numbers: the example is tuned
     // by ear, so only its structural health is worth pinning here
@@ -19,7 +19,7 @@ fn example_patch_bakes_clean() {
 fn a_patch_that_returns_the_wrong_type_is_rejected() {
     // .err() rather than .unwrap_err(): the latter needs Patch: Debug so it
     // can print the Ok value, and Patch holds thousands of floats
-    let error = script::load(Path::new("Cargo.toml"), 48000)
+    let error = script::load(Path::new("Cargo.toml"), 48000, None)
         .err()
         .expect("Cargo.toml is not valid Lua");
     // Cargo.toml is not Lua, so this fails at parse rather than at the type check
