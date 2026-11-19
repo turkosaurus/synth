@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -40,6 +41,8 @@ enum Commands {
     Play { path: PathBuf },
     /// Play live from the keyboard; without a path, the default instrument
     Tui { path: Option<PathBuf> },
+    /// Open config.lua in $VISUAL or $EDITOR, creating it if needed
+    Config,
     /// Copy this binary to $XDG_BIN_HOME, or ~/.local/bin
     Install,
     /// Remove this binary
@@ -116,6 +119,10 @@ fn run() -> anyhow::Result<ExitCode> {
     match args.command {
         Commands::Doctor { path, rate } => {
             view::report::environment(gating());
+            println!();
+            // a config that does not load is reported as the error it is
+            let config_path = script::config_path();
+            view::report::config(config_path.as_deref(), &script::config()?);
             // only patch problems fail; being in tmux is a fact, not an error
             if let Some(path) = path {
                 println!();
@@ -128,6 +135,7 @@ fn run() -> anyhow::Result<ExitCode> {
             let mut session = Session::open(path.as_deref(), gating())?;
             view::tui::run(&mut session)?;
         }
+        Commands::Config => return edit_config(),
         Commands::Install => match install::install()? {
             install::Installed::Already(to) => println!("synth is installed at {}", to.display()),
             install::Installed::Copied { to, on_path } => {
@@ -162,6 +170,56 @@ fn gating() -> Gating {
     }
 }
 
+/// Opens `config.lua` in the user's editor, writing the template first if
+/// there is no file, then checks what was saved.
+fn edit_config() -> anyhow::Result<ExitCode> {
+    let path =
+        script::config_path().context("neither XDG_CONFIG_HOME nor HOME is an absolute path")?;
+    if !path.exists() {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+        }
+        std::fs::write(&path, script::CONFIG_TEMPLATE)
+            .with_context(|| format!("write {}", path.display()))?;
+    }
+
+    let command = editor(std::env::var("VISUAL").ok(), std::env::var("EDITOR").ok());
+    let (program, args) = command.split_first().context("empty editor command")?;
+    let status = std::process::Command::new(program)
+        .args(args)
+        .arg(&path)
+        .status()
+        .with_context(|| format!("run {}", command.join(" ")))?;
+    anyhow::ensure!(
+        status.success(),
+        "{} exited with {status}",
+        command.join(" ")
+    );
+
+    match script::config() {
+        Ok(config) => {
+            view::report::config(Some(&path), &config);
+            Ok(ExitCode::SUCCESS)
+        }
+        // saved as written; the next start reports the same error
+        Err(error) => {
+            eprintln!("error: {error:#}");
+            Ok(ExitCode::FAILURE)
+        }
+    }
+}
+
+/// `$VISUAL`, else `$EDITOR`, else `vi`, split on whitespace so a value
+/// like `code --wait` passes its flag. An empty variable counts as unset.
+fn editor(visual: Option<String>, editor: Option<String>) -> Vec<String> {
+    let chosen = [visual, editor]
+        .into_iter()
+        .flatten()
+        .find(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "vi".to_string());
+    chosen.split_whitespace().map(str::to_string).collect()
+}
+
 /// Bakes a patch and reports it; fails when the patch has warnings.
 fn lint(path: &std::path::Path, rate: u32) -> anyhow::Result<ExitCode> {
     let patch = script::load(path, rate)?;
@@ -174,7 +232,7 @@ fn lint(path: &std::path::Path, rate: u32) -> anyhow::Result<ExitCode> {
 }
 
 fn play(path: &std::path::Path) -> anyhow::Result<()> {
-    let output = audio::open()?;
+    let output = audio::open(script::config()?.buffer_frames)?;
     let (sample_rate, channels) = (output.sample_rate, output.channels);
 
     let patch = script::load(path, sample_rate)?;
@@ -207,4 +265,26 @@ fn play(path: &std::path::Path) -> anyhow::Result<()> {
     );
     println!("{}", view::report::stats(&snap));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::editor;
+
+    fn some(value: &str) -> Option<String> {
+        Some(value.to_string())
+    }
+
+    #[test]
+    fn visual_wins_then_editor_then_vi() {
+        assert_eq!(editor(some("nvim"), some("nano")), ["nvim"]);
+        assert_eq!(editor(None, some("nano")), ["nano"]);
+        assert_eq!(editor(some(" "), some("nano")), ["nano"]);
+        assert_eq!(editor(None, None), ["vi"]);
+    }
+
+    #[test]
+    fn an_editor_keeps_its_flags() {
+        assert_eq!(editor(some("code --wait"), None), ["code", "--wait"]);
+    }
 }

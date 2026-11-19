@@ -30,7 +30,7 @@ impl Session {
     /// Open the device, load the patch at `path` (or the default without
     /// one), and start it playing from the keyboard.
     pub fn open(path: Option<&Path>, gating: Gating) -> anyhow::Result<Self> {
-        let output = audio::open()?;
+        let output = audio::open(script::config()?.buffer_frames)?;
         let patch = match path {
             Some(path) => script::load(path, output.sample_rate)?,
             None => script::load_default(output.sample_rate)?,
