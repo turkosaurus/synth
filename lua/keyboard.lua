@@ -93,10 +93,9 @@ local function chars(text)
 end
 
 -- A layout from a template laid out as a fretboard, carrying the template's
--- name and control keys: along a row each key is
--- a semitone up, each row is `offset` above the one below it, and a shifted
--- key is its plain key an octave up. Keys that land outside MIDI's 0 to 127
--- are left out.
+-- name and control keys. Along a row each key is a semitone up, each row is
+-- `offset` above the one below it, and a shifted key is its plain key an
+-- octave up. Keys that land outside MIDI's 0 to 127 are left out.
 function keyboard.grid(opts)
 	opts = opts or {}
 	for key in pairs(opts) do
