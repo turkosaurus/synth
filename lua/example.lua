@@ -12,13 +12,13 @@ return synth.sequence({
 	keyboard = synth.keyboard({
 		-- qwerty, qwertz, azerty, dvorak, colemak, or your own
 		layout = synth.keyboard.qwerty,
-		octave_up = { "pageup" }, -- shift up one octave (required)
-		octave_down = { "pagedown" }, -- shift down one octave (required)
+		octave_up = { "pageup" }, -- shift up one octave (unset: layout's)
+		octave_down = { "pagedown" }, -- shift down one octave (unset: layout's)
 		octave = 0, -- starting octave offset (0: layout default)
 		octave_low = 3, -- octaves down from start selectable by octave_down
 		octave_high = 2, -- octaves up from the start selectable by octave_up
-		help = { "?" }, -- show the help screen (required)
-		stop = { "escape", "backspace" }, -- silence everything (required)
+		help = { "?" }, -- show the help screen (unset: layout's)
+		stop = { "escape", "backspace" }, -- silence everything (non-empty)
 		gate = 300, -- ms; note length when the terminal cannot report key release
 		repeat_window = 600, -- ms; a repeat press this soon is OS autorepeat
 		velocity = 90, -- 1 to 127, for every note
