@@ -1,6 +1,6 @@
 # patches
 
-Starters for your patches folder. `synth patches` creates the folder with a folder per kind, and writes each kind's `example.lua` into a kind folder that holds no Lua yet. Once written, the files are yours: a folder with any `.lua` file in it gets nothing.
+Bootstrap for the patches folder. `synth patches` creates the directory with a subdirectory per patch kind, and writes each kind's `example.lua`, if empty (populated directories are skipped to persist user customizations).
 
 | folder | holds |
 | --- | --- |
@@ -10,6 +10,7 @@ Starters for your patches folder. `synth patches` creates the folder with a fold
 | [`tuning/`](./tuning) | MIDI note to Hz |
 | [`pattern/`](./pattern) | steps for a sequence |
 
+#TODO: fix this trainwreck of a sentence.
 The folder is `patches` in `config.lua`. Left as `""`, it is `$XDG_DATA_HOME/synth/patches` (`~/.local/share/synth/patches`), or `%APPDATA%\synth\patches` on Windows. `synth patches --path` prints it.
 
 ## require
