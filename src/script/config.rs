@@ -15,6 +15,10 @@ const HOME: &str = "HOME";
 const DEFAULT_CONFIG_HOME: &str = ".config";
 const FILE: [&str; 2] = ["synth", "config.lua"];
 
+/// What `synth config` writes when there is no file yet: every setting,
+/// commented out, so it starts as the default config.
+pub const TEMPLATE: &str = include_str!("../../lua/config.lua");
+
 /// Reads `config.lua` from the user's config directory. A missing file,
 /// or no directory to look in, is the default config.
 pub fn config() -> anyhow::Result<Config> {
@@ -110,6 +114,11 @@ mod tests {
     #[test]
     fn an_empty_table_leaves_the_buffer_to_the_platform() {
         assert_eq!(parse("return {}", "test").unwrap().buffer_frames, None);
+    }
+
+    #[test]
+    fn the_template_is_the_default_config() {
+        assert_eq!(parse(TEMPLATE, "template").unwrap(), Config::default());
     }
 
     #[test]

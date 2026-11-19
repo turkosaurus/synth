@@ -10,7 +10,7 @@ mod schema;
 mod structure;
 
 use crate::spec::Patch;
-pub use config::{config, config_path};
+pub use config::{config, config_path, TEMPLATE as CONFIG_TEMPLATE};
 use feed::{sequence, single, SINGLE};
 use keymap::keymap;
 

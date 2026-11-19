@@ -16,4 +16,5 @@ Lua defines not only configuration, but provides functions to the Rust audio eng
 | [`sequence.lua`](./sequence.lua) | sequencer blocks composed with chains |
 | [`default.lua`](./default.lua) | what plays when no file is given |
 | [`example.lua`](./example.lua) | test validator and example |
+| [`config.lua`](./config.lua) | template `synth config` writes for the machine's settings |
 
