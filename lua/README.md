@@ -17,5 +17,5 @@ Lua defines not only configuration, but provides functions to the Rust audio eng
 | [`default.lua`](./default.lua) | what plays when no file is given |
 | [`example.lua`](./example.lua) | test validator and example |
 | [`config.lua`](./config.lua) | default system config bootstrapped by `synth config` |
-| [`patches/`](./patches) | one example per kind, written into an empty kind folder by `synth patches` |
+| [`patches/`](./patches) | example/bootstrap patches written by `synth patches` |
 
