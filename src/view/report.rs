@@ -70,16 +70,20 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
 
 /// What `synth patches` did to the built-in copies: one line for each file
 /// it changed or kept, nothing for those already current.
-pub fn builtins_written(wrote: &[(&str, crate::script::builtins::Wrote)]) {
+/// With `asking`, an edited copy behind its built-in is left to the prompt
+/// that follows; without, the line says how to be asked.
+pub fn builtins_written(wrote: &[(&str, crate::script::builtins::Wrote)], asking: bool) {
     use crate::script::builtins::Wrote;
     for (name, outcome) in wrote {
         match outcome {
             Wrote::Written => println!("wrote {name}"),
             Wrote::Refreshed => println!("refreshed {name} to the current built-in"),
             Wrote::Kept => println!("kept {name}: edited"),
-            Wrote::KeptBehind => {
-                println!("kept {name}: edited, and the built-in has changed since")
-            }
+            Wrote::KeptBehind if asking => {}
+            Wrote::KeptBehind => println!(
+                "kept {name}: edited, and the built-in has changed since; \
+                 run synth patches in a terminal to choose"
+            ),
             Wrote::Current => {}
         }
     }

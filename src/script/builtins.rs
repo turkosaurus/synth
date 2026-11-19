@@ -164,6 +164,12 @@ fn save_bases(dir: &Path, bases: &BTreeMap<String, String>) -> anyhow::Result<()
     fs::write(&path, record).with_context(|| format!("write {}", path.display()))
 }
 
+/// Whether `synth patches` has written copies under `patches`, so there is
+/// anything for `synth update` to bring up to date.
+pub fn written(patches: &Path) -> bool {
+    patches.join(DIR).join(BASES).exists()
+}
+
 /// An edited copy whose built-in has changed since it was written: the one
 /// case `synth patches` asks about.
 pub struct Behind {
