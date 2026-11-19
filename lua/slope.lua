@@ -1,11 +1,11 @@
 -- slope defines linear and exponential slopes,
 -- composed into waves, envelopes, and other time-varying values.
 --
--- A curve is a shape: a function from t (0..1) across one envelope stage,
--- to how far along that stage's change the envelope is (also 0..1).
+-- A curve is a shape: a function from t (0..1) across one envelope stage (y-axis/amplitude),
+-- to how far along that stage's change the envelope is (also 0..1; x-axis/time).
 -- Rust samples and scales a curve to each stage, so one curve serves
 -- a rising attack and a falling release alike.
--- Any function of that shape works:
+-- An example:
 --   attack_curve = function(t) return t * t end
 local slope = {}
 
