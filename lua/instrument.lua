@@ -14,8 +14,8 @@ local instrument = setmetatable({}, {
 	end,
 })
 
--- A new table, built the way envelope builds one: the caller's fields, then
--- defaults, unknown fields kept for Rust to name.
+-- Copies the caller's fields, then fills in defaults.
+-- Unknown fields are kept, so Rust can name them.
 new = function(opts)
 	local out = {}
 	for key, value in pairs(opts or {}) do
