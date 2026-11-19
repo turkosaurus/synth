@@ -1,56 +1,75 @@
 [tools]
-# clippy is not in every rustup profile; CI's minimal install lacks it
-rust = { version = "1.98", components = "clippy" }
-# the release workflow reads Cargo.toml's version with it
+rust = { version = "1.98", components = "clippy,rustfmt" }
 yq = "4"
-# `mise run lint` checks lua/ with both
 lua-language-server = "3"
 stylua = "2"
-# `mise run lint:licenses` checks every dependency's license and source
 cargo-deny = "0.20"
-# `mise run notices` writes the release archive's third-party notices
 "ubi:EmbarkStudios/cargo-about" = "0.9"
 
-# cargo-edit compiles for minutes, so it is fetched here on first use rather
-# than listed in [tools], where every CI run would install it
-[tasks.bump]
-description = "bump the crate version in Cargo.toml and Cargo.lock: mise run bump <patch|minor|major>"
-run = "mise exec cargo:cargo-edit@0.13 -- cargo set-version --bump"
 
-[tasks."test:separation"]
-description = "lua stays in script.rs and script/, cpal stays in audio/device.rs, spec/ depends on neither"
-run = '''
-set -eu
-failed=0
-# allowed paths are extended regexes, anchored at the start
-for rule in 'mlua:src/script(\.rs|/)' 'cpal:src/audio/device\.rs'; do
-  name=${rule%%:*}
-  allowed=${rule#*:}
-  if offenders=$(grep -rln "use $name\|$name::" src/ | grep -vE "^($allowed)"); then
-    echo "::error title=test:separation::$name must stay in $allowed"
-    echo "$name must stay in $allowed, found in:" >&2
-    echo "$offenders" >&2
-    failed=1
-  fi
-done
-# spec is plain data between script and audio, so it names neither
-if offenders=$(grep -rlE "(crate|mlua|cpal)::" src/spec.rs src/spec/); then
-  echo "spec must not depend on the rest of the crate, found in:" >&2
-  echo "$offenders" >&2
-  failed=1
-fi
-exit $failed
-'''
+### RUN ###
 
-# test:core is a file task: mise-tasks/test/core
+[tasks.doctor]
+description = "report terminal capabilities and gating mode"
+run = "cargo run -- doctor"
 
-[tasks.test]
+[tasks.log]
+description = "follow the debug log; pair with a TUI in another pane"
+run = "touch synth.log; tail -F synth.log"
+
+[tasks.play]
+description = "play the example patch, then show the debug log"
+# synth writes synth.log only when RUST_LOG is set
+env = { RUST_LOG = "synth=debug" }
+run = "cargo run -- play lua/example.lua; cat synth.log"
+
+[tasks.tui]
+description = "play live from the keyboard with the default instrument"
+run = "cargo run -- tui"
+
+
+### TEST ###
+
+[tasks.tests]
+depends = ["test:*"]
+description = "every test:* task, network included"
+
+[tasks."test:local"]
 depends = ["test:rust", "test:separation", "test:core", "test:example"]
-description = "run all tests: cargo tests and the example patch lint"
+description = "tests that need no network"
+
+[tasks."test:rust"]
+description = "cargo tests"
+run = "cargo test --verbose -- --show-output || { echo '::error title=test:rust::cargo test failed'; exit 1; }"
+
+# #[ignore]d tests in tests/network.rs; CI runs them beside test
+[tasks."test:network"]
+description = "tests that reach GitHub releases"
+# they run target/debug/synth, which the other cargo tasks may be relinking
+wait_for = ["test:rust", "test:example"]
+run = "cargo test --test network -- --ignored || { echo '::error title=test:network::network tests failed'; exit 1; }"
+
+[tasks."test:example"]
+description = "lint example.lua; nonzero exit on warnings"
+run = "cargo run -- check lua/example.lua || { echo '::error file=lua/example.lua,title=test:example::synth check found warnings'; exit 1; }"
+
+
+### LINT ###
 
 [tasks.lint]
-depends = ["lint:rust", "lint:pedantic", "lint:lua", "lint:stylua", "lint:licenses"]
+depends = [
+    "lint:fmt",
+    "lint:rust",
+    "lint:pedantic",
+    "lint:lua",
+    "lint:stylua",
+    "lint:licenses",
+]
 description = "run all linters; any warning fails, except pedantic"
+
+[tasks."lint:fmt"]
+description = "cargo fmt check on the crate; any difference fails"
+run = "cargo fmt --check || { echo '::error title=lint:fmt::the crate is not formatted; run cargo fmt'; exit 1; }"
 
 [tasks."lint:rust"]
 description = "clippy on every target; any warning fails"
@@ -60,12 +79,8 @@ run = "cargo clippy --all-targets -- -D warnings || { echo '::error title=lint:r
 description = "clippy pedantic, for review; reports but never fails"
 run = "cargo clippy --all-targets -- -W clippy::pedantic"
 
-# lint:lua and lint:licenses are file tasks: mise-tasks/lint/
-
 [tasks."lint:stylua"]
 description = "stylua formatting check on lua/; any difference fails"
-# stylua exits 1 when files need formatting and 2 when it cannot run,
-# which is a bad stylua.toml or a Lua syntax error
 run = '''
 code=0
 stylua --check lua || code=$?
@@ -76,28 +91,9 @@ case $code in
 esac
 '''
 
-[tasks."test:rust"]
-description = "cargo tests"
-run = "cargo test --verbose -- --show-output || { echo '::error title=test:rust::cargo test failed'; exit 1; }"
 
-[tasks.play]
-description = "play the example patch, then show the debug log"
-# synth writes synth.log only when RUST_LOG is set
-env = { RUST_LOG = "synth=debug" }
-run = "cargo run -- play lua/example.lua; cat synth.log"
+### RELEASE ###
 
-[tasks.log]
-description = "follow the debug log; pair with a TUI in another pane"
-run = "touch synth.log; tail -F synth.log"
-
-[tasks.doctor]
-description = "report terminal capabilities and gating mode"
-run = "cargo run -- doctor"
-
-[tasks."test:example"]
-description = "lint example.lua; nonzero exit on warnings"
-run = "cargo run -- check lua/example.lua || { echo '::error file=lua/example.lua,title=test:example::synth check found warnings'; exit 1; }"
-
-[tasks.tui]
-description = "play live from the keyboard with the default instrument"
-run = "cargo run -- tui"
+[tasks.bump]
+description = "bump the crate version in Cargo.toml and Cargo.lock: mise run bump <patch|minor|major>"
+run = "mise exec cargo:cargo-edit@0.13 -- cargo set-version --bump"
