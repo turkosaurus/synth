@@ -87,8 +87,24 @@ pub fn install() -> anyhow::Result<Installed> {
 /// synth keeps no other files yet; when it does, they go here too.
 pub fn uninstall() -> anyhow::Result<PathBuf> {
     let exe = exe()?;
-    fs::remove_file(&exe).with_context(|| format!("remove {}", exe.display()))?;
+    remove_running(&exe).with_context(|| format!("remove {}", exe.display()))?;
     Ok(exe)
+}
+
+/// Unix deletes a running binary; the process keeps its inode until exit.
+#[cfg(not(windows))]
+fn remove_running(exe: &Path) -> std::io::Result<()> {
+    fs::remove_file(exe)
+}
+
+/// Windows refuses to delete a running `.exe` but lets it be renamed. It
+/// moves into the temp folder, which Windows cleans, or, when that is on
+/// another drive a rename cannot cross, to `synth.exe.old` beside it, which
+/// the next install or update removes.
+#[cfg(windows)]
+fn remove_running(exe: &Path) -> std::io::Result<()> {
+    let temp = env::temp_dir().join(format!("{BIN}-{}.exe.old", std::process::id()));
+    fs::rename(exe, &temp).or_else(|_| fs::rename(exe, exe.with_extension("exe.old")))
 }
 
 /// Writes `binary` beside `to` and renames it over `to`.
@@ -126,12 +142,22 @@ fn set_aside(_to: &Path) -> std::io::Result<()> {
 }
 
 /// Windows refuses to replace a running `.exe` but lets it be renamed, so
-/// the old one moves to `synth.exe.old` first, which is removed the next
-/// time this runs, once nothing is running from it.
+/// the old one moves to `synth.exe.old` first. Old copies left by earlier
+/// runs, beside it or in the temp folder, are removed here once nothing
+/// runs from them; one still running stays until a later run.
 #[cfg(windows)]
 fn set_aside(to: &Path) -> std::io::Result<()> {
     let old = to.with_extension("exe.old");
     let _ = fs::remove_file(&old);
+    if let Ok(entries) = fs::read_dir(env::temp_dir()) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(&format!("{BIN}-")) && name.ends_with(".exe.old") {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
     match fs::rename(to, &old) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         other => other,
