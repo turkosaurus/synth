@@ -419,10 +419,11 @@ fn state(keyboard: &Keyboard, freqs: &[f32], gating: Gating) -> Table<'static> {
         None => ("—".to_string(), dim),
     };
 
-    let octave = keyboard.octave();
+    let (octave, at_start) = keyboard.octave();
     let octave = (
         format!("{octave:+}"),
-        if octave == 0 {
+        // dim at the start, so the row lights up only once it has moved
+        if at_start {
             dim
         } else {
             Style::new().fg(Color::Cyan)

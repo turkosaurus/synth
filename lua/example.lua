@@ -11,7 +11,9 @@ return synth.sequence({
 		-- replace the layout's octave keys; a key name or a single character
 		octave_up = { "pageup" },
 		octave_down = { "pagedown" },
-		octave_range = 4, -- octaves either way from the start
+		octave = -1, -- start shift; -1 puts A3 on the anchor key
+		octave_low = 3, -- octaves down from the start
+		octave_high = 4, -- octaves up from the start
 		help = { "/", "?" },
 		stop = { "escape" }, -- silence everything; must not be empty
 		gate = 200, -- ms; note length when the terminal cannot report key release
