@@ -21,13 +21,11 @@ pub(crate) enum Key {
     PageDown,
 }
 
-/// An isomorphic grid resolved to MIDI notes, built from `lua/keyboard.lua`,
+/// Characters mapped to MIDI notes, built from `lua/keyboard.lua`.
 pub(crate) struct Keymap {
     pub notes: HashMap<char, u8>,
-    /// Which built-in layout this came from, if it was one.
-    pub template: Option<String>,
-    /// Semitones between rows of the grid.
-    pub offset: i32,
+    /// The layout's name, if the patch gave one.
+    pub name: Option<String>,
     pub octave_up: Vec<Key>,
     pub octave_down: Vec<Key>,
     pub stop: Vec<Key>,

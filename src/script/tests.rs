@@ -360,7 +360,7 @@ fn changing_offset_keeps_the_anchor_on_pitch() {
         return instrument({
             waveform = wave.triangle,
             envelope = envelope({}),
-            keyboard = keyboard({ offset = 7 }),
+            keyboard = keyboard({ notes = keyboard.grid({ offset = 7 }) }),
         })
     "#;
     let patch = load_source(source, "test", 48000).unwrap();
@@ -378,7 +378,9 @@ fn an_explicit_shifted_row_of_the_wrong_length_is_rejected() {
         local keyboard = require("synth.keyboard")
         return instrument({
             keyboard = keyboard({
-                template = { rows = { "asdfghjkl" }, shifted = { "ASD" } },
+                notes = keyboard.grid({
+                    template = { rows = { "asdfghjkl" }, shifted = { "ASD" } },
+                }),
             }),
         })
     "#;
@@ -387,6 +389,100 @@ fn an_explicit_shifted_row_of_the_wrong_length_is_rejected() {
         .expect("row and its shifted form differ in length");
     assert!(
         format!("{error:#}").contains("differ in length"),
+        "unexpected: {error:#}"
+    );
+}
+
+/// Loads an instrument whose keyboard is `keyboard`, a Lua expression.
+fn with_keyboard(keyboard: &str) -> anyhow::Result<Patch> {
+    let source = format!(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({{
+            waveform = synth.wave.triangle,
+            envelope = synth.envelope({{}}),
+            keyboard = {keyboard},
+        }})
+        "#
+    );
+    load_source(&source, "test", 48000)
+}
+
+#[test]
+fn a_patch_can_write_its_own_notes() {
+    let patch = with_keyboard(r#"synth.keyboard({ notes = { a = 60, ["é"] = 62 } })"#).unwrap();
+
+    assert_eq!(patch.keymap.notes.len(), 2);
+    assert_eq!(patch.keymap.notes.get(&'a'), Some(&60));
+    assert_eq!(patch.keymap.notes.get(&'é'), Some(&62));
+    assert_eq!(patch.keymap.name, None, "unnamed notes read as custom");
+}
+
+#[test]
+fn the_default_layout_is_named() {
+    let patch = with_keyboard("synth.keyboard({})").unwrap();
+    assert_eq!(patch.keymap.name.as_deref(), Some("qwerty"));
+}
+
+#[test]
+fn the_grid_reads_keys_outside_ascii() {
+    let patch = with_keyboard(
+        r#"synth.keyboard({ notes = synth.keyboard.grid({
+            anchor = { key = "ö", note = 60 },
+            template = { rows = { "äöü" }, shifted = { "ÄÖÜ" } },
+        }) })"#,
+    )
+    .unwrap();
+    let notes = &patch.keymap.notes;
+
+    assert_eq!(notes.get(&'ä'), Some(&59));
+    assert_eq!(notes.get(&'ü'), Some(&61));
+    assert_eq!(notes.get(&'Ö'), Some(&72));
+}
+
+#[test]
+fn a_notes_key_longer_than_one_character_is_named() {
+    let error = with_keyboard(r"synth.keyboard({ notes = { ab = 60 } })")
+        .err()
+        .expect("a two-character key cannot be pressed");
+    assert!(
+        format!("{error:#}").contains("key 'ab' must be one character"),
+        "unexpected: {error:#}"
+    );
+}
+
+#[test]
+fn a_note_outside_midi_is_named() {
+    for (note, shown) in [("128", "128"), ("-1", "-1"), ("60.5", "60.5")] {
+        let error = with_keyboard(&format!("synth.keyboard({{ notes = {{ a = {note} }} }})"))
+            .err()
+            .expect("not a MIDI note");
+        assert!(
+            format!("{error:#}").contains(&format!("keyboard.notes['a'] is {shown}")),
+            "unexpected: {error:#}"
+        );
+    }
+}
+
+#[test]
+fn the_grid_names_an_unknown_field() {
+    let error = with_keyboard("synth.keyboard({ notes = synth.keyboard.grid({ offest = 7 }) })")
+        .err()
+        .expect("offest is misspelled");
+    assert!(
+        format!("{error:#}").contains("keyboard.grid: unknown field 'offest'"),
+        "unexpected: {error:#}"
+    );
+}
+
+#[test]
+fn grid_fields_on_the_keyboard_are_named() {
+    // the layout used to take these directly; they now belong to the grid
+    let error = with_keyboard("synth.keyboard({ offset = 7 })")
+        .err()
+        .expect("offset is a grid field");
+    assert!(
+        format!("{error:#}").contains("unknown field `offset`"),
         "unexpected: {error:#}"
     );
 }

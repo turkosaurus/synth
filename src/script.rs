@@ -131,9 +131,8 @@ mod field {
     pub(super) const DURATION: &str = "duration";
     pub(super) const VELOCITY: &str = "velocity";
 
-    pub(super) const ANCHOR: &str = "anchor";
-    pub(super) const OFFSET: &str = "offset";
-    pub(super) const TEMPLATE: &str = "template";
+    pub(super) const NAME: &str = "name";
+    pub(super) const NOTES: &str = "notes";
     pub(super) const OCTAVE_UP: &str = "octave_up";
     pub(super) const OCTAVE_DOWN: &str = "octave_down";
     pub(super) const STOP: &str = "stop";

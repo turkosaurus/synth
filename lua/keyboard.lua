@@ -11,18 +11,11 @@ local keyboard = setmetatable({}, {
 	end,
 })
 
--- A fretboard like layout, where each row is a string.
--- Offset represents the semitones between rows.
---   4 (major third):     SP-404 pad grid (nice for macro/numpads or ortholinear)
---   5 (perfect fourth):  bass or guitar (good for character keyboards)
---   7 (perfect fifth):   mandolin or violin (also good for character keyboards)
--- Anchor is the character for A4, around which all others are derived.
+-- `notes` maps each character to a MIDI note. Rust reads only that map, so
+-- any layout works: `keyboard.grid` below, or a patch's own table. Left out,
+-- it is `keyboard.grid()`. `name` is shown by the TUI; a patch's own `notes`
+-- with no `name` reads as custom.
 local defaults = {
-	anchor = {
-		key = "a", -- second string "open"
-		note = 69, -- MIDI A4
-	},
-	offset = 5, -- semitones offset between rows
 	octave_up = { "=", "+" },
 	octave_down = { "-", "_" },
 	stop = { "escape" }, -- silence everything; must not be empty
@@ -41,8 +34,6 @@ local defaults = {
 }
 
 -- Grid of character keys in their lowercase and shifted forms.
--- `name` is carried so a view can report which layout is in use. A patch
--- supplying its own rows leaves it unset, and reads as custom.
 keyboard.templates = {
 	qwerty = {
 		name = "qwerty",
@@ -64,6 +55,86 @@ function keyboard.template(name)
 	return template
 end
 
+-- A fretboard like layout, where each row is a string.
+-- Offset represents the semitones between rows.
+--   4 (major third):     SP-404 pad grid (nice for macro/numpads or ortholinear)
+--   5 (perfect fourth):  bass or guitar (good for character keyboards)
+--   7 (perfect fifth):   mandolin or violin (also good for character keyboards)
+-- Anchor is the character for A4, around which all others are derived.
+local grid_defaults = {
+	anchor = {
+		key = "a", -- second string "open"
+		note = 69, -- MIDI A4
+	},
+	offset = 5, -- semitones offset between rows
+	template = keyboard.templates.qwerty,
+}
+
+-- The characters of a UTF-8 string. LuaJIT has no utf8 library, and a
+-- template row may hold a key outside ASCII.
+local function chars(text)
+	local out = {}
+	for ch in text:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+		out[#out + 1] = ch
+	end
+	return out
+end
+
+-- The fretboard as a `notes` map: along a row each key is a semitone up,
+-- each row is `offset` above the one below it, and a shifted key is its
+-- plain key an octave up. Keys that land outside MIDI's 0 to 127 are left
+-- out.
+function keyboard.grid(opts)
+	opts = opts or {}
+	for key in pairs(opts) do
+		if grid_defaults[key] == nil then
+			error("keyboard.grid: unknown field '" .. tostring(key) .. "'", 2)
+		end
+	end
+	local anchor = opts.anchor or grid_defaults.anchor
+	local offset = opts.offset or grid_defaults.offset
+	local template = opts.template or grid_defaults.template
+
+	if #template.rows ~= #template.shifted then
+		error("keyboard.grid: a template's rows and shifted must have the same number of rows", 2)
+	end
+	local rows, shifted = {}, {}
+	for r = 1, #template.rows do
+		rows[r] = chars(template.rows[r])
+		shifted[r] = chars(template.shifted[r])
+		if #rows[r] ~= #shifted[r] then
+			error("keyboard.grid: template row " .. r .. " and its shifted form differ in length", 2)
+		end
+	end
+
+	-- the anchor fixes the grid, so changing `offset` keeps that key on pitch
+	local base
+	for r = 1, #rows do
+		for c, ch in ipairs(rows[r]) do
+			if ch == anchor.key then
+				base = anchor.note - (r - 1) * offset - (c - 1)
+			end
+		end
+	end
+	if base == nil then
+		error("keyboard.grid: anchor key '" .. tostring(anchor.key) .. "' does not appear in the template", 2)
+	end
+
+	local notes = {}
+	for r = 1, #rows do
+		for c = 1, #rows[r] do
+			local note = base + (r - 1) * offset + (c - 1)
+			if note >= 0 and note <= 127 then
+				notes[rows[r][c]] = note
+			end
+			if note + 12 >= 0 and note + 12 <= 127 then
+				notes[shifted[r][c]] = note + 12
+			end
+		end
+	end
+	return notes
+end
+
 -- A new table: the caller's fields, then defaults for any left out. The
 -- caller's table is left alone, and nothing is discarded, so a misspelled
 -- field reaches Rust and gets named instead of silently taking a default.
@@ -77,8 +148,11 @@ new = function(opts)
 			out[key] = default
 		end
 	end
-	if out.template == nil then
-		out.template = keyboard.template("qwerty")
+	if out.notes == nil then
+		out.notes = keyboard.grid()
+		if out.name == nil then
+			out.name = grid_defaults.template.name
+		end
 	end
 	return out
 end
