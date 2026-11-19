@@ -157,6 +157,13 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
         println!();
     }
 
+    for diagnostic in &patch.tuning_diagnostics {
+        println!("  warn  {diagnostic}");
+    }
+    if !patch.tuning_diagnostics.is_empty() {
+        println!();
+    }
+
     // where every value came from: the path is what a reload will match on,
     // and the line is where to look when a value is wrong
     let rows = patch

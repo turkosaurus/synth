@@ -9,7 +9,7 @@ mod keymap;
 mod schema;
 mod structure;
 
-use crate::spec::Patch;
+use crate::spec::{Diagnostic, DiagnosticKind, Patch};
 pub use config::{config, config_path, TEMPLATE as CONFIG_TEMPLATE};
 use feed::{sequence, single, SINGLE};
 use keymap::keymap;
@@ -244,13 +244,7 @@ fn load_in(
         }
     };
 
-    let mut freqs = Vec::with_capacity(128);
-    for note in 0..128 {
-        let hz: f64 = to_hz
-            .call(note)
-            .with_context(|| format!("tuning must return Hz for note {note}"))?;
-        freqs.push(hz as f32);
-    }
+    let (freqs, tuning_diagnostics) = tune(&to_hz, sample_rate)?;
 
     // a patch may ship its own layout; otherwise the embedded default
     let layout: mlua::Table = match table.get(field::KEYBOARD)? {
@@ -291,12 +285,61 @@ fn load_in(
     };
     let mut patch = Patch {
         structure,
+        tuning_diagnostics,
         filter_report: filter.as_ref().map(|spec| spec.report(sample_rate)),
         filter: filter.map(|spec| spec.filter),
         ..patch?
     };
     locate(&mut patch);
     Ok(patch)
+}
+
+/// Hz for every MIDI note from the patch's tuning.
+///
+/// A frequency that is not positive and finite stops the load: it would
+/// reach the oscillator as a NaN or a frozen phase. One above Nyquist is
+/// only a warning, since it plays, folded back to a lower pitch.
+fn tune(to_hz: &mlua::Function, sample_rate: u32) -> anyhow::Result<(Vec<f32>, Vec<Diagnostic>)> {
+    let mut freqs = Vec::with_capacity(128);
+    for note in 0..128u8 {
+        let hz: f64 = to_hz
+            .call(note)
+            .with_context(|| format!("tuning must return Hz for note {note}"))?;
+        // checked after narrowing, so a value too large for f32 is caught
+        let narrowed = hz as f32;
+        if !(narrowed.is_finite() && narrowed > 0.0) {
+            // exponent form only where plain digits would run on
+            let shown = if hz.abs() >= 1e9 {
+                format!("{hz:e}")
+            } else {
+                format!("{hz}")
+            };
+            anyhow::bail!(
+                "tuning returned {shown} Hz for note {note}; must be positive and finite"
+            );
+        }
+        freqs.push(narrowed);
+    }
+
+    let nyquist = sample_rate as f32 / 2.0;
+    let mut diagnostics = Vec::new();
+    // tunings rise with the note, but nothing requires it, so every note is
+    // checked rather than the first one over
+    let over: Vec<u8> = (0..128u8)
+        .filter(|&note| freqs[note as usize] > nyquist)
+        .collect();
+    if let (Some(first), Some(last)) = (over.first(), over.last()) {
+        let notes = if first == last {
+            format!("note {first} is")
+        } else {
+            format!("{} notes from {first} to {last} are", over.len())
+        };
+        diagnostics.push(Diagnostic::new(
+            DiagnosticKind::Range,
+            format!("tuning: {notes} above Nyquist ({nyquist} Hz at {sample_rate} Hz) and fold to lower pitches"),
+        ));
+    }
+    Ok((freqs, diagnostics))
 }
 
 /// Gives every diagnostic the `file:line` of the constructor that built the

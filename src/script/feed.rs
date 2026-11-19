@@ -74,6 +74,7 @@ pub(super) fn single(
         reports: vec![(SINGLE.to_string(), report)],
         filter: None,
         filter_report: None,
+        tuning_diagnostics: Vec::new(),
         structure: Vec::new(),
     })
 }
@@ -214,6 +215,7 @@ pub(super) fn sequence(
         reports,
         filter: None,
         filter_report: None,
+        tuning_diagnostics: Vec::new(),
         structure: Vec::new(),
     })
 }

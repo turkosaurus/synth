@@ -934,6 +934,73 @@ fn the_shipped_example_loads_clean() {
     }
 }
 
+/// A bare instrument whose tuning is `tuning`, a Lua function expression.
+fn with_tuning(tuning: &str, rate: u32) -> anyhow::Result<Patch> {
+    let source = format!(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({{ tuning = {tuning} }})
+        "#
+    );
+    load_source(&source, "test", rate)
+}
+
+#[test]
+fn equal_temperament_is_clean_at_48k() {
+    let patch = with_tuning("synth.tuning.equal({})", 48000).unwrap();
+    assert!(
+        patch.tuning_diagnostics.is_empty(),
+        "{:?}",
+        patch.tuning_diagnostics
+    );
+    assert!(patch.clean());
+}
+
+#[test]
+fn a_tuning_that_is_not_a_positive_finite_hz_is_named() {
+    for (body, shown) in [
+        ("math.huge", "inf"),
+        ("0/0", "NaN"),
+        ("0", "0"),
+        ("-440", "-440"),
+        // finite as a Lua number, but too large for the f32 table
+        ("1e300", "1e300"),
+    ] {
+        let tuning = format!("function(note) if note == 69 then return {body} end return 440 end");
+        let error = with_tuning(&tuning, 48000).err().expect(body);
+        let message = format!("{error:#}");
+        let expected =
+            format!("tuning returned {shown} Hz for note 69; must be positive and finite");
+        assert!(message.contains(&expected), "{body}: {message}");
+    }
+}
+
+#[test]
+fn notes_above_nyquist_warn_with_their_range() {
+    // equal temperament reaches 12.5 kHz at note 127, over 8 kHz's Nyquist
+    let patch = with_tuning("synth.tuning.equal({})", 16000).unwrap();
+    assert!(!patch.clean());
+    let message = patch.tuning_diagnostics[0].to_string();
+    assert!(
+        message.contains("notes from 120 to 127 are above Nyquist (8000 Hz at 16000 Hz)"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_single_note_above_nyquist_is_named_alone() {
+    let patch = with_tuning(
+        "function(note) if note == 0 then return 30000 end return 440 end",
+        48000,
+    )
+    .unwrap();
+    let message = patch.tuning_diagnostics[0].to_string();
+    assert!(
+        message.contains("tuning: note 0 is above Nyquist"),
+        "{message}"
+    );
+}
+
 // a bare instrument file with `filter = <expr>`, or no filter for ""
 fn with_filter(filter: &str) -> anyhow::Result<Patch> {
     let field = if filter.is_empty() {
