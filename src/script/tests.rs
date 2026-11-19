@@ -33,7 +33,7 @@ fn instrument_with(wave: Vec<f32>) -> Instrument {
 
 #[test]
 fn clean_triangle_raises_nothing() {
-    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 0);
+    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 0, &[]);
     assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     assert_eq!(report.peak, 1.0);
     assert!(report.dc.abs() < 1e-6);
@@ -41,7 +41,7 @@ fn clean_triangle_raises_nothing() {
 
 #[test]
 fn flags_clamping() {
-    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 17);
+    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 17, &[]);
     assert!(report
         .diagnostics
         .iter()
@@ -54,6 +54,7 @@ fn flags_dc_offset() {
     let report = inspect(
         &instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)),
         0,
+        &[],
     );
     assert!(report
         .diagnostics
@@ -64,7 +65,7 @@ fn flags_dc_offset() {
 #[test]
 fn flags_wrap_discontinuity() {
     // a saw ends at +1 and restarts at -1: a step of 2.0 every cycle
-    let report = inspect(&instrument_with(wave_from(|p| 2.0 * p - 1.0, 2048)), 0);
+    let report = inspect(&instrument_with(wave_from(|p| 2.0 * p - 1.0, 2048)), 0, &[]);
     assert!(report
         .diagnostics
         .iter()
@@ -73,7 +74,11 @@ fn flags_wrap_discontinuity() {
 
 #[test]
 fn flags_weak_peak() {
-    let report = inspect(&instrument_with(wave_from(|p| triangle(p) * 0.2, 2048)), 0);
+    let report = inspect(
+        &instrument_with(wave_from(|p| triangle(p) * 0.2, 2048)),
+        0,
+        &[],
+    );
     assert!(report
         .diagnostics
         .iter()
@@ -86,7 +91,7 @@ fn flags_zero_release() {
     // rejects it before anything is baked
     let mut instrument = instrument_with(wave_from(triangle, 2048));
     instrument.release = vec![];
-    let report = inspect(&instrument, 0);
+    let report = inspect(&instrument, 0, &[]);
     assert!(report
         .diagnostics
         .iter()
@@ -694,6 +699,40 @@ fn an_exponential_slope_runs_in_both_directions() {
     }
     // the classic quick drop and long tail: past halfway in one eighth
     assert!(release[1] < 0.7);
+}
+
+#[test]
+fn any_function_of_t_is_a_curve() {
+    let (attack, release) = baked("function(t) return t * t end", 4);
+    assert_eq!(attack, [0.0, 0.0625, 0.25, 0.5625]);
+    // the same shape, scaled to fall from sustain (1) to 0
+    assert_eq!(release, [1.0, 0.9375, 0.75, 0.4375]);
+}
+
+#[test]
+fn a_curve_outside_0_to_1_is_clamped_and_named() {
+    let source = r#"
+        local synth = require("synth")
+        return synth.instrument({
+            envelope = synth.envelope({
+                attack = 10,
+                attack_curve = function() return 1000 end,
+            }),
+        })
+    "#;
+    let patch = load_source(source, "test", 1000).unwrap();
+    let attack = &patch.timeline.instruments[0].attack;
+    assert!(attack.iter().all(|&level| level == 1.0), "{attack:?}");
+    let report = &patch.reports[0].1;
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.message == "envelope.attack_curve left 0..1 at 10 points and was clamped"),
+        "{:?}",
+        report.diagnostics
+    );
+    assert!(!patch.clean());
 }
 
 #[test]
