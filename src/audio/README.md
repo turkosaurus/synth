@@ -16,9 +16,9 @@ sequenceDiagram
         participant rx as Feed::Live<br/>rtrb::Consumer
         participant timeline as Feed::Timeline
         participant player as render::Player
-        participant fx
+        participant fx as fx::Svf
+        participant device as device::stream<br/>cpal
     end
-    participant device
 
     note over tx,rx: one ring, split by session.rs
     device->>player: fill buffer
