@@ -10,10 +10,7 @@ use crate::spec::{Key, Keymap};
 #[serde(deny_unknown_fields)]
 struct KeyboardConfig {
     layout: Layout,
-    octave_up: Vec<String>,
-    octave_down: Vec<String>,
     stop: Vec<String>,
-    help: Vec<String>,
     // ms, implied rather than spelled in the Lua name
     #[serde(rename = "gate")]
     gate_ms: f64,
@@ -23,7 +20,9 @@ struct KeyboardConfig {
     octave_range: i32,
 }
 
-/// Which character plays which note.
+/// Which character plays which note, and which keys a layout keeps for
+/// control, since a key one layout spends on a note another spends on an
+/// octave.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Layout {
@@ -33,6 +32,9 @@ struct Layout {
     /// Character to MIDI note. A float survives here so the range check
     /// below can name it, rather than serde rejecting it unnamed.
     notes: HashMap<String, f64>,
+    octave_up: Vec<String>,
+    octave_down: Vec<String>,
+    help: Vec<String>,
 }
 
 pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Keymap> {
@@ -61,19 +63,19 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
         "keyboard.stop must name at least one key to silence with"
     );
 
-    let octave_up = bindings(config.octave_up, "octave_up")?;
-    let octave_down = bindings(config.octave_down, "octave_down")?;
+    let octave_up = bindings(config.layout.octave_up, "layout.octave_up")?;
+    let octave_down = bindings(config.layout.octave_down, "layout.octave_down")?;
     // may be empty: a layout that would rather not spend a key on it
     // just leaves help unreachable
-    let help = bindings(config.help, "help")?;
+    let help = bindings(config.layout.help, "layout.help")?;
 
     // a control is checked before a note, so a key bound to both never
     // plays its note
     for (what, keys) in [
-        ("octave_up", &octave_up),
-        ("octave_down", &octave_down),
+        ("layout.octave_up", &octave_up),
+        ("layout.octave_down", &octave_down),
         ("stop", &stop),
-        ("help", &help),
+        ("layout.help", &help),
     ] {
         for key in keys {
             if let Key::Char(ch) = key {

@@ -16,41 +16,56 @@ local keyboard = setmetatable({}, {
 -- one position plays the same note whatever the layout. `anchor` is the key
 -- in the home row's first position.
 --
--- A space holds a position with no note: the key there is a control
--- binding below (octave or help), and a key cannot be both.
+-- The octave and help keys are the layout's own, so none of them falls in
+-- its note rows. Where qwerty's spot holds a letter or a dead key, a nearby
+-- symbol key stands in.
 keyboard.templates = {
 	qwerty = {
 		name = "qwerty",
 		anchor = "a",
 		rows = { "zxcvbnm,.", "asdfghjkl;", "qwertyuiop", "1234567890" },
 		shifted = { "ZXCVBNM<>", "ASDFGHJKL:", "QWERTYUIOP", "!@#$%^&*()" },
+		octave_down = { "-", "_" },
+		octave_up = { "=", "+" },
+		help = { "/", "?" },
 	},
 	qwertz = {
 		name = "qwertz",
 		anchor = "a",
 		rows = { "yxcvbnm,.", "asdfghjklö", "qwertzuiop", "1234567890" },
-		-- shift 7 is `/`, help; shift 0 is `=`, octave up
-		shifted = { "YXCVBNM;:", "ASDFGHJKLÖ", "QWERTZUIOP", '!"§$%& () ' },
+		shifted = { "YXCVBNM;:", "ASDFGHJKLÖ", "QWERTZUIOP", '!"§$%&/()=' },
+		octave_down = { "ß", "?" },
+		-- right of ü: the key right of ß is a dead accent
+		octave_up = { "+", "*" },
+		help = { "-", "_" },
 	},
 	azerty = {
 		name = "azerty",
 		anchor = "q",
-		-- the number row's `-` and `_` are octave down
-		rows = { "wxcvbn,;:", "qsdfghjklm", "azertyuiop", "&é\"'( è çà" },
-		-- `?` and `/` are help
-		shifted = { "WXCVBN . ", "QSDFGHJKLM", "AZERTYUIOP", "1234567890" },
+		rows = { "wxcvbn,;:", "qsdfghjklm", "azertyuiop", "&é\"'(-è_çà" },
+		shifted = { "WXCVBN?./", "QSDFGHJKLM", "AZERTYUIOP", "1234567890" },
+		octave_down = { ")", "°" },
+		octave_up = { "=", "+" },
+		help = { "!", "§" },
 	},
 	dvorak = {
 		name = "dvorak",
 		anchor = "a",
 		rows = { ";qjkxbmwv", "aoeuidhtns", "',.pyfgcrl", "1234567890" },
 		shifted = { ":QJKXBMWV", "AOEUIDHTNS", '"<>PYFGCRL', "!@#$%^&*()" },
+		octave_down = { "[", "{" },
+		octave_up = { "]", "}" },
+		-- qwerty's spot is z
+		help = { "/", "?" },
 	},
 	colemak = {
 		name = "colemak",
 		anchor = "a",
 		rows = { "zxcvbkm,.", "arstdhneio", "qwfpgjluy;", "1234567890" },
 		shifted = { "ZXCVBKM<>", "ARSTDHNEIO", "QWFPGJLUY:", "!@#$%^&*()" },
+		octave_down = { "-", "_" },
+		octave_up = { "=", "+" },
+		help = { "/", "?" },
 	},
 }
 
@@ -77,7 +92,8 @@ local function chars(text)
 	return out
 end
 
--- A layout from a template laid out as a fretboard: along a row each key is
+-- A layout from a template laid out as a fretboard, carrying the template's
+-- name and control keys: along a row each key is
 -- a semitone up, each row is `offset` above the one below it, and a shifted
 -- key is its plain key an octave up. Keys that land outside MIDI's 0 to 127
 -- are left out.
@@ -119,7 +135,7 @@ function keyboard.grid(opts)
 
 	local notes = {}
 	local function put(ch, n)
-		if ch ~= " " and n >= 0 and n <= 127 then
+		if n >= 0 and n <= 127 then
 			notes[ch] = n
 		end
 	end
@@ -130,7 +146,13 @@ function keyboard.grid(opts)
 			put(shifted[r][c], n + 12)
 		end
 	end
-	return { name = template.name, notes = notes }
+	return {
+		name = template.name,
+		notes = notes,
+		octave_up = template.octave_up,
+		octave_down = template.octave_down,
+		help = template.help,
+	}
 end
 
 -- Every template as a ready layout, for `keyboard({ layout = ... })`.
@@ -142,13 +164,11 @@ keyboard.dvorak = keyboard.grid({ template = keyboard.templates.dvorak })
 keyboard.colemak = keyboard.grid({ template = keyboard.templates.colemak })
 
 local defaults = {
-	-- `{ name, notes }`, where `notes` maps each character to a MIDI note.
-	-- Rust reads only that map, so a patch may write its own.
+	-- `{ name, notes, octave_up, octave_down, help }`, where `notes` maps
+	-- each character to a MIDI note. Rust reads only this table, so a patch
+	-- may write its own. `help` may be empty.
 	layout = keyboard.qwerty,
-	octave_up = { "=", "+" },
-	octave_down = { "-", "_" },
 	stop = { "escape" }, -- silence everything; must not be empty
-	help = { "/", "?" },
 	-- note length when the terminal cannot report key release
 	gate = 200, -- ms
 	-- when the terminal cannot report key release, a press of a key this

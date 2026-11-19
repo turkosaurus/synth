@@ -132,10 +132,7 @@ mod field {
     pub(super) const VELOCITY: &str = "velocity";
 
     pub(super) const LAYOUT: &str = "layout";
-    pub(super) const OCTAVE_UP: &str = "octave_up";
-    pub(super) const OCTAVE_DOWN: &str = "octave_down";
     pub(super) const STOP: &str = "stop";
-    pub(super) const HELP: &str = "help";
     pub(super) const GATE: &str = "gate";
     pub(super) const REPEAT_WINDOW: &str = "repeat_window";
     pub(super) const OCTAVE_RANGE: &str = "octave_range";

@@ -123,10 +123,7 @@ pub(super) const KEYBOARD: Schema = Schema {
     fields: &[
         // its name and notes are checked by keymap
         field(field::LAYOUT, Ty::Table, Bound::Any),
-        field(field::OCTAVE_UP, Ty::Table, Bound::Any),
-        field(field::OCTAVE_DOWN, Ty::Table, Bound::Any),
         field(field::STOP, Ty::Table, Bound::Any),
-        field(field::HELP, Ty::Table, Bound::Any),
         // a zero gate would end each note on the poll after it starts
         field(field::GATE, Ty::Number, Bound::Above(0.0)),
         // zero turns repeat detection off

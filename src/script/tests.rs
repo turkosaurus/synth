@@ -1,4 +1,4 @@
-use crate::spec::Instrument;
+use crate::spec::{Instrument, Key};
 
 use super::bake::inspect;
 use super::*;
@@ -410,8 +410,12 @@ fn with_keyboard(keyboard: &str) -> anyhow::Result<Patch> {
 
 #[test]
 fn a_patch_can_write_its_own_notes() {
-    let patch = with_keyboard(r#"synth.keyboard({ layout = { notes = { a = 60, ["é"] = 62 } } })"#)
-        .unwrap();
+    let patch = with_keyboard(
+        r#"synth.keyboard({ layout = {
+            notes = { a = 60, ["é"] = 62 }, octave_up = {}, octave_down = {}, help = {},
+        } })"#,
+    )
+    .unwrap();
 
     assert_eq!(patch.keymap.notes.len(), 2);
     assert_eq!(patch.keymap.notes.get(&'a'), Some(&60));
@@ -430,7 +434,10 @@ fn the_grid_reads_keys_outside_ascii() {
     let patch = with_keyboard(
         r#"synth.keyboard({ layout = synth.keyboard.grid({
             note = 60,
-            template = { anchor = "ö", rows = { "äöü" }, shifted = { "ÄÖÜ" } },
+            template = {
+                anchor = "ö", rows = { "äöü" }, shifted = { "ÄÖÜ" },
+                octave_up = {}, octave_down = {}, help = {},
+            },
         }) })"#,
     )
     .unwrap();
@@ -478,22 +485,43 @@ fn a_position_plays_the_same_note_in_every_layout() {
 }
 
 #[test]
+fn a_layout_brings_its_own_control_keys() {
+    // qwerty's octave and help characters are notes on qwertz
+    let patch = with_keyboard("synth.keyboard({ layout = synth.keyboard.qwertz })").unwrap();
+    let keymap = &patch.keymap;
+
+    assert!(keymap.notes.contains_key(&'='), "shift 0 plays");
+    assert!(keymap.notes.contains_key(&'/'), "shift 7 plays");
+    assert_eq!(keymap.octave_down, vec![Key::Char('ß'), Key::Char('?')]);
+    assert_eq!(keymap.help, vec![Key::Char('-'), Key::Char('_')]);
+}
+
+#[test]
 fn a_key_that_is_both_a_note_and_a_control_is_named() {
-    let error = with_keyboard(r#"synth.keyboard({ layout = { notes = { ["="] = 60 } } })"#)
-        .err()
-        .expect("= is octave_up");
+    let error = with_keyboard(
+        r#"synth.keyboard({ layout = {
+            notes = { ["="] = 60 }, octave_up = { "=" }, octave_down = {}, help = {},
+        } })"#,
+    )
+    .err()
+    .expect("= is octave_up");
     assert!(
-        format!("{error:#}")
-            .contains("keyboard.layout plays note 60 on '=', which keyboard.octave_up also binds"),
+        format!("{error:#}").contains(
+            "keyboard.layout plays note 60 on '=', which keyboard.layout.octave_up also binds"
+        ),
         "unexpected: {error:#}"
     );
 }
 
 #[test]
 fn a_notes_key_longer_than_one_character_is_named() {
-    let error = with_keyboard(r"synth.keyboard({ layout = { notes = { ab = 60 } } })")
-        .err()
-        .expect("a two-character key cannot be pressed");
+    let error = with_keyboard(
+        r"synth.keyboard({ layout = {
+            notes = { ab = 60 }, octave_up = {}, octave_down = {}, help = {},
+        } })",
+    )
+    .err()
+    .expect("a two-character key cannot be pressed");
     assert!(
         format!("{error:#}").contains("key 'ab' must be one character"),
         "unexpected: {error:#}"
@@ -504,7 +532,9 @@ fn a_notes_key_longer_than_one_character_is_named() {
 fn a_note_outside_midi_is_named() {
     for (note, shown) in [("128", "128"), ("-1", "-1"), ("60.5", "60.5")] {
         let error = with_keyboard(&format!(
-            "synth.keyboard({{ layout = {{ notes = {{ a = {note} }} }} }})"
+            "synth.keyboard({{ layout = {{
+                notes = {{ a = {note} }}, octave_up = {{}}, octave_down = {{}}, help = {{}},
+            }} }})"
         ))
         .err()
         .expect("not a MIDI note");
