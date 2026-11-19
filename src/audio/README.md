@@ -13,20 +13,23 @@ sequenceDiagram
         participant tx as rtrb::Producer
     end
     box audio callback
-        participant rx as rtrb::Consumer
+        participant rx as Feed::Live<br/>rtrb::Consumer
+        participant timeline as Feed::Timeline
         participant player as render::Player
         participant fx
     end
     participant device
 
     note over tx,rx: one ring, split by session.rs
-    keyboard->>tx: Event
-    tx-->>rx: lock-free push
     device->>player: fill buffer
-    rx->>player: Event
+    alt live
+        keyboard->>tx: Event
+        tx-->>rx: lock-free push
+        rx->>player: Event
+    else sequenced
+        timeline->>player: Event, due on the sample clock
+    end
     note over player: voices: phase, wave, envelope
     player->>fx: summed sample
     fx->>device: filtered sample
 ```
-
-A sequenced patch has no ring: `Player` reads events from its `Timeline` on the sample clock instead.
