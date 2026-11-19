@@ -1,6 +1,4 @@
--- The library root: one require reaches every module.
--- Each module stays requirable on its own as synth.<name>, so overriding one
--- never means overriding this file too.
+-- library root, can be overridden
 return {
 	envelope = require("synth.envelope"),
 	filter = require("synth.filter"),

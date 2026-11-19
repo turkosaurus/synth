@@ -53,8 +53,8 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
             ("buffer", buffer),
             ("queue", format!("{} events", config.queue)),
             (
-                "patches",
-                match &config.patches {
+                "patch_dir",
+                match &config.patch_dir {
                     Some(dir) => dir.display().to_string(),
                     None => "none (no HOME)".to_string(),
                 },

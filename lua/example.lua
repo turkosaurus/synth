@@ -1,3 +1,5 @@
+-- Example song file for showcasing composition
+-- and validating build output aurally.
 local synth = require("synth")
 
 return synth.sequence({
@@ -5,23 +7,24 @@ return synth.sequence({
 	division = 4, -- subdivisions per beat; 4 = 16th notes, 8 = 32nd notes, etc.
 	instrument = "tri", -- default for every pattern; stickiness resets per pattern
 	filter = synth.filter.lowpass({ cutoff = 2000, resonance = 0.3 }), -- on the summed output
-	-- every keyboard field, set away from its default (see keyboard.lua)
+
+	-- non-default keyboard overrides
 	keyboard = synth.keyboard({
 		-- qwerty, qwertz, azerty, dvorak, colemak, or your own
 		layout = synth.keyboard.qwerty,
-		-- replace the layout's octave keys; a key name or a single character
-		octave_up = { "pageup" },
-		octave_down = { "pagedown" },
-		octave = 0, -- start shift; 0 plays the layout as written
-		octave_low = 3, -- octaves down from the start
-		octave_high = 2, -- octaves up from the start
-		help = { "?" },
-		stop = { "escape", "backspace" }, -- silence everything; must not be empty
+		octave_up = { "pageup" }, -- shift up one octave (unset: layout's)
+		octave_down = { "pagedown" }, -- shift down one octave (unset: layout's)
+		octave = 0, -- starting octave offset (0: layout default)
+		octave_low = 3, -- octaves down from start selectable by octave_down
+		octave_high = 2, -- octaves up from the start selectable by octave_up
+		help = { "?" }, -- show the help screen (unset: layout's)
+		stop = { "escape", "backspace" }, -- silence everything (non-empty)
 		gate = 300, -- ms; note length when the terminal cannot report key release
 		repeat_window = 600, -- ms; a repeat press this soon is OS autorepeat
 		velocity = 90, -- 1 to 127, for every note
 	}),
 
+	-- define the synthesizer
 	instruments = {
 		tri = synth.instrument({
 			waveform = synth.wave.triangle,
@@ -36,6 +39,8 @@ return synth.sequence({
 
 	-- one step is one grid slot; duration is slots to sound, so >1 holds over
 	patterns = {
+		-- "chop" is an arbitrary variable name with musical significance,
+		-- allowing phrases to be composed by naming them in a chain.
 		chop = synth.sequence.list(function(add)
 			for _ = 1, 2 do
 				add({ note = 60, duration = 0.4 }, {})
@@ -43,6 +48,7 @@ return synth.sequence({
 			end
 		end),
 
+		-- You know the one. A finishing cliché.
 		lick = {
 			{ note = 60, duration = 0.1 },
 			{ note = 62, duration = 0.2 },
@@ -55,6 +61,7 @@ return synth.sequence({
 		},
 	},
 
+	-- another arbitrary variable name holding a composition of phrases.
 	chain = synth.sequence.list(function(add)
 		for _ = 1, 1 do
 			add("chop")

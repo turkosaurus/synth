@@ -274,9 +274,9 @@ fn with_voices(voice_count: &str) -> anyhow::Result<Patch> {
 }
 
 #[test]
-fn voice_count_defaults_to_mono() {
+fn voice_count_defaults_to_four() {
     let patch = with_voices("").unwrap();
-    assert_eq!(patch.timeline.instruments[0].voice_count, 1);
+    assert_eq!(patch.timeline.instruments[0].voice_count, 4);
 }
 
 #[test]

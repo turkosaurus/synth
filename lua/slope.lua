@@ -1,3 +1,6 @@
+-- slope defines linear and exponential slopes,
+-- composed into waves, envelopes, and other time-varying values.
+--
 -- A curve is a shape: a function from t (0..1) across one envelope stage,
 -- to how far along that stage's change the envelope is (also 0..1).
 -- Rust samples and scales a curve to each stage, so one curve serves

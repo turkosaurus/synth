@@ -12,7 +12,7 @@ pub mod starters;
 mod structure;
 
 use crate::spec::{Diagnostic, DiagnosticKind, Patch};
-pub use config::{config, config_path, TEMPLATE as CONFIG_TEMPLATE};
+pub use config::{config, config_path, template as config_template};
 use feed::{sequence, single, SINGLE};
 use keymap::keymap;
 
@@ -226,7 +226,7 @@ mod field {
 
     pub(super) const BUFFER_FRAMES: &str = "buffer_frames";
     pub(super) const QUEUE: &str = "queue";
-    pub(super) const PATCHES: &str = "patches";
+    pub(super) const PATCH_DIR: &str = "patch_dir";
     pub(super) const TUI: &str = "tui";
     pub(super) const POLL: &str = "poll";
     pub(super) const METER_HOLD: &str = "meter_hold";

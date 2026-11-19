@@ -43,40 +43,15 @@ Views are assembled from data, and presentation layers never do additional work.
 ### diagram
 
 ```mermaid
-sequenceDiagram
-    participant lua
-    participant input
-    box rust
-        participant producer
-        participant consumer
-        participant instruments@{ "type" : "database" }
-        participant timeline@{ "type" : "database" }
-    end
-
-    participant output
-
-    producer->>+lua: load scripts
-    lua->>-producer: return funcs/tables
-
-    producer->>instruments: bake waves and envelopes
-    producer->>consumer: bake freqs, midi to hz
-    producer->>producer: bake keymap
-
-    alt live
-        note over producer: listening
-        input->>producer: keypress
-        note over producer: key to midi note, plus octave
-        producer->>consumer: note on/off, real-time ring buffer
-    else sequenced
-        producer->>timeline: schedule note events
-        timeline->>consumer: note events due on the sample clock
-    end
-
-    consumer->>+instruments: fetch
-    note over consumer: pitch, phase, envelope: produce samples
-    instruments->>-consumer: wave and envelope
-    consumer->>output: to OS API
+flowchart LR
+    lua[(lua)] --> script --> spec[(spec)] --> audio
+    input -- events --> audio
+    audio --> output([OS audio])
+    session -. wires .-> input & audio
+    view -. drives .-> session
 ```
+
+Each part has its own README: [`lua`](./lua), [`script`](./src/script), [`spec`](./src/spec), [`audio`](./src/audio), [`view`](./src/view), or [`src`](./src) for the whole.
 
 ## backend
 

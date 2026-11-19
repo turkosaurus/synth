@@ -1,3 +1,6 @@
+-- Attack, Decay, Sustain, Release (ADSR) envelope generator,
+-- defined as a table of parameters and first-class functions,
+-- baked by Rust into an amplitude curve at load.
 local slope = require("synth.slope")
 
 local new -- the constructor, defined below
