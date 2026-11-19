@@ -10,7 +10,7 @@ Bootstrap for the patches folder. `synth patches` creates the directory with a s
 | [`tuning/`](./tuning) | MIDI note to Hz |
 | [`pattern/`](./pattern) | steps for a sequence |
 
-`patches` in `config.lua` sets where the folder lives. The default, `""`, is `$XDG_DATA_HOME/synth/patches` (`~/.local/share/synth/patches`), or `%APPDATA%\synth\patches` on Windows. `synth patches --path` prints it.
+[`config.lua`](../config.lua):`patch_dir` defaults to `$XDG_DATA_HOME/synth/patches` (or `%APPDATA%\synth\patches`) when unset or `""`. `synth patches --path` prints it.
 
 ## require
 

@@ -138,7 +138,7 @@ fn run() -> anyhow::Result<ExitCode> {
             let config_path = script::config_path();
             let config = script::config()?;
             view::report::config(config_path.as_deref(), &config);
-            if let Some(patches) = &config.patches {
+            if let Some(patches) = &config.patch_dir {
                 println!();
                 view::report::builtins(&script::builtins::states(patches));
             }
@@ -233,8 +233,8 @@ fn edit_config() -> anyhow::Result<ExitCode> {
 /// Prints the patches folder, or creates it with a folder per kind and
 /// opens it in the user's editor.
 fn patches(print_path: bool, sync: bool) -> anyhow::Result<()> {
-    let dir = script::config()?.patches.context(
-        "no patches folder: set `patches` in config.lua, or HOME, or APPDATA on Windows",
+    let dir = script::config()?.patch_dir.context(
+        "no patches folder: set `patch_dir` in config.lua, or HOME, or APPDATA on Windows",
     )?;
     if print_path {
         println!("{}", dir.display());
@@ -305,7 +305,7 @@ fn resolve_behind(
 /// for a patches folder that already has copies; a failure here is
 /// reported, but the update itself has succeeded.
 fn sync_patches() {
-    let Ok(Some(dir)) = script::config().map(|config| config.patches) else {
+    let Ok(Some(dir)) = script::config().map(|config| config.patch_dir) else {
         return;
     };
     if !script::builtins::written(&dir) {
@@ -354,7 +354,7 @@ fn editor(visual: Option<String>, editor: Option<String>) -> Vec<String> {
 /// Bakes a patch and reports it; fails when the patch has warnings.
 fn lint(path: &std::path::Path, rate: u32) -> anyhow::Result<ExitCode> {
     let config = script::config()?;
-    let patch = script::load(path, rate, config.patches.as_deref())?;
+    let patch = script::load(path, rate, config.patch_dir.as_deref())?;
     view::report::patch(path, &patch, rate);
     if patch.clean() {
         Ok(ExitCode::SUCCESS)
@@ -367,7 +367,7 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
     let output = audio::open(config.buffer_frames)?;
     let (sample_rate, channels) = (output.sample_rate, output.channels);
 
-    let patch = script::load(path, sample_rate, config.patches.as_deref())?;
+    let patch = script::load(path, sample_rate, config.patch_dir.as_deref())?;
     let notes = patch.timeline.events.len();
     let player = audio::Player::new(patch.timeline, patch.freqs, sample_rate as f32)
         .with_filter(patch.filter);
