@@ -179,6 +179,7 @@ jobs:
       - name: Update dry run to ${{ needs.version.outputs.tag }}
         env:
           TAG: ${{ needs.version.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           tar -xzf synth-x86_64-unknown-linux-gnu.tar.gz
           case $TAG in
