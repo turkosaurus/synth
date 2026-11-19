@@ -1,15 +1,19 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 /// Settings for the machine synth runs on, from `config.lua`, as opposed to
 /// a patch, which a song carries from one machine to another. Every field is
 /// set: the embedded `lua/config.lua` supplies whatever a user's file leaves
 /// out.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     /// Frames per device callback. `None` leaves it to the platform.
     pub buffer_frames: Option<u32>,
     /// Events the input side can queue before the audio thread reads them.
     pub queue: usize,
+    /// Where `require` looks after the patch's own folder. `None` when there
+    /// is no home directory to put the default in.
+    pub patches: Option<PathBuf>,
     pub tui: TuiConfig,
 }
 

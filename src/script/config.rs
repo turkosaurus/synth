@@ -10,11 +10,72 @@ use anyhow::Context;
 use super::field;
 use crate::spec::{Config, TuiConfig};
 
-const XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
-const HOME: &str = "HOME";
-/// The XDG spec's default config directory, under `$HOME`.
-const DEFAULT_CONFIG_HOME: &str = ".config";
+/// `config.lua` under the config directory.
 const FILE: [&str; 2] = ["synth", "config.lua"];
+/// The patches folder under the data directory.
+const PATCHES: [&str; 2] = ["synth", "patches"];
+
+/// Where the config and data directories are, from the environment. The XDG
+/// variables win wherever they are set; otherwise Unix uses the XDG spec's
+/// defaults under `HOME`, and Windows, which sets neither, uses `APPDATA`.
+/// Values are taken as given so the rules can be tested on any platform.
+struct Dirs {
+    xdg_config: Option<OsString>,
+    xdg_data: Option<OsString>,
+    home: Option<OsString>,
+    /// Windows' roaming application data, for both config and patches
+    appdata: Option<OsString>,
+    /// Windows' home, for `~/` when `HOME` is not set
+    userprofile: Option<OsString>,
+    windows: bool,
+}
+
+/// `value` as a path, if it is an absolute one. The XDG spec ignores a
+/// relative value, and so does everything else here.
+fn absolute(value: &Option<OsString>) -> Option<PathBuf> {
+    value
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+}
+
+impl Dirs {
+    fn current() -> Self {
+        Self {
+            xdg_config: env::var_os("XDG_CONFIG_HOME"),
+            xdg_data: env::var_os("XDG_DATA_HOME"),
+            home: env::var_os("HOME"),
+            appdata: env::var_os("APPDATA"),
+            userprofile: env::var_os("USERPROFILE"),
+            windows: cfg!(windows),
+        }
+    }
+
+    /// What `~/` stands for: `HOME`, else on Windows `USERPROFILE`.
+    fn home(&self) -> Option<PathBuf> {
+        absolute(&self.home).or_else(|| self.windows.then(|| absolute(&self.userprofile)).flatten())
+    }
+
+    /// `$XDG_CONFIG_HOME`, else `~/.config`, or `%APPDATA%` on Windows.
+    fn config(&self) -> Option<PathBuf> {
+        absolute(&self.xdg_config).or_else(|| match self.windows {
+            true => absolute(&self.appdata),
+            false => Some(absolute(&self.home)?.join(".config")),
+        })
+    }
+
+    /// `$XDG_DATA_HOME`, else `~/.local/share`, or `%APPDATA%` on Windows.
+    fn data(&self) -> Option<PathBuf> {
+        absolute(&self.xdg_data).or_else(|| match self.windows {
+            true => absolute(&self.appdata),
+            false => Some(absolute(&self.home)?.join(".local").join("share")),
+        })
+    }
+}
+
+fn under(dir: PathBuf, parts: &[&str]) -> PathBuf {
+    parts.iter().fold(dir, |dir, part| dir.join(part))
+}
 
 /// The defaults, and what `synth config` writes when there is no file yet.
 /// A user's file is laid over it, so it need set only what it changes.
@@ -34,23 +95,10 @@ pub fn config() -> anyhow::Result<Config> {
     )
 }
 
-/// Where `config` looks, whether or not a file is there. `None` when
-/// neither `XDG_CONFIG_HOME` nor `HOME` is an absolute path.
+/// Where `config` looks, whether or not a file is there: `synth/config.lua`
+/// under the config directory. `None` when the environment names none.
 pub fn config_path() -> Option<PathBuf> {
-    path(env::var_os(XDG_CONFIG_HOME), env::var_os(HOME))
-}
-
-/// `$XDG_CONFIG_HOME/synth/config.lua`, else `~/.config/synth/config.lua`.
-/// The XDG spec ignores a relative `XDG_CONFIG_HOME`.
-fn path(xdg: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
-    let dir = xdg
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| {
-            let home = home.map(PathBuf::from).filter(|p| p.is_absolute())?;
-            Some(home.join(DEFAULT_CONFIG_HOME))
-        })?;
-    Some(FILE.iter().fold(dir, |dir, part| dir.join(part)))
+    Dirs::current().config().map(|dir| under(dir, &FILE))
 }
 
 /// The file's source, or `None` when there is no file.
@@ -106,6 +154,27 @@ fn overlay(base: &mlua::Table, over: &mlua::Table) -> mlua::Result<()> {
 }
 
 /// The settings from a checked, complete table.
+/// The patches folder `setting` names. `""` is `synth/patches` under the
+/// data directory; any other value is an absolute path or one starting
+/// `~/`. `None` when the default is asked for and there is no data directory.
+fn patches_dir(setting: &str, dirs: &Dirs) -> anyhow::Result<Option<PathBuf>> {
+    if setting.is_empty() {
+        return Ok(dirs.data().map(|dir| under(dir, &PATCHES)));
+    }
+    if let Some(rest) = setting.strip_prefix("~/") {
+        let home = dirs
+            .home()
+            .context("config.lua: `patches` starts with ~/, but there is no home directory")?;
+        return Ok(Some(home.join(rest)));
+    }
+    let path = PathBuf::from(setting);
+    anyhow::ensure!(
+        path.is_absolute(),
+        "config.lua: `patches` is {setting:?}; must be absolute, start with ~/, or be \"\""
+    );
+    Ok(Some(path))
+}
+
 fn settings(table: &mlua::Table) -> anyhow::Result<Config> {
     let tui: mlua::Table = table.get(field::TUI)?;
     let ms = |key: &str| -> mlua::Result<Duration> {
@@ -117,6 +186,7 @@ fn settings(table: &mlua::Table) -> anyhow::Result<Config> {
             .get::<Option<u32>>(field::BUFFER_FRAMES)?
             .filter(|&frames| frames > 0),
         queue: table.get(field::QUEUE)?,
+        patches: patches_dir(&table.get::<String>(field::PATCHES)?, &Dirs::current())?,
         tui: TuiConfig {
             poll: ms(field::POLL)?,
             meter_hold: ms(field::METER_HOLD)?,
@@ -148,8 +218,32 @@ mod tests {
         }
     }
 
+    /// A Unix environment with these XDG and HOME values.
+    fn unix(xdg: Option<&str>, home: Option<&str>) -> Dirs {
+        Dirs {
+            xdg_config: xdg.map(var),
+            xdg_data: xdg.map(var),
+            home: home.map(var),
+            appdata: None,
+            userprofile: None,
+            windows: false,
+        }
+    }
+
+    /// A Windows environment with these APPDATA and USERPROFILE values.
+    fn windows(appdata: Option<&str>, userprofile: Option<&str>) -> Dirs {
+        Dirs {
+            xdg_config: None,
+            xdg_data: None,
+            home: None,
+            appdata: appdata.map(var),
+            userprofile: userprofile.map(var),
+            windows: true,
+        }
+    }
+
     fn at(xdg: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
-        path(xdg.map(var), home.map(var))
+        unix(xdg, home).config().map(|dir| under(dir, &FILE))
     }
 
     #[test]
@@ -230,6 +324,86 @@ mod tests {
         );
     }
 
+    fn patches(setting: &str, xdg: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+        // an absolute setting is made absolute on the host, as `var` does
+        let setting = match setting.starts_with('/') {
+            true => abs(setting).display().to_string(),
+            false => setting.to_string(),
+        };
+        patches_dir(&setting, &unix(xdg, home)).unwrap()
+    }
+
+    #[test]
+    fn the_patches_folder_defaults_to_the_data_dir() {
+        assert_eq!(
+            patches("", Some("/d"), Some("/h")),
+            Some(abs("/d/synth/patches"))
+        );
+        assert_eq!(
+            patches("", None, Some("/h")),
+            Some(abs("/h/.local/share/synth/patches"))
+        );
+        assert_eq!(patches("", Some("d"), None), None);
+    }
+
+    #[test]
+    fn the_patches_folder_takes_absolute_and_home_paths() {
+        assert_eq!(
+            patches("/music/synth", None, Some("/h")),
+            Some(abs("/music/synth"))
+        );
+        assert_eq!(patches("~/music", None, Some("/h")), Some(abs("/h/music")));
+    }
+
+    #[test]
+    fn windows_uses_appdata_for_config_and_patches() {
+        let dirs = windows(Some("/appdata"), Some("/users/me"));
+        assert_eq!(
+            dirs.config().map(|dir| under(dir, &FILE)),
+            Some(abs("/appdata/synth/config.lua"))
+        );
+        assert_eq!(
+            patches_dir("", &dirs).unwrap(),
+            Some(abs("/appdata/synth/patches"))
+        );
+        // with no HOME, ~/ is the user profile
+        assert_eq!(
+            patches_dir("~/music", &dirs).unwrap(),
+            Some(abs("/users/me/music"))
+        );
+    }
+
+    #[test]
+    fn xdg_wins_on_windows_too() {
+        let dirs = Dirs {
+            xdg_config: Some(var("/x/config")),
+            xdg_data: Some(var("/x/data")),
+            ..windows(Some("/appdata"), None)
+        };
+        assert_eq!(dirs.config(), Some(abs("/x/config")));
+        assert_eq!(dirs.data(), Some(abs("/x/data")));
+    }
+
+    #[test]
+    fn userprofile_stands_in_for_home_only_on_windows() {
+        let unix = Dirs {
+            userprofile: Some(var("/users/me")),
+            ..unix(None, None)
+        };
+        assert_eq!(unix.home(), None);
+    }
+
+    #[test]
+    fn a_relative_patches_folder_is_named() {
+        let error = patches_dir("music", &unix(None, Some("/h"))).unwrap_err();
+        assert!(
+            error.to_string().contains("`patches` is \"music\""),
+            "{error}"
+        );
+        let error = patches_dir("~/music", &unix(None, None)).unwrap_err();
+        assert!(error.to_string().contains("no home directory"), "{error}");
+    }
+
     #[test]
     fn a_bad_value_is_named() {
         for (source, expected) in [
@@ -247,6 +421,7 @@ mod tests {
                 "unknown field `bufer_frames`",
             ),
             ("return { queue = 8 }", "`queue` is 8; must be at least 16"),
+            ("return { patches = 5 }", "`patches` must be a string"),
             ("return { tui = 16 }", "`tui` must be a table"),
             (
                 "return { tui = { poll = 0 } }",
