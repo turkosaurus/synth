@@ -18,6 +18,12 @@ permissions:
 env:
   MISE_JOBS: 1
   MISE_TASK_OUTPUT: interleave
+  # The tasks are written for bash, and mise runs them with cmd on Windows.
+  # Git Bash is on Windows runners. mise ignores these two settings in a
+  # project's mise.toml, so a repository cannot choose a user's shell; set
+  # here, they apply to this workflow only. Unused on macOS.
+  MISE_WINDOWS_DEFAULT_INLINE_SHELL_ARGS: bash -o errexit -c
+  MISE_WINDOWS_DEFAULT_FILE_SHELL_ARGS: bash
 
 jobs:
   test:
