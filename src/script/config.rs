@@ -15,6 +15,11 @@ const HOME: &str = "HOME";
 /// The XDG spec's default config directory, under `$HOME`.
 const DEFAULT_CONFIG_HOME: &str = ".config";
 const FILE: [&str; 2] = ["synth", "config.lua"];
+const XDG_DATA_HOME: &str = "XDG_DATA_HOME";
+/// The XDG spec's default data directory, under `$HOME`.
+const DEFAULT_DATA_HOME: [&str; 2] = [".local", "share"];
+/// The patches folder under the data directory.
+const PATCHES: [&str; 2] = ["synth", "patches"];
 
 /// The defaults, and what `synth config` writes when there is no file yet.
 /// A user's file is laid over it, so it need set only what it changes.
@@ -106,6 +111,41 @@ fn overlay(base: &mlua::Table, over: &mlua::Table) -> mlua::Result<()> {
 }
 
 /// The settings from a checked, complete table.
+/// The patches folder `setting` names. `""` is the default,
+/// `$XDG_DATA_HOME/synth/patches` else `~/.local/share/synth/patches`; any
+/// other value is an absolute path or one starting `~/`. `None` when the
+/// default is asked for and there is no home to put it in.
+fn patches_dir(
+    setting: &str,
+    xdg_data: Option<OsString>,
+    home: Option<OsString>,
+) -> anyhow::Result<Option<PathBuf>> {
+    let home = home.map(PathBuf::from).filter(|p| p.is_absolute());
+    if setting.is_empty() {
+        let data = xdg_data
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| {
+                Some(
+                    DEFAULT_DATA_HOME
+                        .iter()
+                        .fold(home?, |dir, part| dir.join(part)),
+                )
+            });
+        return Ok(data.map(|data| PATCHES.iter().fold(data, |dir, part| dir.join(part))));
+    }
+    if let Some(rest) = setting.strip_prefix("~/") {
+        let home = home.context("config.lua: `patches` starts with ~/, but HOME is not set")?;
+        return Ok(Some(home.join(rest)));
+    }
+    let path = PathBuf::from(setting);
+    anyhow::ensure!(
+        path.is_absolute(),
+        "config.lua: `patches` is {setting:?}; must be absolute, start with ~/, or be \"\""
+    );
+    Ok(Some(path))
+}
+
 fn settings(table: &mlua::Table) -> anyhow::Result<Config> {
     let tui: mlua::Table = table.get(field::TUI)?;
     let ms = |key: &str| -> mlua::Result<Duration> {
@@ -117,6 +157,11 @@ fn settings(table: &mlua::Table) -> anyhow::Result<Config> {
             .get::<Option<u32>>(field::BUFFER_FRAMES)?
             .filter(|&frames| frames > 0),
         queue: table.get(field::QUEUE)?,
+        patches: patches_dir(
+            &table.get::<String>(field::PATCHES)?,
+            env::var_os(XDG_DATA_HOME),
+            env::var_os(HOME),
+        )?,
         tui: TuiConfig {
             poll: ms(field::POLL)?,
             meter_hold: ms(field::METER_HOLD)?,
@@ -215,6 +260,46 @@ mod tests {
         );
     }
 
+    fn patches(setting: &str, xdg: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+        patches_dir(setting, xdg.map(OsString::from), home.map(OsString::from)).unwrap()
+    }
+
+    #[test]
+    fn the_patches_folder_defaults_to_the_data_dir() {
+        assert_eq!(
+            patches("", Some("/d"), Some("/h")),
+            Some("/d/synth/patches".into())
+        );
+        assert_eq!(
+            patches("", None, Some("/h")),
+            Some("/h/.local/share/synth/patches".into())
+        );
+        assert_eq!(patches("", Some("d"), None), None);
+    }
+
+    #[test]
+    fn the_patches_folder_takes_absolute_and_home_paths() {
+        assert_eq!(
+            patches("/music/synth", None, Some("/h")),
+            Some("/music/synth".into())
+        );
+        assert_eq!(
+            patches("~/music", None, Some("/h")),
+            Some("/h/music".into())
+        );
+    }
+
+    #[test]
+    fn a_relative_patches_folder_is_named() {
+        let error = patches_dir("music", None, Some("/h".into())).unwrap_err();
+        assert!(
+            error.to_string().contains("`patches` is \"music\""),
+            "{error}"
+        );
+        let error = patches_dir("~/music", None, None).unwrap_err();
+        assert!(error.to_string().contains("HOME is not set"), "{error}");
+    }
+
     #[test]
     fn a_bad_value_is_named() {
         for (source, expected) in [
@@ -232,6 +317,7 @@ mod tests {
                 "unknown field `bufer_frames`",
             ),
             ("return { queue = 8 }", "`queue` is 8; must be at least 16"),
+            ("return { patches = 5 }", "`patches` must be a string"),
             ("return { tui = 16 }", "`tui` must be a table"),
             (
                 "return { tui = { poll = 0 } }",

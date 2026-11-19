@@ -738,7 +738,7 @@ fn envelope_lengths_follow_the_sample_rate() {
 // that it still loads without warnings
 #[test]
 fn the_shipped_example_loads_clean() {
-    let patch = load(Path::new("lua/example.lua"), 48000).unwrap();
+    let patch = load(Path::new("lua/example.lua"), 48000, None).unwrap();
 
     assert!(patch.bpm > 0.0, "example should be a sequence");
     assert!(!patch.reports.is_empty());
@@ -970,7 +970,7 @@ fn structure_records_every_constructed_table_by_path() {
 #[test]
 fn the_default_patch_loads_clean() {
     // what `synth tui` plays with no file; nothing else exercises it
-    let patch = load_default(48000).unwrap();
+    let patch = load_default(48000, None).unwrap();
     assert!(patch.clean(), "default.lua raised warnings");
     assert_eq!(patch.structure[0].kind, "instrument");
 }
@@ -1045,18 +1045,24 @@ fn fixture(case: &str) -> std::path::PathBuf {
 
 #[test]
 fn a_patch_requires_modules_beside_it() {
-    load(&fixture("beside"), 48000).unwrap();
+    load(&fixture("beside"), 48000, None).unwrap();
+}
+
+#[test]
+fn a_patch_requires_from_the_patches_folder_after_its_own() {
+    let patches = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lua/loader/patches");
+    load(&fixture("from_patches"), 48000, Some(&patches)).unwrap();
 }
 
 #[test]
 fn a_file_named_like_a_built_in_does_not_replace_it() {
-    load(&fixture("shadow"), 48000).unwrap();
+    load(&fixture("shadow"), 48000, None).unwrap();
 }
 
 #[test]
 fn a_missing_module_lists_only_the_patch_folder() {
     let song = fixture("missing");
-    let error = load(&song, 48000).err().expect("nowhere.lua");
+    let error = load(&song, 48000, None).err().expect("nowhere.lua");
     let message = format!("{error:#}");
     let looked = song.with_file_name("nowhere.lua");
     assert!(

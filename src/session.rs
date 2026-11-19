@@ -29,8 +29,8 @@ impl Session {
     pub fn open(path: Option<&Path>, gating: Gating, config: &Config) -> anyhow::Result<Self> {
         let output = audio::open(config.buffer_frames)?;
         let patch = match path {
-            Some(path) => script::load(path, output.sample_rate)?,
-            None => script::load_default(output.sample_rate)?,
+            Some(path) => script::load(path, output.sample_rate, config.patches.as_deref())?,
+            None => script::load_default(output.sample_rate, config.patches.as_deref())?,
         };
 
         // the view reads the same baked table the player does,

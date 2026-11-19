@@ -209,6 +209,7 @@ mod field {
 
     pub(super) const BUFFER_FRAMES: &str = "buffer_frames";
     pub(super) const QUEUE: &str = "queue";
+    pub(super) const PATCHES: &str = "patches";
     pub(super) const TUI: &str = "tui";
     pub(super) const POLL: &str = "poll";
     pub(super) const METER_HOLD: &str = "meter_hold";
@@ -220,16 +221,31 @@ mod field {
     pub(super) const PATH: &str = "path";
 }
 
+/// One folder per kind in the patches folder, named as its constructor, so
+/// `instrument/bass.lua` is `require("instrument.bass")`.
+pub const PATCH_KINDS: [&str; 5] = ["instrument", "effect", "keyboard", "tuning", "pattern"];
+
 /// What plays when no file is given.
 const DEFAULT: &str = include_str!("../lua/default.lua");
 
+/// The default patch. `patches` is the user's patches folder, searched by
+/// `require`, as for [`load`].
 #[instrument]
-pub(crate) fn load_default(sample_rate: u32) -> anyhow::Result<Patch> {
-    load_source(DEFAULT, "(default)", sample_rate)
+pub(crate) fn load_default(
+    sample_rate: u32,
+    patches: Option<&std::path::Path>,
+) -> anyhow::Result<Patch> {
+    load_in(DEFAULT, "(default)", sample_rate, None, patches)
 }
 
+/// The patch at `path`. `require` looks beside it first, then in `patches`,
+/// the user's patches folder from `config.lua`.
 #[instrument]
-pub fn load(path: &std::path::Path, sample_rate: u32) -> anyhow::Result<Patch> {
+pub fn load(
+    path: &std::path::Path,
+    sample_rate: u32,
+    patches: Option<&std::path::Path>,
+) -> anyhow::Result<Patch> {
     let source =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     load_in(
@@ -237,13 +253,15 @@ pub fn load(path: &std::path::Path, sample_rate: u32) -> anyhow::Result<Patch> {
         &path.display().to_string(),
         sample_rate,
         path.parent(),
+        patches,
     )
 }
 
 /// Same as [`load`] but from a string, so sequences can be tested without
 /// fixture files on disk.
+#[cfg(test)]
 pub(crate) fn load_source(source: &str, name: &str, sample_rate: u32) -> anyhow::Result<Patch> {
-    load_in(source, name, sample_rate, None)
+    load_in(source, name, sample_rate, None, None)
 }
 
 /// `a.b` as the relative path `a/b`, or `None` when a part is empty or
@@ -266,14 +284,17 @@ fn load_in(
     name: &str,
     sample_rate: u32,
     dir: Option<&std::path::Path>,
+    patches: Option<&std::path::Path>,
 ) -> anyhow::Result<Patch> {
     let lua = mlua::Lua::new();
-    // a patch's own requires resolve next to the patch, not next to the
-    // shell's cwd
-    lua_register(
-        &lua,
-        dir.map(std::path::Path::to_path_buf).into_iter().collect(),
-    )?;
+    // a patch's own requires resolve next to the patch first, then in the
+    // user's patches folder, and never next to the shell's cwd
+    let roots = dir
+        .into_iter()
+        .chain(patches)
+        .map(std::path::Path::to_path_buf)
+        .collect();
+    lua_register(&lua, roots)?;
 
     // eval to a Value first: a syntax error and a wrong return type both fail
     // this call, and they deserve different messages

@@ -52,6 +52,13 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
             ("file", file),
             ("buffer", buffer),
             ("queue", format!("{} events", config.queue)),
+            (
+                "patches",
+                match &config.patches {
+                    Some(dir) => dir.display().to_string(),
+                    None => "none (no HOME)".to_string(),
+                },
+            ),
             ("tui poll", ms(tui.poll)),
             ("meter hold", ms(tui.meter_hold)),
             ("meter fall", ms(tui.meter_fall)),

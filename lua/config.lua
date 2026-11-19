@@ -2,6 +2,7 @@
 return {
 	buffer_frames = 0, -- audio callback frames (0: defer to system default)
 	queue = 256, -- events buffered between input and audio
+	patches = "", -- folder of your own patches ("": ~/.local/share/synth/patches)
 	tui = {
 		poll = 16, -- ms between redraws and key reads
 		meter_hold = 560, -- ms a peak holds before it falls

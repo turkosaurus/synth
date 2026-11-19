@@ -130,6 +130,8 @@ pub(super) const CONFIG: Schema = Schema {
         optional(field::BUFFER_FRAMES, Ty::Integer, Bound::AtLeast(0.0)),
         // fewer slots than a chord's worth of events would drop keys
         optional(field::QUEUE, Ty::Integer, Bound::AtLeast(16.0)),
+        // "" is the default folder; anything else is checked when resolved
+        optional(field::PATCHES, Ty::Text, Bound::Any),
         optional(field::TUI, Ty::Table, Bound::Any),
     ],
 };
