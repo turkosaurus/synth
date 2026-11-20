@@ -1,7 +1,7 @@
 use anyhow::Context;
 use tracing::{debug_span, instrument};
 
-use crate::spec::{Diagnostic, DiagnosticKind, Instrument, Report};
+use crate::spec::{Diagnostic, DiagnosticKind, Instrument, Report, Segment};
 
 use super::{field, schema};
 
@@ -9,6 +9,10 @@ use super::{field, schema};
 // advances at least one entry per sample, small enough that 8 KB
 // stays in L1
 const TABLE_SIZE: usize = 2048;
+
+// points per envelope curve, plus one for t = 1, whatever the stage's
+// length; render reads between them
+const CURVE_POINTS: usize = 1024;
 
 // An instrument table as Rust reads it. The struct is the schema: serde
 // cannot be, since its data model has no function type.
@@ -143,20 +147,14 @@ pub(super) fn bake_instrument(
         }
     }
 
-    // Rust owns the sample rate, so it sizes each stage and samples the
-    // patch's curve across it: t runs 0 to 1, and the curve says how far
-    // from `from` toward `to` the envelope is at t
-    let curve = |ms: f64,
-                 shape: &mlua::Function,
-                 name: &str,
-                 from: f64,
-                 to: f64|
-     -> anyhow::Result<(Vec<f32>, usize)> {
-        let steps = (sample_rate as f64 * ms / 1000.0) as usize;
-        let mut out = Vec::with_capacity(steps);
+    // each curve is sampled at the same points whatever its stage's
+    // length; render stretches it over the stage and scales it from the
+    // stage's start level to its end
+    let curve = |ms: f64, shape: &mlua::Function, name: &str| -> anyhow::Result<(Segment, usize)> {
+        let mut out = Vec::with_capacity(CURVE_POINTS + 1);
         let mut clamped = 0usize;
-        for i in 0..steps {
-            let t = i as f64 / steps as f64;
+        for i in 0..=CURVE_POINTS {
+            let t = i as f64 / CURVE_POINTS as f64;
             let along = match shape.call::<mlua::Value>(t)? {
                 mlua::Value::Number(n) => n,
                 mlua::Value::Integer(n) => n as f64,
@@ -178,36 +176,17 @@ pub(super) fn bake_instrument(
             if !(0.0..=1.0).contains(&along) {
                 clamped += 1;
             }
-            out.push((from + (to - from) * along.clamp(0.0, 1.0)) as f32);
+            out.push(along.clamp(0.0, 1.0) as f32);
         }
-        Ok((out, clamped))
+        Ok((Segment { curve: out, ms }, clamped))
     };
 
-    let sustain_level = env.sustain_level;
     let ((attack, attack_clamped), (decay, decay_clamped), (release, release_clamped)) = {
-        let _span = debug_span!("bake_envelope").entered();
+        let _span = debug_span!("bake_envelope", points = CURVE_POINTS + 1).entered();
         (
-            curve(
-                env.attack_ms,
-                &env.attack_func,
-                field::ATTACK_CURVE,
-                0.0,
-                1.0,
-            )?,
-            curve(
-                env.decay_ms,
-                &env.decay_func,
-                field::DECAY_CURVE,
-                1.0,
-                sustain_level,
-            )?,
-            curve(
-                env.release_ms,
-                &env.release_func,
-                field::RELEASE_CURVE,
-                sustain_level,
-                0.0,
-            )?,
+            curve(env.attack_ms, &env.attack_func, field::ATTACK_CURVE)?,
+            curve(env.decay_ms, &env.decay_func, field::DECAY_CURVE)?,
+            curve(env.release_ms, &env.release_func, field::RELEASE_CURVE)?,
         )
     };
 
@@ -215,7 +194,7 @@ pub(super) fn bake_instrument(
         wave,
         attack,
         decay,
-        sustain_level: sustain_level as f32,
+        sustain_level: env.sustain_level as f32,
         release,
         voice_count: spec.voice_count,
     };
@@ -224,7 +203,7 @@ pub(super) fn bake_instrument(
         (field::DECAY_CURVE, decay_clamped),
         (field::RELEASE_CURVE, release_clamped),
     ];
-    let report = inspect(&instrument, clamped, &curves);
+    let report = inspect(&instrument, sample_rate, clamped, &curves);
     Ok((instrument, report))
 }
 
@@ -232,7 +211,13 @@ pub(super) fn bake_instrument(
 // once per cycle, a speaker cone resting off-center, or a note cut mid-wave
 /// `curves` names each envelope curve and how many of its points left
 /// 0..1 and were clamped.
-pub(super) fn inspect(instrument: &Instrument, clamped: usize, curves: &[(&str, usize)]) -> Report {
+pub(super) fn inspect(
+    instrument: &Instrument,
+    sample_rate: u32,
+    clamped: usize,
+    curves: &[(&str, usize)],
+) -> Report {
+    let rate = f64::from(sample_rate);
     let wave = &instrument.wave;
     let peak = wave.iter().fold(0.0f32, |acc, v| acc.max(v.abs()));
     let dc = wave.iter().sum::<f32>() / wave.len() as f32;
@@ -263,7 +248,7 @@ pub(super) fn inspect(instrument: &Instrument, clamped: usize, curves: &[(&str, 
             format!("envelope.{name} left 0..1 at {count} points and was clamped"),
         ));
     }
-    if instrument.release.is_empty() {
+    if instrument.release.samples(rate) == 0 {
         diagnostics.push(shape(
             "release = 0 cuts the note mid-cycle and will click".to_string(),
         ));
@@ -274,9 +259,9 @@ pub(super) fn inspect(instrument: &Instrument, clamped: usize, curves: &[(&str, 
         dc,
         seam,
         clamped,
-        attack: instrument.attack.len(),
-        decay: instrument.decay.len(),
-        release: instrument.release.len(),
+        attack: instrument.attack.samples(rate),
+        decay: instrument.decay.samples(rate),
+        release: instrument.release.samples(rate),
         sustain_level: instrument.sustain_level,
         diagnostics,
     }

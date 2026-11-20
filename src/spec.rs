@@ -16,7 +16,7 @@ mod patch;
 pub use config::{Config, TuiConfig};
 pub use diagnostic::{Diagnostic, DiagnosticKind};
 pub use filter::{Filter, FilterReport, Kind, MAX_CUTOFF, MIN_CUTOFF, MIN_DAMPING};
-pub use instrument::{Event, Freqs, Instrument, Timeline};
+pub use instrument::{Event, Freqs, Instrument, Segment, Timeline};
 pub(crate) use keymap::{Key, Keymap};
 pub(crate) use patch::Node;
 pub use patch::{Patch, Report};
