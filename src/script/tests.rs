@@ -1,6 +1,6 @@
 use crate::spec::{Instrument, Key};
 
-use super::bake::inspect;
+use super::bake::{inspect, rising_zero};
 use super::*;
 use std::path::Path;
 
@@ -85,6 +85,48 @@ fn flags_wrap_discontinuity() {
         .diagnostics
         .iter()
         .any(|d| d.message.contains("wrap smoothly")));
+}
+
+#[test]
+fn flags_a_wave_that_never_rises_through_zero() {
+    let report = inspect(
+        &instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)),
+        1000,
+        0,
+        &[],
+    );
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("never rises through 0")));
+}
+
+#[test]
+fn a_cycle_starts_at_its_first_rise_through_zero() {
+    // a saw reaches 0 exactly, halfway
+    let saw = [-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75];
+    assert_eq!(rising_zero(&saw), Some(4));
+    // a square never touches 0, so the first positive point after the
+    // crossing counts
+    assert_eq!(rising_zero(&[-1.0, -1.0, 1.0, 1.0]), Some(2));
+    // the point before the first is the last, since a cycle wraps
+    assert_eq!(rising_zero(&[1.0, 1.0, -1.0, -1.0]), Some(0));
+    assert_eq!(rising_zero(&[0.5, 0.25, 0.5, 0.75]), None);
+}
+
+#[test]
+fn a_saw_bakes_starting_from_zero_rising() {
+    let source = r#"
+        local instrument = require("synth.instrument")
+        return instrument({
+            waveform = function(phase) return 2 * phase - 1 end,
+        })
+    "#;
+    let patch = load_source(source, "test", 48000).unwrap();
+    let wave = patch.timeline.instruments[0].wave.frame(0);
+    assert_eq!(wave[0], 0.0);
+    assert!(wave[1] > 0.0);
+    assert!(wave[wave.len() - 1] < 0.0);
 }
 
 #[test]

@@ -181,7 +181,7 @@ pub(super) fn bake_instrument(
         )
     };
 
-    let instrument = Instrument {
+    let mut instrument = Instrument {
         wave: cycle.into(),
         attack,
         decay,
@@ -194,8 +194,20 @@ pub(super) fn bake_instrument(
         (field::DECAY_CURVE, decay_clamped),
         (field::RELEASE_CURVE, release_clamped),
     ];
+    // inspect first, so its warnings describe the cycle as written
     let report = inspect(&instrument, sample_rate, clamped, &curves);
+    if let Some(start) = rising_zero(instrument.wave.frame(0)) {
+        instrument.wave.frames.rotate_left(start);
+    }
     Ok((instrument, report))
+}
+
+// Where a cycle first rises through 0: the first point at or above 0 whose
+// previous point, wrapping, is below 0. Every note starts here, from rest
+// and rising, whatever phase the waveform was written from.
+pub(super) fn rising_zero(cycle: &[f32]) -> Option<usize> {
+    let n = cycle.len();
+    (0..n).find(|&i| cycle[(i + n - 1) % n] < 0.0 && cycle[i] >= 0.0)
 }
 
 // The one sampler behind every baked table, waveform or curve: `read` at
@@ -249,6 +261,11 @@ pub(super) fn inspect(
     }
     if dc.abs() > 0.01 {
         diagnostics.push(shape(format!("waveform has a DC offset of {dc:.4}")));
+    }
+    if rising_zero(wave).is_none() {
+        diagnostics.push(shape(
+            "waveform never rises through 0, so notes start at phase 0 as written".to_string(),
+        ));
     }
     if peak < 0.5 {
         diagnostics.push(shape(format!("waveform peaks at only {peak:.3}")));

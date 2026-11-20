@@ -14,8 +14,9 @@ pub struct Instrument {
 }
 
 /// Waveform cycles of equal length, one after another in one Vec, so a read
-/// follows no pointer. Each frame is one cycle, -1.0..1.0. A single
-/// waveform is a table of one frame, and playback reads frame 0.
+/// follows no pointer. Each frame is one cycle, -1.0..1.0, starting where
+/// it first rises through 0 when it does. A single waveform is a table of
+/// one frame, and playback reads frame 0.
 pub struct Wavetable {
     pub(crate) frames: Vec<f32>,
     pub(crate) points: usize,
