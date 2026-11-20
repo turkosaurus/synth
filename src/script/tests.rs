@@ -31,7 +31,7 @@ fn segment(ms: f64) -> crate::spec::Segment {
 
 fn instrument_with(wave: Vec<f32>) -> Instrument {
     Instrument {
-        wave,
+        wave: wave.into(),
         attack: segment(2.0),
         decay: segment(1.0),
         sustain_level: 0.7,
@@ -772,7 +772,10 @@ fn a_zero_length_slope_is_empty() {
 #[test]
 fn bakes_the_triangle_landmarks() {
     let patch = one_instrument(10, 48000);
-    let wave = &patch.timeline.instruments[0].wave;
+    let table = &patch.timeline.instruments[0].wave;
+    // one waveform is a table of one frame, until wavetables add more
+    assert_eq!(table.frame_count(), 1);
+    let wave = table.frame(0);
     assert_eq!(wave.len(), 2048);
 
     for (index, expected) in [(0, 0.0), (512, 1.0), (1024, 0.0), (1536, -1.0)] {

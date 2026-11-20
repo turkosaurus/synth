@@ -1,7 +1,6 @@
 /// timbre and envelope
 pub struct Instrument {
-    /// full waveform cycle, -1.0..1.0
-    pub wave: Vec<f32>,
+    pub wave: Wavetable,
     /// 0.0 to 1.0
     pub(crate) attack: Segment,
     /// 1.0 to sustain_level
@@ -12,6 +11,36 @@ pub struct Instrument {
     pub(crate) release: Segment,
     /// notes sounding at once; 1 is mono
     pub(crate) voice_count: usize,
+}
+
+/// Waveform cycles of equal length, one after another in one Vec, so a read
+/// follows no pointer. Each frame is one cycle, -1.0..1.0. A single
+/// waveform is a table of one frame, and playback reads frame 0.
+pub struct Wavetable {
+    pub(crate) frames: Vec<f32>,
+    pub(crate) points: usize,
+}
+
+impl Wavetable {
+    pub fn frame_count(&self) -> usize {
+        self.frames.len().checked_div(self.points).unwrap_or(0)
+    }
+
+    /// One cycle, `points` long.
+    pub fn frame(&self, k: usize) -> &[f32] {
+        &self.frames[k * self.points..(k + 1) * self.points]
+    }
+}
+
+/// One cycle as a table of one frame.
+impl From<Vec<f32>> for Wavetable {
+    fn from(cycle: Vec<f32>) -> Self {
+        let points = cycle.len();
+        Self {
+            frames: cycle,
+            points,
+        }
+    }
 }
 
 /// One envelope stage: its curve, baked once at a fixed number of points
