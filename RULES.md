@@ -28,7 +28,7 @@ Any telemetry, when extant, must be 100% opt-in and fully transparent.
 
 ## architecture
 
-ELM defines `model` is the authoritative state of the application, acted upon solely by `update`, while `view`s are derived exclusively from `model` reads, and may only alter `model` through `message`s sent to `update`.
+[ELM architecture](https://guide.elm-lang.org/architecture/) defines `model` as the authoritative state of the application, acted upon solely by `update`, while `view`s are derived exclusively from `model` reads, and may only alter `model` through `message`s sent to `update`.
 
 A new user interface is merely a `view` which can read `state` and send a `message`, allowing a proliferation of designs and use cases.
 
