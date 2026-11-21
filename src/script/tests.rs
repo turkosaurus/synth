@@ -88,6 +88,22 @@ fn flags_wrap_discontinuity() {
 }
 
 #[test]
+fn a_jump_the_shape_already_makes_is_not_flagged_at_the_wrap() {
+    // a square jumps mid-cycle as well as at the wrap, so the wrap is no
+    // rougher than the shape
+    let report = inspect(
+        &instrument_with(wave_from(|p| if p < 0.5 { 1.0 } else { -1.0 }, 2048)),
+        1000,
+        0,
+        &[],
+    );
+    assert!(!report
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("wrap smoothly")));
+}
+
+#[test]
 fn flags_a_wave_that_never_rises_through_zero() {
     let report = inspect(
         &instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)),

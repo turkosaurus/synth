@@ -246,6 +246,12 @@ pub(super) fn inspect(
     let dc = wave.iter().sum::<f32>() / wave.len() as f32;
     let seam = (wave[wave.len() - 1] - wave[0]).abs();
     let expected_step = 2.0 / wave.len() as f32;
+    // a square or saw jumps by design; only a wrap rougher than the
+    // shape's own steepest step is a mistake
+    let steepest = wave
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).abs())
+        .fold(0.0f32, f32::max);
 
     let shape = |message: String| Diagnostic::new(DiagnosticKind::Shape, message);
     let mut diagnostics = Vec::new();
@@ -254,7 +260,7 @@ pub(super) fn inspect(
             "waveform exceeded -1.0..1.0 at {clamped} points and was flattened"
         )));
     }
-    if seam > expected_step * 4.0 {
+    if seam > expected_step * 4.0 && seam > steepest {
         diagnostics.push(shape(format!(
             "waveform does not wrap smoothly (seam {seam:.4}); expect a buzz"
         )));
