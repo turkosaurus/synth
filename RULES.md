@@ -35,3 +35,7 @@ A new user interface is merely a `view` which can read `state` and send a `messa
 ## stability
 
 Versioning follows [semver 2.0.0](https://semver.org/) to provide predictable API compatibility.
+
+Pre v1, breaking changes to API are minor version bumps, and sound changes merit a patch version.
+
+After v1, new features or changes to sound (themselves a kind of feature) merit a minor version bump.

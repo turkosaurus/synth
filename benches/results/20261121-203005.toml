@@ -1,0 +1,131 @@
+[run]
+time = 2026-11-21T20:30:05Z
+commit = "5bd4684"
+version = "0.8.2"
+dirty = false
+args = ""
+rustc = "1.98.1"
+ci = true
+
+[machine]
+cpu = "Intel(R) Xeon(R) 6975P-C"
+cores = 4
+os = "Linux"
+arch = "x86_64"
+
+[time.dry.1]
+mean_ns = 6828
+low_ns = 6819
+high_ns = 6838
+frames = 512
+per_frame_ns = 13.3
+
+[time.dry.8]
+mean_ns = 33463
+low_ns = 33437
+high_ns = 33491
+frames = 512
+per_frame_ns = 65.4
+
+[time.dry.32]
+mean_ns = 127052
+low_ns = 126488
+high_ns = 127756
+frames = 512
+per_frame_ns = 248.1
+
+[time.filtered.1]
+mean_ns = 8455
+low_ns = 8449
+high_ns = 8462
+frames = 512
+per_frame_ns = 16.5
+
+[time.filtered.8]
+mean_ns = 35009
+low_ns = 34993
+high_ns = 35026
+frames = 512
+per_frame_ns = 68.4
+
+[time.filtered.32]
+mean_ns = 127425
+low_ns = 127235
+high_ns = 127631
+frames = 512
+per_frame_ns = 248.9
+
+[time.live.1]
+mean_ns = 9612
+low_ns = 9594
+high_ns = 9631
+frames = 512
+per_frame_ns = 18.8
+
+[time.live.8]
+mean_ns = 36151
+low_ns = 36126
+high_ns = 36178
+frames = 512
+per_frame_ns = 70.6
+
+[time.live.32]
+mean_ns = 128530
+low_ns = 128416
+high_ns = 128649
+frames = 512
+per_frame_ns = 251.0
+
+[instructions.dry.1]
+count = 131881
+estimated_cycles = 184800
+frames = 512
+per_frame = 257.6
+
+[instructions.dry.8]
+count = 680296
+estimated_cycles = 941159
+frames = 512
+per_frame = 1328.7
+
+[instructions.dry.32]
+count = 2560750
+estimated_cycles = 3534488
+frames = 512
+per_frame = 5001.5
+
+[instructions.filtered.1]
+count = 159017
+estimated_cycles = 220124
+frames = 512
+per_frame = 310.6
+
+[instructions.filtered.8]
+count = 707496
+estimated_cycles = 976507
+frames = 512
+per_frame = 1381.8
+
+[instructions.filtered.32]
+count = 2587886
+estimated_cycles = 3569836
+frames = 512
+per_frame = 5054.5
+
+[instructions.live.1]
+count = 164274
+estimated_cycles = 222056
+frames = 512
+per_frame = 320.8
+
+[instructions.live.8]
+count = 713193
+estimated_cycles = 979195
+frames = 512
+per_frame = 1393.0
+
+[instructions.live.32]
+count = 2595260
+estimated_cycles = 3574758
+frames = 512
+per_frame = 5068.9
