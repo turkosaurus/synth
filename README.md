@@ -17,13 +17,6 @@ curl -fsSL https://raw.githubusercontent.com/turkosaurus/synth/main/install.sh |
 > [!NOTE]
 > `update` and `uninstall` act on the binary being run; defer to package manager if installed through one.
 
-#### requirements
-
-##### linux
-```sh
-sudo apt install libasound2-dev pkg-config build-essential
-```
-
 ## run
 
 ### tui

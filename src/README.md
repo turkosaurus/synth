@@ -24,3 +24,5 @@ flowchart LR
     tui --> view
     update --> install
 ```
+
+`mlua` stays in `script`, `cpal` in `audio/device.rs`, and `spec` names neither; [`test:separation`](../mise-tasks/test/separation) checks it.
