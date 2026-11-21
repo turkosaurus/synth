@@ -1067,7 +1067,11 @@ fn the_root_reexports_every_module() {
     let lua = mlua::Lua::new();
     lua_register(&lua, Vec::new(), None).unwrap();
 
-    for (name, _) in MODULES {
+    // the constructors' helper is theirs, not a patch's
+    for (name, _) in MODULES
+        .iter()
+        .filter(|(name, _)| *name != module::CONSTRUCT)
+    {
         let Some(short) = name.strip_prefix("synth.") else {
             continue;
         };
@@ -1297,4 +1301,24 @@ fn every_starter_loads_in_one_patch() {
     starters::write(&patches).unwrap();
     let patch = load(&fixture("starters"), 48000, Some(&patches)).unwrap();
     assert!(patch.clean(), "{:?}", patch.reports);
+}
+
+#[test]
+fn constructed_values_share_no_default() {
+    let source = r#"
+        local synth = require("synth")
+        local first = synth.keyboard({})
+        first.layout.notes.a = 0
+        first.stop[1] = "q"
+        assert(synth.keyboard({}).layout.notes.a ~= 0, "layout shared")
+        assert(synth.keyboard({}).stop[1] == "escape", "stop shared")
+        assert(synth.keyboard.qwerty.notes.a ~= 0, "template edited")
+
+        local bass = synth.instrument({})
+        bass.envelope.attack = 999
+        assert(synth.instrument({}).envelope.attack ~= 999, "envelope shared")
+        assert(getmetatable(bass.envelope).kind == "envelope", "stamp lost")
+        return synth.instrument({})
+    "#;
+    load_source(source, "test", 48000).unwrap();
 }
