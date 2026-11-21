@@ -7,7 +7,7 @@
 | [`spec`](./spec) | plain data between `script` and `audio` |
 | [`audio`](./audio) | the realtime path: render and device |
 | [`input`](./input) | character keyboard to note events |
-| [`session.rs`](./session.rs) | wires device, patch, and ring for a live view |
+| [`session.rs`](./session.rs) | model, msg, and cmd for a live view; wires device, patch, and ring |
 | [`view`](./view) | tui, reports, prompts |
 | [`terminal.rs`](./terminal.rs) | raw mode and key release detection |
 | [`install.rs`](./install.rs) | `install`, `uninstall` |
@@ -25,4 +25,4 @@ flowchart LR
     update --> install
 ```
 
-`mlua` stays in `script`, `cpal` in `audio/device.rs`, and `spec` names neither; [`test:separation`](../mise-tasks/test/separation) checks it.
+`mlua` stays in `script`, `cpal` in `audio/device.rs`, `crossterm` in `view` and `terminal.rs`, and `spec` names none of them; [`test:separation`](../mise-tasks/test/separation) checks it.
