@@ -1,7 +1,8 @@
-//! Time for one audio callback: `fill` for 1, 8, and 32 sustaining voices,
-//! with and without the patch's filter. Throughput is in frames, so
-//! criterion's elements per second is frames per second. Time drifts with
-//! the machine's clock and load; `instructions.rs` counts the same work.
+//! Time for one audio callback: `fill` for 1, 8, and 32 voices, sustaining
+//! with and without the patch's filter, and live with a note released and
+//! one started each callback. Throughput is in frames, so criterion's
+//! elements per second is frames per second. Time drifts with the
+//! machine's clock and load; `instructions.rs` counts the same work.
 
 use std::hint::black_box;
 
@@ -11,7 +12,7 @@ use synth::audio::bench::fill;
 #[path = "support/sustain.rs"]
 mod sustain;
 
-use sustain::{buffer, player, CHANNELS, FRAMES};
+use sustain::{buffer, live, player, CHANNELS, FRAMES};
 
 fn callback(c: &mut Criterion) {
     let mut group = c.benchmark_group("callback");
@@ -25,6 +26,19 @@ fn callback(c: &mut Criterion) {
                 b.iter(|| fill(black_box(&mut out), CHANNELS, &mut player));
             });
         }
+    }
+    // the two pushes are timed too: a few nanoseconds against a callback's
+    // microseconds, where batching them outside the timing would fill the
+    // ring before the callbacks that read it
+    for voices in [1, 8, 32] {
+        let (mut player, mut keys) = live(voices);
+        let mut out = buffer();
+        group.bench_function(BenchmarkId::new("live", voices), |b| {
+            b.iter(|| {
+                keys.step();
+                fill(black_box(&mut out), CHANNELS, &mut player)
+            });
+        });
     }
     group.finish();
 }
