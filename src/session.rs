@@ -22,14 +22,22 @@ pub(crate) enum Msg {
     Tick,
 }
 
+/// What `update` asks the session to carry out, so `update` itself touches
+/// no ring or device.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Cmd {
+    Play(Event),
+}
+
 /// A patch playing live on the default output device.
 pub struct Session {
-    /// Holds the ring's producer; the consumer lives in the audio callback.
     pub(crate) keyboard: Keyboard,
     pub(crate) stats: Arc<Stats>,
     /// The same baked table the player reads, copied for the view.
     pub(crate) freqs: Vec<f32>,
     help: bool,
+    /// The ring's producer; the consumer lives in the audio callback.
+    tx: rtrb::Producer<Event>,
     /// Kept only so the stream plays until the session drops.
     _stream: audio::Stream,
 }
@@ -63,10 +71,11 @@ impl Session {
         let stream = audio::stream(&output, player, Arc::clone(&stats))?;
 
         Ok(Self {
-            keyboard: Keyboard::new(patch.keymap, gating, tx),
+            keyboard: Keyboard::new(patch.keymap, gating),
             stats,
             freqs,
             help: false,
+            tx,
             _stream: stream,
         })
     }
@@ -76,9 +85,20 @@ impl Session {
         self.help
     }
 
-    /// Apply `msg`; `Break` once the player has quit.
+    /// Apply `msg`, then carry out what it asked for; `Break` once the
+    /// player has quit.
     pub(crate) fn update(&mut self, msg: Msg) -> ControlFlow<()> {
-        match msg {
+        let mut cmds = Vec::new();
+        let flow = self.apply(msg, &mut cmds);
+        for cmd in cmds {
+            self.run(cmd);
+        }
+        flow
+    }
+
+    fn apply(&mut self, msg: Msg, cmds: &mut Vec<Cmd>) -> ControlFlow<()> {
+        let mut events = Vec::new();
+        let flow = match msg {
             Msg::Key(stroke) => {
                 // the overlay owns the keyboard while it is up: no key
                 // reaches the note grid, so nothing can be left sounding
@@ -86,17 +106,34 @@ impl Session {
                 let outcome = if self.help {
                     self.keyboard.global(stroke)
                 } else {
-                    self.keyboard.handle(stroke)
+                    self.keyboard.handle(stroke, &mut events)
                 };
                 match outcome {
-                    Outcome::Quit => return ControlFlow::Break(()),
-                    Outcome::Help => self.help = !self.help,
-                    Outcome::Continue => {}
+                    Outcome::Quit => ControlFlow::Break(()),
+                    Outcome::Help => {
+                        self.help = !self.help;
+                        ControlFlow::Continue(())
+                    }
+                    Outcome::Continue => ControlFlow::Continue(()),
                 }
             }
-            // a no-op when Held
-            Msg::Tick => self.keyboard.tick(),
+            Msg::Tick => {
+                // a no-op when Held
+                self.keyboard.tick(&mut events);
+                ControlFlow::Continue(())
+            }
+        };
+        cmds.extend(events.into_iter().map(Cmd::Play));
+        flow
+    }
+
+    fn run(&mut self, cmd: Cmd) {
+        match cmd {
+            // the queue is bounded; a full queue means the audio thread has
+            // stalled, and dropping an event is better than blocking the UI
+            Cmd::Play(event) => {
+                let _ = self.tx.push(event);
+            }
         }
-        ControlFlow::Continue(())
     }
 }
