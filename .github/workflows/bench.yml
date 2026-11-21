@@ -36,6 +36,10 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0 # the last benchmarked commit, for the skip check
+          # git-auto-commit-action pushes with these credentials. BENCH_TOKEN,
+          # when set, is one that main's ruleset lets through; without it
+          # the workflow's own token is used
+          token: ${{ secrets.BENCH_TOKEN || github.token }}
 
       # main gains a results commit each run, so "changed" means changed
       # outside benches/results/ since the commit the last result measured
@@ -80,9 +84,10 @@ jobs:
           mise run bench:compare >comparison.md
           cat comparison.md >>"$GITHUB_STEP_SUMMARY"
 
-      # main's ruleset requires status checks, so this push needs GitHub
-      # Actions on the ruleset's bypass list. A push with the workflow's
-      # token starts no workflow, so the commit does not run bench again.
+      # main's ruleset requires status checks, so this push needs either
+      # BENCH_TOKEN or a ruleset that admits the workflow's token. A push
+      # with the workflow's token starts no workflow; one with BENCH_TOKEN
+      # does, though bench itself never runs on push.
       # Pinned to a commit, since it is a third-party action.
       - name: Commit the result
         if: github.event_name != 'pull_request' && steps.changed.outputs.run != 'false'

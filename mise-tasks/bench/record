@@ -33,7 +33,7 @@ fi
 
 # A string as a TOML value, encoded by yq. Keys and headers below are fixed
 # names, and numbers come from printf, so strings are the only text from
-# outside (CPU model, args, tag) and yq does all their escaping.
+# outside (CPU model, args) and yq does all their escaping.
 quote() {
     VALUE=$1 yq -n -o toml '.v = strenv(VALUE)' | sed 's/^v = //'
 }
@@ -51,10 +51,8 @@ fi
 
 {
     echo "[run]"
-    echo "at = $(stamp %Y-%m-%dT%H:%M:%SZ)"
+    echo "time = $(stamp %Y-%m-%dT%H:%M:%SZ)"
     echo "commit = $(quote "$(git rev-parse --short HEAD)")"
-    # the nearest release tag and how far past it, e.g. v0.7.2-5-g3b9f51f
-    echo "tag = $(quote "$(git describe --tags --always)")"
     echo "version = $(quote "$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)")"
     echo "dirty = $dirty"
     echo "args = $(quote "$*")"
