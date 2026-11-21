@@ -6,7 +6,7 @@ _Lua-defined, Rust-driven synthesizer and sequencer_
 
 ## install
 
-### Linux/MacOS
+### Linux/MacOS [^requires]
 
 [`install.sh`](./install.sh) downloads and verifies the latest stable release, installing it to `$XDG_BIN_HOME`, or `~/.local/bin`.
 
@@ -16,6 +16,9 @@ curl -fsSL https://raw.githubusercontent.com/turkosaurus/synth/main/install.sh |
 
 > [!NOTE]
 > `update` and `uninstall` act on the binary being run; defer to package manager if installed through one.
+
+[^requires]: `GLIBC_2.34+`
+
 
 ## run
 
