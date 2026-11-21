@@ -14,8 +14,10 @@ struct KeyboardConfig {
     // ms, implied rather than spelled in the Lua name
     #[serde(rename = "gate")]
     gate_ms: f64,
-    #[serde(rename = "repeat_window")]
-    repeat_ms: f64,
+    #[serde(rename = "autorepeat_threshold")]
+    autorepeat_ms: f64,
+    #[serde(rename = "doubletap_threshold")]
+    doubletap_ms: f64,
     velocity: u8,
     octave: i32,
     octave_low: i32,
@@ -91,7 +93,7 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
         }
     }
 
-    // gate, repeat_window, velocity, and octave ranges: schema::KEYBOARD
+    // gate, both thresholds, velocity, and octave ranges: schema::KEYBOARD
 
     Ok(Keymap {
         notes,
@@ -101,7 +103,8 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
         stop,
         help,
         gate: std::time::Duration::from_secs_f64(config.gate_ms / 1000.0),
-        repeat: std::time::Duration::from_secs_f64(config.repeat_ms / 1000.0),
+        autorepeat: std::time::Duration::from_secs_f64(config.autorepeat_ms / 1000.0),
+        doubletap: std::time::Duration::from_secs_f64(config.doubletap_ms / 1000.0),
         velocity: config.velocity,
         octave: config.octave,
         octave_low: config.octave_low,
