@@ -10,7 +10,7 @@ Bootstrap for the patches folder. `synth patches` creates the directory with a s
 | [`tuning/`](./tuning) | MIDI note to Hz |
 | [`pattern/`](./pattern) | steps for a sequence |
 
-[`config.lua`](../config.lua):`patch_dir` defaults to `$XDG_DATA_HOME/synth/patches` (or `%APPDATA%\synth\patches`) when unset or `""`. `synth patches --path` prints it.
+`patch_dir` in `config.lua` (`synth config` opens it) defaults to `$XDG_DATA_HOME/synth/patches` (or `%APPDATA%\synth\patches`) when unset or `""`. `synth patches --path` prints it.
 
 ## require
 
@@ -48,3 +48,7 @@ stateDiagram-v2
 - The question is asked only at a terminal. Elsewhere the copies that are behind are named and kept.
 - Keeping yours records the new built-in as its base, so it is not asked about again until the built-in changes again.
 - A copy with no record in `.base.sha256` counts as edited and is kept.
+
+## guides
+
+`synth patches` also writes this `README.md`, an `AGENTS.md` for coding agents, and a `.luarc.json` that sets up lua-language-server for LuaJIT, to the folder's root. They follow the same rules as the built-in copies, with their own `.base.sha256` beside them.

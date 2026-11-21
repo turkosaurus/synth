@@ -32,3 +32,6 @@ Any telemetry, when extant, must be 100% opt-in and fully transparent.
 
 A new user interface is merely a `view` which can read `state` and send a `message`, allowing a proliferation of designs and use cases.
 
+## stability
+
+Versioning follows [semver 2.0.0](https://semver.org/) to provide predictable API compatibility.

@@ -89,7 +89,7 @@ pub fn builtins_written(wrote: &[(&str, crate::script::builtins::Wrote)], asking
     }
 }
 
-/// Each built-in module and whether an edited copy replaces it.
+/// Each built-in and whether its copy is edited.
 pub fn builtins(states: &[(&str, crate::script::builtins::State)]) {
     use crate::script::builtins::State;
     let rows: Vec<(&str, String)> = states
@@ -105,7 +105,7 @@ pub fn builtins(states: &[(&str, crate::script::builtins::State)]) {
             (*name, value)
         })
         .collect();
-    table::pairs("built-in modules", &rows, false);
+    table::pairs("built-in copies", &rows, false);
 }
 
 /// Everything `check` reports about a loaded patch. Computes nothing:
