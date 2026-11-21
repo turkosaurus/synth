@@ -194,7 +194,8 @@ keyboard.colemak = keyboard.grid({ template = keyboard.templates.colemak })
 ---@field layout? synth.Layout
 ---@field stop? string[] silence everything; must not be empty
 ---@field gate? number ms; note length when key release is unreported
----@field repeat_window? number ms; a press this soon is autorepeat; 0 off
+---@field autorepeat_threshold? number ms; a press this soon is autorepeat; 0 off
+---@field doubletap_threshold? number ms; a second press this soon is a double tap; 0 off
 ---@field velocity? integer 1 to 127, for every note
 ---@field octave? integer the octave shift to start at
 ---@field octave_low? integer octaves octave_down may move from the start
@@ -212,10 +213,15 @@ defaults = {
 	-- note length when the terminal cannot report key release
 	gate = 200, -- ms
 	-- when the terminal cannot report key release, a press of a key this
-	-- soon after its last press is taken as OS autorepeat and ignored. It
-	-- must outlast the OS repeat delay (GNOME defaults to 500ms, X11 to
-	-- 660ms), and one key cannot retrigger faster than this. 0 turns it off.
-	repeat_window = 550, -- ms
+	-- soon after its last press, repeats included, is taken as OS
+	-- autorepeat and ignored. Longer than the OS repeat interval (GNOME
+	-- 30ms, X11 40ms), shorter than a hand repeats one key: a held key
+	-- sounds once, then once more at the OS repeat delay. 0 turns it off.
+	autorepeat_threshold = 60, -- ms
+	-- a second press of a key this soon after the first is a double tap.
+	-- The first press acts at once and never waits for a second. A double
+	-- tap of stop cuts the sound, skipping the release. 0 to 1000; 0 off.
+	doubletap_threshold = 400, -- ms
 	-- a key has no depth to time, so every note gets this velocity; 1 to 127
 	velocity = 100,
 	-- the octave shift to start at; 0 plays the layout as written

@@ -31,6 +31,15 @@ pub fn environment(gating: Gating) {
     if in_tmux {
         println!("  tmux blocks the kitty keyboard protocol; re-run outside tmux");
     }
+    // the cost of no key release, said where it can be fixed rather than
+    // left to sound like a fault in the engine
+    if let Gating::Fixed = gating {
+        println!(
+            "  no key release: every note lasts the keyboard's gate, and a held key \
+             sounds once, then again at the OS repeat delay; a terminal with the \
+             kitty keyboard protocol reports release"
+        );
+    }
 }
 
 /// Where `config.lua` is looked for, and the settings in effect.

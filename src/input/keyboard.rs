@@ -64,6 +64,8 @@ pub(crate) struct Keyboard {
     /// when each key last arrived as a press, repeats included, so a
     /// `Fixed` key held down stays one note however long the repeats run
     pressed_at: HashMap<char, Instant>,
+    /// when `stop` was last pressed, so a second press can be a double tap
+    stopped_at: Option<Instant>,
     last_key: Option<char>,
 }
 
@@ -77,6 +79,7 @@ impl Keyboard {
             sounding: None,
             release_at: HashMap::new(),
             pressed_at: HashMap::new(),
+            stopped_at: None,
             last_key: None,
         }
     }
@@ -163,7 +166,7 @@ impl Keyboard {
         // control bindings are matched as keys,
         // so "backspace" works alongside "="
         if self.keymap.stop.contains(&key) {
-            self.panic(out);
+            self.stop(Instant::now(), out);
             return;
         }
         if self.keymap.octave_up.contains(&key) {
@@ -212,11 +215,11 @@ impl Keyboard {
             // a key cannot go down twice without a release in between
             Gating::Held => self.held.contains_key(&ch),
             // no release ever arrives, so only timing tells them apart;
-            // the keymap's `repeat` is how close counts
+            // the keymap's `autorepeat` is how close counts
             Gating::Fixed => self
                 .pressed_at
                 .insert(ch, now)
-                .is_some_and(|last| now - last < self.keymap.repeat),
+                .is_some_and(|last| now - last < self.keymap.autorepeat),
         }
     }
 
@@ -252,6 +255,22 @@ impl Keyboard {
         });
     }
 
+    /// A press of `stop`: All Notes Off at once, and All Sound Off as well
+    /// when it is a double tap. The first press never waits to learn
+    /// whether a second follows.
+    fn stop(&mut self, now: Instant, out: &mut Vec<Event>) {
+        self.panic(out);
+        if self
+            .stopped_at
+            .is_some_and(|last| now - last < self.keymap.doubletap)
+        {
+            out.push(Event::AllSoundOff {
+                instrument: INSTRUMENT,
+            });
+        }
+        self.stopped_at = Some(now);
+    }
+
     fn end(&mut self, note: u8, out: &mut Vec<Event>) {
         // also reached by tick(), which sees no key release, so this is the
         // only place `held` drains one note at a time
@@ -279,6 +298,7 @@ mod tests {
     use super::*;
 
     const REPEAT: Duration = Duration::from_millis(750);
+    const DOUBLETAP: Duration = Duration::from_millis(400);
 
     fn keyboard(gating: Gating, gate: Duration) -> (Keyboard, Vec<Event>) {
         let keymap = Keymap {
@@ -289,7 +309,8 @@ mod tests {
             stop: vec![Key::Backspace],
             help: vec![],
             gate,
-            repeat: REPEAT,
+            autorepeat: REPEAT,
+            doubletap: DOUBLETAP,
             velocity: 100,
             octave: 0,
             octave_low: 4,
@@ -412,6 +433,48 @@ mod tests {
         assert_eq!(keyboard.sounding(), None);
     }
 
+    const NOTES_OFF: Event = Event::AllNotesOff {
+        instrument: INSTRUMENT,
+    };
+    const SOUND_OFF: Event = Event::AllSoundOff {
+        instrument: INSTRUMENT,
+    };
+
+    // the first tap sends at once, so it is never held back to wait for a
+    // second; the second adds All Sound Off after the release
+    #[test]
+    fn a_double_tap_of_stop_cuts_the_sound() {
+        let (mut keyboard, mut out) = keyboard(Gating::Held, Duration::ZERO);
+        press(&mut keyboard, &mut out, Key::Char('a'));
+        drain(&mut out);
+        let start = Instant::now();
+
+        keyboard.stop(start, &mut out);
+        assert_eq!(drain(&mut out), vec![NOTES_OFF]);
+        keyboard.stop(start + DOUBLETAP / 2, &mut out);
+        assert_eq!(drain(&mut out), vec![NOTES_OFF, SOUND_OFF]);
+        assert!(keyboard.held.is_empty());
+    }
+
+    #[test]
+    fn taps_of_stop_apart_only_release() {
+        let (mut keyboard, mut out) = keyboard(Gating::Held, Duration::ZERO);
+        let start = Instant::now();
+        keyboard.stop(start, &mut out);
+        keyboard.stop(start + DOUBLETAP, &mut out);
+        assert_eq!(drain(&mut out), vec![NOTES_OFF, NOTES_OFF]);
+    }
+
+    #[test]
+    fn a_zero_doubletap_threshold_never_cuts_the_sound() {
+        let (mut keyboard, mut out) = keyboard(Gating::Held, Duration::ZERO);
+        keyboard.keymap.doubletap = Duration::ZERO;
+        let start = Instant::now();
+        keyboard.stop(start, &mut out);
+        keyboard.stop(start, &mut out);
+        assert_eq!(drain(&mut out), vec![NOTES_OFF, NOTES_OFF]);
+    }
+
     #[test]
     fn held_gating_ignores_autorepeat() {
         let (mut keyboard, mut out) = keyboard(Gating::Held, Duration::ZERO);
@@ -478,10 +541,32 @@ mod tests {
         assert!(!keyboard.repeated('s', start + step));
     }
 
+    // the default threshold against GNOME's autorepeat, 500 ms then every
+    // 30: a held key sounds again at the delay and never after, while
+    // quarter notes at 120 bpm each sound
+    #[test]
+    fn fixed_gating_a_short_threshold_passes_fast_notes() {
+        let (mut keyboard, _out) = keyboard(Gating::Fixed, Duration::ZERO);
+        keyboard.keymap.autorepeat = Duration::from_millis(60);
+        let ms = |n| Instant::now() + Duration::from_millis(n);
+
+        let start = Instant::now();
+        assert!(!keyboard.repeated('a', start));
+        assert!(!keyboard.repeated('a', start + Duration::from_millis(500)));
+        assert!(keyboard.repeated('a', start + Duration::from_millis(530)));
+        assert!(keyboard.repeated('a', start + Duration::from_millis(560)));
+
+        let beat = ms(10_000);
+        for n in 0..4 {
+            let at = beat + Duration::from_millis(500 * n);
+            assert!(!keyboard.repeated('s', at), "quarter {n} sounds");
+        }
+    }
+
     #[test]
     fn fixed_gating_zero_window_retriggers_every_press() {
         let (mut keyboard, mut out) = keyboard(Gating::Fixed, Duration::ZERO);
-        keyboard.keymap.repeat = Duration::ZERO;
+        keyboard.keymap.autorepeat = Duration::ZERO;
         press(&mut keyboard, &mut out, Key::Char('a'));
         press(&mut keyboard, &mut out, Key::Char('a'));
         assert_eq!(ons(&mut out), vec![60, 60]);

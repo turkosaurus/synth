@@ -206,7 +206,8 @@ mod field {
     pub(super) const LAYOUT: &str = "layout";
     pub(super) const STOP: &str = "stop";
     pub(super) const GATE: &str = "gate";
-    pub(super) const REPEAT_WINDOW: &str = "repeat_window";
+    pub(super) const AUTOREPEAT_THRESHOLD: &str = "autorepeat_threshold";
+    pub(super) const DOUBLETAP_THRESHOLD: &str = "doubletap_threshold";
     pub(super) const OCTAVE: &str = "octave";
     pub(super) const OCTAVE_LOW: &str = "octave_low";
     pub(super) const OCTAVE_HIGH: &str = "octave_high";

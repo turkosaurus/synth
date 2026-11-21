@@ -20,7 +20,8 @@ return synth.sequence({
 		help = { "?" }, -- show the help screen (unset: layout's)
 		stop = { "escape", "backspace" }, -- silence everything (non-empty)
 		gate = 300, -- ms; note length when the terminal cannot report key release
-		repeat_window = 600, -- ms; a repeat press this soon is OS autorepeat
+		autorepeat_threshold = 60, -- ms; a repeat press this soon is OS autorepeat
+		doubletap_threshold = 400, -- ms; a second press this soon is a double tap
 		velocity = 90, -- 1 to 127, for every note
 	}),
 

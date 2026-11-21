@@ -292,7 +292,9 @@ fn instrument_sticks_until_a_step_changes_it() {
         .iter()
         .filter_map(|(_, e)| match e {
             crate::spec::Event::NoteOn { instrument, .. } => Some(*instrument),
-            crate::spec::Event::NoteOff { .. } | crate::spec::Event::AllNotesOff { .. } => None,
+            crate::spec::Event::NoteOff { .. }
+            | crate::spec::Event::AllNotesOff { .. }
+            | crate::spec::Event::AllSoundOff { .. } => None,
         })
         .collect();
 
@@ -687,7 +689,9 @@ fn a_reused_pattern_resolves_to_the_same_instrument_each_time() {
         .iter()
         .filter_map(|(_, e)| match e {
             crate::spec::Event::NoteOn { instrument, .. } => Some(*instrument),
-            crate::spec::Event::NoteOff { .. } | crate::spec::Event::AllNotesOff { .. } => None,
+            crate::spec::Event::NoteOff { .. }
+            | crate::spec::Event::AllNotesOff { .. }
+            | crate::spec::Event::AllSoundOff { .. } => None,
         })
         .collect();
 
