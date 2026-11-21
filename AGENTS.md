@@ -20,3 +20,4 @@ GitHub issues, project, and release notes may provide context for features, bugs
 ## mise
 
 Utilise `mise` tasks for consistent testing, linting, versioning, and more.
+
