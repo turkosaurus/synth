@@ -23,15 +23,21 @@ run = "cargo run -- doctor"
 description = "follow the debug log; pair with a TUI in another pane"
 run = "touch synth.log; tail -F synth.log"
 
+# play and tui run the audio callback in real time. Debug by default: the
+# slowest render loop, a worst case to compare against. --release builds
+# optimized, as releases do, but a rebuild takes about 15 s, not 2 s.
+
 [tasks.play]
-description = "play the example patch, then show the debug log"
+description = "play the example patch, then show the debug log; --release builds optimized"
+usage = 'flag "--release" help="build optimized, as releases are"'
 # synth writes synth.log only when RUST_LOG is set
 env = { RUST_LOG = "synth=debug" }
-run = "cargo run -- play lua/example.lua; cat synth.log"
+run = "cargo run ${usage_release:+--release} -- play lua/example.lua; cat synth.log"
 
 [tasks.tui]
-description = "play live from the keyboard with the default instrument"
-run = "cargo run -- tui"
+description = "play live from the keyboard with the default instrument; --release builds optimized"
+usage = 'flag "--release" help="build optimized, as releases are"'
+run = "cargo run ${usage_release:+--release} -- tui"
 
 
 ### TEST ###
