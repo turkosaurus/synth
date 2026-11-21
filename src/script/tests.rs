@@ -1298,3 +1298,50 @@ fn every_starter_loads_in_one_patch() {
     let patch = load(&fixture("starters"), 48000, Some(&patches)).unwrap();
     assert!(patch.clean(), "{:?}", patch.reports);
 }
+
+/// The typed reason a patch failed, found through any context added on the
+/// way out.
+fn rejected(source: &str) -> anyhow::Error {
+    load_source(source, "patch.lua", 48000)
+        .err()
+        .expect("the patch should not load")
+}
+
+#[test]
+fn a_step_out_of_range_is_matched_by_variant() {
+    let error = rejected(
+        r#"
+        local synth = require("synth")
+        return synth.sequence({
+            instruments = { a = synth.instrument({}) },
+            instrument = "a",
+            steps = { { note = 60 }, { note = 200 } },
+        })
+        "#,
+    );
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::OutOfRange { what, field: "note", value, .. })
+                if what == "step 2" && *value == 200.0
+        ),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn a_keyboard_out_of_range_is_matched_by_variant() {
+    let error = rejected(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({ keyboard = synth.keyboard({ velocity = 0 }) })
+        "#,
+    );
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::OutOfRange { field: "velocity", value, .. }) if *value == 0.0
+        ),
+        "{error:#}"
+    );
+}

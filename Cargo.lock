@@ -2390,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "synth"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2409,6 +2409,7 @@ dependencies = [
  "sha2",
  "signal-hook",
  "tar",
+ "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
  "ureq",

@@ -6,6 +6,7 @@ The only place `mlua` appears. Loads a patch, checks it, and bakes it into [`spe
 | --- | --- |
 | [`structure.rs`](./structure.rs) | walks constructor stamps; kinds, cycles, paths |
 | [`schema.rs`](./schema.rs) | what values are valid, declared once |
+| [`error.rs`](./error.rs) | `Error`: why a patch failed, by variant |
 | [`bake.rs`](./bake.rs) | instrument to wavetable and envelope |
 | [`feed.rs`](./feed.rs) | single note or sequence to a timeline |
 | [`keymap.rs`](./keymap.rs) | keyboard layout to keymap |
