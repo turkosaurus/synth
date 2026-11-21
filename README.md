@@ -4,20 +4,25 @@
 
 _Lua-defined, Rust-driven synthesizer and sequencer_
 
+## about
+
+A real-time Rust digital instrument and audio workstation configured and driven by Lua functions and tables.
+- Design principles: [`RULES.md`](RULES.md)
+- Development process: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## install
 
 ### Linux[^requires]/MacOS
 
-[`install.sh`](./install.sh) downloads and verifies the latest stable release, installing it to `$XDG_BIN_HOME`, or `~/.local/bin`.
+[`install.sh`](./install.sh) downloads and verifies the latest stable release, installing it to `$XDG_BIN_HOME`, or `~/.local/bin`[^manager].
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/turkosaurus/synth/main/install.sh | bash
 ```
 
-> [!NOTE]
-> `update` and `uninstall` act on the binary being run; defer to package manager if installed through one.
+[^manager]: `update` and `uninstall` act on the binary being run; defer to package manager if installed through one.
 
-[^requires]: `GLIBC_2.34+`
+[^requires]: requires `GLIBC_2.34+`
 
 
 ## run
