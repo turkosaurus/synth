@@ -1,7 +1,12 @@
+-- A waveform is a shape: phase (0.0 to 1.0) to amplitude (-1.0 to 1.0).
+---@alias synth.Waveform fun(phase: number): number
+
 local wave = {}
 
 -- phase (0.0 to 1.0) to triangle wave (-1.0 to 1.0)
 -- where phase=0.0 is amplitude=0.0
+---@param phase number
+---@return number
 function wave.triangle(phase)
 	if phase < 0.25 then
 		return 4 * phase

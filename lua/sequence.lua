@@ -4,12 +4,47 @@ local new -- the constructor, defined below
 local site = require("synth.site")
 
 ---@class synth.sequence
----@overload fun(opts: table): table
+---@overload fun(opts: synth.SequenceOpts): synth.Sequence
 local sequence = setmetatable({}, {
 	__call = function(_, opts)
 		return setmetatable(new(opts), { kind = "sequence", at = site() })
 	end,
 })
+
+-- `note` and `instrument` stick until a later step changes them.
+---@class synth.Step
+---@field note? integer MIDI note, 0 to 127
+---@field off? boolean
+---@field instrument? string a key of the sequence's `instruments`
+---@field duration? number steps to sound; may exceed 1
+---@field velocity? integer 1 to 127
+
+-- Either a flat `steps` list, or `patterns` named and arranged by `chain`.
+---@class synth.SequenceOpts
+---@field bpm? number
+---@field division? number steps per beat; 4 = sixteenths
+---@field instrument? string the instrument steps start with
+---@field instruments? table<string, synth.Instrument>
+---@field steps? synth.Step[]
+---@field patterns? table<string, synth.Step[]>
+---@field chain? string[] pattern names, in play order
+---@field loop? integer times to play the chain
+---@field keyboard? synth.Keyboard
+---@field tuning? synth.Tuning
+---@field filter? synth.Filter runs on the summed output
+
+-- What Rust reads: patterns flattened into one step list.
+---@class synth.Sequence
+---@field bpm number
+---@field division number
+---@field instruments table<string, synth.Instrument>
+---@field steps synth.Step[]
+---@field patterns integer how many patterns were defined
+---@field chain integer how many names the chain held
+---@field loop integer
+---@field keyboard? synth.Keyboard
+---@field tuning? synth.Tuning
+---@field filter? synth.Filter
 
 -- `note` and `instrument` stick until a later step changes them,
 -- so a step only names what differs.
@@ -37,6 +72,9 @@ end
 
 -- A table constructor cannot hold statements, so this makes a function body
 -- an expression, letting a loop build a list inline where it is used.
+---@generic T
+---@param build fun(add: fun(...: T))
+---@return T[]
 function sequence.list(build)
 	local out = {}
 	build(function(...)

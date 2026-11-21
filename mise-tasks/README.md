@@ -7,6 +7,8 @@ Tasks long enough for their own file. Shorter ones live in [`mise.toml`](../mise
 | [`test:separation`](./test/separation) | `mlua` only in `script`, `cpal` only in `audio/device.rs`, and `spec` names neither |
 | [`test:core`](./test/core) | `src/audio/fx/` uses `core` alone: no `std`, no std-only float methods |
 | [`lint:lua`](./lint/lua) | lua-language-server on `lua/` and `tests/lua/`, under LuaJIT and Lua 5.4 |
+| [`lint:lsp`](./lint/lsp) | in a patches folder from this build, lua-language-server flags each `tests/lua/lsp/` case and nothing else, and a headless Neovim ([`tests/nvim/lsp.lua`](../tests/nvim/lsp.lua)) gets the root, hover, and completion the annotations give |
+| [`lsp:edit`](./lsp/edit) | opens that patches folder, at `target/lsp/`, in `$VISUAL` or `$EDITOR`, to try the annotations by hand |
 | [`lint:licenses`](./lint/licenses) | every dependency is GPLv3-compatible and from crates.io |
 | [`version`](./version) | Cargo.toml's version is one bump from the last and has no tag yet |
 | [`notices`](./notices) | writes third-party license notices for a release |
