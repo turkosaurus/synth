@@ -6,7 +6,7 @@ Lua defines not only configuration, but provides functions to the Rust audio eng
 | file | purpose |
 | --- | --- |
 | [`synth.lua`](./synth.lua) | `require("synth")`: every module below in one table |
-| [`construct.lua`](./construct.lua) | the constructors' shared helper: caller's fields, deep-copied defaults, stamp; not in `require("synth")` |
+| [`construct.lua`](./construct.lua) | shared `constructor` helper: fields, defaults, stamp (excluded from `require("synth")`) |
 | [`slope.lua`](./slope.lua) | envelope curves: shapes from 0 to 1, scaled per stage |
 | [`wave.lua`](./wave.lua) | waveform shapes |
 | [`envelope.lua`](./envelope.lua) | envelope generator |
