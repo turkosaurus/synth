@@ -1,7 +1,9 @@
-//! The wiring behind a live session: the output device, the patch, and the
-//! ring from the UI thread into the audio callback.
+//! A live session, in the Elm shape `RULES.md` names: a [`Model`], the
+//! [`Msg`]s that change it, and the [`Cmd`]s they ask for, which the
+//! session carries out on the output device and the ring into the audio
+//! callback.
 //!
-//! A view drives a [`Session`] and draws it but never builds one,
+//! A view reads the model and sends messages, but never builds a session,
 //! so a second view can reuse this wiring unchanged.
 
 use std::ops::ControlFlow;
@@ -29,13 +31,53 @@ pub(crate) enum Cmd {
     Play(Event),
 }
 
-/// A patch playing live on the default output device.
-pub struct Session {
+/// Everything a view reads. A view gets only `&Model`, so `update` is the
+/// one way it changes.
+pub(crate) struct Model {
     pub(crate) keyboard: Keyboard,
-    pub(crate) stats: Arc<Stats>,
     /// The same baked table the player reads, copied for the view.
     pub(crate) freqs: Vec<f32>,
-    help: bool,
+    /// Whether the help overlay is up.
+    pub(crate) help: bool,
+}
+
+impl Model {
+    fn update(&mut self, msg: Msg, cmds: &mut Vec<Cmd>) -> ControlFlow<()> {
+        let mut events = Vec::new();
+        let flow = match msg {
+            Msg::Key(stroke) => {
+                // the overlay owns the keyboard while it is up: no key
+                // reaches the note grid, so nothing can be left sounding
+                // behind it. quit still works, and the help key toggles.
+                let outcome = if self.help {
+                    self.keyboard.global(stroke)
+                } else {
+                    self.keyboard.handle(stroke, &mut events)
+                };
+                match outcome {
+                    Outcome::Quit => ControlFlow::Break(()),
+                    Outcome::Help => {
+                        self.help = !self.help;
+                        ControlFlow::Continue(())
+                    }
+                    Outcome::Continue => ControlFlow::Continue(()),
+                }
+            }
+            Msg::Tick => {
+                // a no-op when Held
+                self.keyboard.tick(&mut events);
+                ControlFlow::Continue(())
+            }
+        };
+        cmds.extend(events.into_iter().map(Cmd::Play));
+        flow
+    }
+}
+
+/// A patch playing live on the default output device.
+pub struct Session {
+    model: Model,
+    pub(crate) stats: Arc<Stats>,
     /// The ring's producer; the consumer lives in the audio callback.
     tx: rtrb::Producer<Event>,
     /// Kept only so the stream plays until the session drops.
@@ -71,59 +113,29 @@ impl Session {
         let stream = audio::stream(&output, player, Arc::clone(&stats))?;
 
         Ok(Self {
-            keyboard: Keyboard::new(patch.keymap, gating),
+            model: Model {
+                keyboard: Keyboard::new(patch.keymap, gating),
+                freqs,
+                help: false,
+            },
             stats,
-            freqs,
-            help: false,
             tx,
             _stream: stream,
         })
     }
 
-    /// Whether the help overlay is up.
-    pub(crate) fn help(&self) -> bool {
-        self.help
+    pub(crate) fn model(&self) -> &Model {
+        &self.model
     }
 
     /// Apply `msg`, then carry out what it asked for; `Break` once the
     /// player has quit.
     pub(crate) fn update(&mut self, msg: Msg) -> ControlFlow<()> {
         let mut cmds = Vec::new();
-        let flow = self.apply(msg, &mut cmds);
+        let flow = self.model.update(msg, &mut cmds);
         for cmd in cmds {
             self.run(cmd);
         }
-        flow
-    }
-
-    fn apply(&mut self, msg: Msg, cmds: &mut Vec<Cmd>) -> ControlFlow<()> {
-        let mut events = Vec::new();
-        let flow = match msg {
-            Msg::Key(stroke) => {
-                // the overlay owns the keyboard while it is up: no key
-                // reaches the note grid, so nothing can be left sounding
-                // behind it. quit still works, and the help key toggles.
-                let outcome = if self.help {
-                    self.keyboard.global(stroke)
-                } else {
-                    self.keyboard.handle(stroke, &mut events)
-                };
-                match outcome {
-                    Outcome::Quit => ControlFlow::Break(()),
-                    Outcome::Help => {
-                        self.help = !self.help;
-                        ControlFlow::Continue(())
-                    }
-                    Outcome::Continue => ControlFlow::Continue(()),
-                }
-            }
-            Msg::Tick => {
-                // a no-op when Held
-                self.keyboard.tick(&mut events);
-                ControlFlow::Continue(())
-            }
-        };
-        cmds.extend(events.into_iter().map(Cmd::Play));
         flow
     }
 
@@ -135,5 +147,87 @@ impl Session {
                 let _ = self.tx.push(event);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::input::keyboard::Kind;
+    use crate::spec::{Key, Keymap};
+
+    fn model() -> Model {
+        let keymap = Keymap {
+            notes: HashMap::from([('a', 60)]),
+            name: None,
+            octave_up: vec![],
+            octave_down: vec![],
+            stop: vec![],
+            help: vec![Key::Char('?')],
+            gate: Duration::ZERO,
+            repeat: Duration::ZERO,
+            velocity: 100,
+            octave: 0,
+            octave_low: 0,
+            octave_high: 0,
+        };
+        Model {
+            keyboard: Keyboard::new(keymap, Gating::Held),
+            freqs: vec![],
+            help: false,
+        }
+    }
+
+    fn key(ch: char, ctrl: bool) -> Msg {
+        Msg::Key(Stroke {
+            key: Key::Char(ch),
+            kind: Kind::Press,
+            ctrl,
+        })
+    }
+
+    fn send(model: &mut Model, msg: Msg) -> Vec<Cmd> {
+        let mut cmds = Vec::new();
+        let _ = model.update(msg, &mut cmds);
+        cmds
+    }
+
+    fn quits(model: &mut Model, msg: Msg) -> bool {
+        model.update(msg, &mut Vec::new()).is_break()
+    }
+
+    #[test]
+    fn a_note_key_plays() {
+        let mut model = model();
+        assert_eq!(
+            send(&mut model, key('a', false)),
+            vec![Cmd::Play(Event::NoteOn {
+                instrument: 0,
+                note: 60,
+                velocity: 100,
+            })]
+        );
+    }
+
+    #[test]
+    fn the_help_overlay_keeps_note_keys_silent() {
+        let mut model = model();
+        send(&mut model, key('?', false));
+        assert!(model.help);
+        assert_eq!(send(&mut model, key('a', false)), vec![]);
+        send(&mut model, key('?', false));
+        assert!(!model.help);
+        assert_eq!(send(&mut model, key('a', false)).len(), 1);
+    }
+
+    #[test]
+    fn ctrl_c_quits_with_or_without_the_overlay() {
+        let mut model = model();
+        assert!(quits(&mut model, key('c', true)));
+        send(&mut model, key('?', false));
+        assert!(quits(&mut model, key('c', true)));
     }
 }

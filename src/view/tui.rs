@@ -32,7 +32,7 @@ const STATS_ROWS: u16 = 2 + SPARK_ROWS;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
-    let gating = session.keyboard.gating();
+    let gating = session.model().keyboard.gating();
 
     // built before enter(), so a failure here needs no teardown.
     // backend goes straight over stdout rather than through ratatui::init()
@@ -73,14 +73,15 @@ fn drive(
         peak.update(meter::scale(snap.peak, config.meter_floor_db), dt);
         activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clips);
 
+        let model = session.model();
         let view = View {
-            keyboard: &session.keyboard,
+            keyboard: &model.keyboard,
             snap: &snap,
             peak: &peak,
             activity: &activity,
-            freqs: &session.freqs,
+            freqs: &model.freqs,
             gating,
-            help: session.help(),
+            help: model.help,
             floor_db: config.meter_floor_db,
         };
         terminal.draw(|frame| draw(frame, &view))?;
