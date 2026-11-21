@@ -4,6 +4,7 @@ use tracing::instrument;
 mod bake;
 pub mod builtins;
 mod config;
+mod error;
 mod feed;
 mod filter;
 mod keymap;
@@ -13,6 +14,7 @@ mod structure;
 
 use crate::spec::{Diagnostic, DiagnosticKind, Patch};
 pub use config::{config, config_path, template as config_template};
+pub use error::Error;
 use feed::{sequence, single, SINGLE};
 use keymap::keymap;
 

@@ -5,7 +5,7 @@
 //! can override any Lua module, so Lua may choose a value but Rust says
 //! whether it is allowed.
 
-use super::field;
+use super::{field, Error};
 
 #[derive(Clone, Copy)]
 enum Ty {
@@ -208,7 +208,7 @@ impl Schema {
     /// Fails on an unknown field, a missing one, a wrong type, or a number
     /// out of range, naming where the value was made when a constructor
     /// stamped it. `name` replaces the schema's own name, as `step 3`.
-    pub(super) fn check(&self, table: &mlua::Table, name: Option<&str>) -> anyhow::Result<()> {
+    pub(super) fn check(&self, table: &mlua::Table, name: Option<&str>) -> Result<(), Error> {
         let what = match (name, super::structure::made_at(table)?) {
             (Some(name), _) => name.to_string(),
             (None, Some(at)) => format!("{} made at {at}", self.what),
@@ -222,19 +222,23 @@ impl Schema {
                 continue;
             };
             if !self.fields.iter().any(|field| field.name == &*key) {
-                let names: Vec<&str> = self.fields.iter().map(|field| field.name).collect();
-                anyhow::bail!(
-                    "{what}: unknown field `{}`; expected one of {}",
-                    &*key,
-                    names.join(", ")
-                );
+                return Err(Error::UnknownField {
+                    what,
+                    field: key.to_string(),
+                    expected: self.fields.iter().map(|field| field.name).collect(),
+                });
             }
         }
 
         for field in self.fields {
             let value: mlua::Value = table.raw_get(field.name)?;
             if value.is_nil() {
-                anyhow::ensure!(!field.required, "{what}: `{}` is missing", field.name);
+                if field.required {
+                    return Err(Error::MissingField {
+                        what,
+                        field: field.name,
+                    });
+                }
                 continue;
             }
             let number = match (&value, field.ty) {
@@ -245,20 +249,24 @@ impl Schema {
                 | (mlua::Value::Table(_), Ty::Table)
                 | (mlua::Value::String(_), Ty::Text)
                 | (mlua::Value::Boolean(_), Ty::Flag) => None,
-                (_, ty) => anyhow::bail!(
-                    "{what}: `{}` must be {}, got {}",
-                    field.name,
-                    ty.name(),
-                    shown(&value)
-                ),
+                (_, ty) => {
+                    return Err(Error::WrongType {
+                        what,
+                        field: field.name,
+                        expected: ty.name(),
+                        got: shown(&value),
+                    })
+                }
             };
             if let Some(number) = number {
-                anyhow::ensure!(
-                    field.bound.holds(number),
-                    "{what}: `{}` is {number}; must be {}",
-                    field.name,
-                    field.bound.describe()
-                );
+                if !field.bound.holds(number) {
+                    return Err(Error::OutOfRange {
+                        what,
+                        field: field.name,
+                        value: number,
+                        bound: field.bound.describe(),
+                    });
+                }
             }
         }
         Ok(())
