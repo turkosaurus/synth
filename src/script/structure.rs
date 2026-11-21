@@ -94,6 +94,22 @@ fn check(table: &mlua::Table, kind: &str, path: &str) -> anyhow::Result<()> {
     }
 }
 
+/// Fields an instrument may hold only as the patch's root, which reads them.
+/// Anywhere else they would load and be ignored.
+const ROOT_ONLY: [&str; 3] = [field::KEYBOARD, field::TUNING, field::FILTER];
+
+fn root_only(table: &mlua::Table, path: &str, at: &str) -> anyhow::Result<()> {
+    for key in ROOT_ONLY {
+        if !table.raw_get::<mlua::Value>(key)?.is_nil() {
+            anyhow::bail!(
+                "{path}: `{key}` applies only to the patch's root; \
+                 set it on the sequence (instrument made at {at})"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Walks the patch from its root and returns every stamped table, sorted by
 /// path. Fails on a root that is not an instrument or a sequence, on a field
 /// holding the wrong kind, and on a cycle.
@@ -140,6 +156,9 @@ fn visit(
 
     let found = stamp(table)?;
     if let Some(found) = &found {
+        if found.kind == "instrument" && !path.is_empty() {
+            root_only(table, &path, &found.at)?;
+        }
         nodes.push(Node {
             path: path.clone(),
             kind: found.kind.clone(),
