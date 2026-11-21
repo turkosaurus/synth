@@ -8,11 +8,15 @@
 -- a rising attack and a falling release alike.
 -- An example:
 --   attack_curve = function(t) return t * t end
+---@alias synth.Curve fun(t: number): number
+
 local slope = {}
 
 -- 0 is linear;
 -- positive moves faster at the start,
 -- negative faster at the end.
+---@param curve number
+---@return synth.Curve
 function slope.exponential(curve)
 	-- exp(0) == 1 would divide by zero
 	if curve == 0 then
@@ -27,6 +31,7 @@ function slope.exponential(curve)
 end
 
 -- the same rate of change across the whole stage
+---@return synth.Curve
 function slope.linear()
 	return slope.exponential(0)
 end

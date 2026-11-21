@@ -7,12 +7,22 @@ local new -- the constructor, defined below
 local site = require("synth.site")
 
 ---@class synth.instrument
----@overload fun(opts?: table): table
+---@overload fun(opts?: synth.Instrument): synth.Instrument
 local instrument = setmetatable({}, {
 	__call = function(_, opts)
 		return setmetatable(new(opts), { kind = "instrument", at = site() })
 	end,
 })
+
+-- `keyboard`, `tuning`, and `filter` apply when the instrument is the
+-- patch's root.
+---@class synth.Instrument
+---@field waveform? synth.Waveform
+---@field envelope? synth.Envelope
+---@field voice_count? integer notes it can sound at once; 1 is mono
+---@field keyboard? synth.Keyboard
+---@field tuning? synth.Tuning
+---@field filter? synth.Filter
 
 -- Copies the caller's fields, then fills in defaults.
 -- Unknown fields are propagated for error reporting.
