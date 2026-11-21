@@ -19,7 +19,7 @@ use synth::audio::{bench::fill, Player};
 mod sustain;
 
 #[cfg(target_os = "linux")]
-use sustain::{buffer, player, CHANNELS};
+use sustain::{buffer, live, player, CHANNELS};
 
 #[cfg(target_os = "linux")]
 fn dry(voices: usize) -> (Player, Vec<f32>) {
@@ -31,6 +31,15 @@ fn filtered(voices: usize) -> (Player, Vec<f32>) {
     (player(voices, true), buffer())
 }
 
+// The step's events wait in the ring for the counted callback. Dropping the
+// keys leaves them there: a ring's reader still reads what was pushed.
+#[cfg(target_os = "linux")]
+fn live_step(voices: usize) -> (Player, Vec<f32>) {
+    let (player, mut keys) = live(voices);
+    keys.step();
+    (player, buffer())
+}
+
 #[cfg(target_os = "linux")]
 #[library_benchmark]
 #[bench::dry_1(args = (1), setup = dry)]
@@ -39,6 +48,9 @@ fn filtered(voices: usize) -> (Player, Vec<f32>) {
 #[bench::filtered_1(args = (1), setup = filtered)]
 #[bench::filtered_8(args = (8), setup = filtered)]
 #[bench::filtered_32(args = (32), setup = filtered)]
+#[bench::live_1(args = (1), setup = live_step)]
+#[bench::live_8(args = (8), setup = live_step)]
+#[bench::live_32(args = (32), setup = live_step)]
 fn callback((mut player, mut out): (Player, Vec<f32>)) -> u32 {
     black_box(fill(black_box(&mut out), CHANNELS, &mut player))
 }
