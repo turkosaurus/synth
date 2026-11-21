@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+#MISE description="time the render path, count its instructions, and save benches/results/<stamp>.toml; extra args go to criterion, e.g. dry/8 or --quick"
+#
+# Writes one file per run, holding only the cases this run measured, beside
+# the machine and commit that produced them. Results from every machine go
+# in one folder: a reader filters by [machine].
+#
+# Two measures of the same callbacks:
+# - [time.*], from benches/render.rs (criterion): real time, which drifts
+#   with the machine's clock and load between runs
+# - [instructions.*], from benches/instructions.rs (gungraun, Callgrind):
+#   instruction counts, which repeat to within about 0.01% on any machine.
+#   Needs Valgrind; without it the section is left out
+#
+# Extra args go to criterion, such as dry/8 or --quick; the instruction
+# count always runs every case.
+set -euo pipefail
+
+results=benches/results
+criterion=target/criterion/callback
+gungraun=target/gungraun/synth/instructions/render
+
+mkdir -p target "$results"
+
+# Runs at the same time would collect each other's output. The lock holds
+# its start time, so one left by a killed run is ignored after 30 minutes.
+lock=benches/.lock
+stale=1800
+take() { (set -C; date -u +%s >"$lock") 2>/dev/null; }
+if ! take; then
+    started=$(cat "$lock" 2>/dev/null || true)
+    if [[ $started =~ ^[0-9]+$ ]]; then
+        age=$(($(date -u +%s) - started))
+        if [ "$age" -lt "$stale" ]; then
+            echo "::error title=bench::another run started $((age / 60)) minutes ago; it holds $lock, which is ignored after $((stale / 60)) minutes"
+            exit 1
+        fi
+        echo "ignoring $lock from $((age / 60)) minutes ago" >&2
+    else
+        echo "ignoring $lock, which holds no start time" >&2
+    fi
+    rm -f "$lock"
+    if ! take; then
+        echo "::error title=bench::another run took $lock just now"
+        exit 1
+    fi
+fi
+
+# both tools keep every case they have measured, so only output newer than
+# this marker comes from this run
+marker=$(mktemp target/bench-start.XXXXXX)
+trap 'rm -f "$marker" "$lock"' EXIT
+
+# stdout carries only the saved file's path, so `file=$(mise run bench)`
+# works; everything meant for a person reading along goes to stderr
+echo "running automated benchmarks..." >&2
+# one plain line per case: criterion's own "improved" and "regressed" judge
+# time against its last run, which on a laptop mostly measures the clock;
+# bench:compare does the comparing
+cargo bench --bench render -- --output-format bencher "$@" >&2
+if command -v valgrind >/dev/null; then
+    echo "counting instructions..." >&2
+    cargo bench --bench instructions -- --save-summary=json >&2
+else
+    echo "valgrind is not installed, so instructions are not counted" >&2
+fi
+
+now=$(date -u +%s)
+stamp() { date -u -d "@$now" "+$1" 2>/dev/null || date -u -r "$now" "+$1"; }
+file="$results/$(stamp %Y%m%d-%H%M%S).toml"
+
+cpu=""
+if [ -r /proc/cpuinfo ]; then
+    cpu=$(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | head -1)
+elif command -v sysctl >/dev/null; then
+    cpu=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)
+fi
+
+# A string as a TOML value, encoded by yq. Keys and headers below are fixed
+# names, and numbers come from printf, so strings are the only text from
+# outside (CPU model, args) and yq does all their escaping.
+quote() {
+    VALUE=$1 yq -n -o toml '.v = strenv(VALUE)' | sed 's/^v = //'
+}
+
+dirty=false
+if [ -n "$(git status --porcelain --untracked-files=no -- . ":!$results")" ]; then
+    dirty=true
+fi
+
+timed=$(find "$criterion" -path '*/new/estimates.json' -newer "$marker" 2>/dev/null | sort -V)
+counted=$(find "$gungraun" -name summary.json -newer "$marker" 2>/dev/null | sort -V)
+if [ -z "$timed" ]; then
+    echo "::error title=bench::no case ran, so nothing was saved"
+    exit 1
+fi
+
+frames=""
+{
+    echo "[run]"
+    echo "time = $(stamp %Y-%m-%dT%H:%M:%SZ)"
+    echo "commit = $(quote "$(git rev-parse --short HEAD)")"
+    echo "version = $(quote "$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)")"
+    echo "dirty = $dirty"
+    echo "args = $(quote "$*")"
+    echo "rustc = $(quote "$(rustc --version | cut -d' ' -f2)")"
+    echo "ci = ${GITHUB_ACTIONS:-false}"
+    echo
+    echo "[machine]"
+    echo "cpu = $(quote "${cpu:-unknown}")"
+    echo "cores = $(getconf _NPROCESSORS_ONLN)"
+    echo "os = $(quote "$(uname -s)")"
+    echo "arch = $(quote "$(uname -m)")"
+
+    for estimates in $timed; do
+        dir=$(dirname "$(dirname "$estimates")") # .../callback/dry/8
+        voices=$(basename "$dir")
+        variant=$(basename "$(dirname "$dir")")
+        frames=$(yq -p json -oy '.throughput.Elements' "$dir/new/benchmark.json")
+        read -r mean low high < <(yq -p json -o tsv \
+            '[.mean.point_estimate, .mean.confidence_interval.lower_bound, .mean.confidence_interval.upper_bound]' \
+            "$estimates")
+        echo
+        echo "[time.$variant.$voices]"
+        printf 'mean_ns = %.0f\nlow_ns = %.0f\nhigh_ns = %.0f\n' "$mean" "$low" "$high"
+        echo "frames = $frames"
+        awk -v m="$mean" -v f="$frames" 'BEGIN { printf "per_frame_ns = %.1f\n", m / f }'
+    done
+
+    # every case plays the same callback size, which criterion recorded
+    for summary in $counted; do
+        id=$(yq -p json -oy '.id' "$summary") # dry_8
+        read -r count cycles < <(yq -p json -o tsv \
+            '.profiles[] | select(.tool == "Callgrind") | .data.total.metrics
+                | [.Ir.values.new, .EstimatedCycles.values.new]' "$summary")
+        echo
+        echo "[instructions.${id%_*}.${id##*_}]"
+        echo "count = $count"
+        echo "estimated_cycles = $cycles"
+        echo "frames = $frames"
+        awk -v c="$count" -v f="$frames" 'BEGIN { printf "per_frame = %.1f\n", c / f }'
+    done
+} >"$file"
+
+# read it back, so a file that is not valid TOML is never left behind
+if ! yq -p toml -o json '.' "$file" >/dev/null; then
+    rm -f "$file"
+    echo "::error title=bench::the result was not valid TOML, so nothing was saved"
+    exit 1
+fi
+
+echo "benchmark saved $file" >&2
+# the bare path is for a caller such as `file=$(mise run bench)`; in a
+# terminal it would only repeat the line above
+if [ ! -t 1 ]; then
+    echo "$file"
+fi

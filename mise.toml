@@ -5,6 +5,9 @@ lua-language-server = "3"
 stylua = "2"
 cargo-deny = "0.20"
 "ubi:EmbarkStudios/cargo-about" = "0.9"
+# runs benches/instructions.rs under Valgrind; must match the gungraun crate's
+# version exactly. Valgrind itself comes from the system's package manager.
+"ubi:gungraun/gungraun" = { version = "0.20.0", exe = "gungraun-runner" }
 
 
 ### RUN ###
