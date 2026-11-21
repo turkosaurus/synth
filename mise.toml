@@ -54,6 +54,15 @@ description = "lint example.lua; nonzero exit on warnings"
 run = "cargo run -- check lua/example.lua || { echo '::error file=lua/example.lua,title=test:example::synth check found warnings'; exit 1; }"
 
 
+### BENCH ###
+
+# not a test:* task, so neither `tests` nor CI runs it: it takes minutes,
+# and shared runners time too noisily to compare
+[tasks.bench]
+description = "time the render path; extra args go to criterion, e.g. dry/8 or --save-baseline main"
+run = "cargo bench --bench render --"
+
+
 ### LINT ###
 
 [tasks.lint]
