@@ -56,11 +56,11 @@ run = "cargo run -- check lua/example.lua || { echo '::error file=lua/example.lu
 
 ### BENCH ###
 
-# not a test:* task, so neither `tests` nor CI runs it: it takes minutes,
-# and shared runners time too noisily to compare
+# not a test:* task, so `tests` does not run it: a full run takes a
+# minute. bench.yml runs it daily on main and on PRs ready for review.
 [tasks.bench]
-description = "time the render path; extra args go to criterion, e.g. dry/8 or --save-baseline main"
-run = "cargo bench --bench render --"
+description = "time the render path and save benches/results/<stamp>.toml; extra args go to criterion, e.g. dry/8 or --quick"
+run = "mise-tasks/bench/record"
 
 
 ### LINT ###

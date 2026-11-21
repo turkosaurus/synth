@@ -31,7 +31,7 @@ fn player(voices: usize, filtered: bool) -> Player {
 }
 
 fn callback(c: &mut Criterion) {
-    let mut group = c.benchmark_group("fill");
+    let mut group = c.benchmark_group("callback");
     group.throughput(Throughput::Elements(FRAMES as u64));
     for filtered in [false, true] {
         let name = if filtered { "filtered" } else { "dry" };

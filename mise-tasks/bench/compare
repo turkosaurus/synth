@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+#MISE description="compare two bench results as a Markdown table: newest against the one before it on the same CPU, or NEW and OLD files"
+#
+# usage: mise run bench:compare [NEW] [OLD]
+#
+# Only results from the same CPU are comparable, so with no OLD this picks
+# the latest earlier file whose [machine].cpu matches NEW's.
+set -euo pipefail
+
+results=benches/results
+new=${1:-$(find "$results" -name '*.toml' | sort | tail -1)}
+old=${2:-}
+if [ -z "$new" ]; then
+    echo "::error title=bench:compare::no results in $results; run mise run bench"
+    exit 1
+fi
+
+cpu=$(yq -p toml -oy '.machine.cpu' "$new")
+if [ -z "$old" ]; then
+    # names are timestamps, so sorting them sorts by time
+    for f in $(find "$results" -name '*.toml' | sort -r); do
+        [[ "$f" < "$new" ]] || continue
+        if [ "$(yq -p toml -oy '.machine.cpu' "$f")" = "$cpu" ]; then
+            old=$f
+            break
+        fi
+    done
+fi
+
+# one line per case: variant/voices per_frame_ns
+# shellcheck disable=SC2016 # $variant is a yq variable, not the shell's
+cases() {
+    yq -p toml -o tsv '.callback | to_entries | .[] | .key as $variant
+        | .value | to_entries | .[] | [$variant + "/" + .key, .value.per_frame_ns]' "$1"
+}
+
+echo "### bench: \`$(yq -p toml -oy '.run.commit' "$new")\` on $cpu"
+echo
+if [ -z "$old" ]; then
+    echo "No earlier result on this CPU to compare with."
+    echo
+    echo "| case | ns per frame |"
+    echo "| --- | --- |"
+    cases "$new" | while IFS=$'\t' read -r name ns; do
+        echo "| $name | $ns |"
+    done
+    exit 0
+fi
+
+echo "Against \`$(yq -p toml -oy '.run.commit' "$old")\` ($(basename "$old" .toml))."
+echo
+echo "| case | before (ns per frame) | after | change |"
+echo "| --- | --- | --- | --- |"
+cases "$new" | while IFS=$'\t' read -r name ns; do
+    before=$(cases "$old" | awk -F'\t' -v n="$name" '$1 == n { print $2 }')
+    if [ -z "$before" ]; then
+        echo "| $name | | $ns | new case |"
+    else
+        change=$(awk -v a="$before" -v b="$ns" 'BEGIN { printf "%+.1f%%", (b - a) / a * 100 }')
+        echo "| $name | $before | $ns | $change |"
+    fi
+done

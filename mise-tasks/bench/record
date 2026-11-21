@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+#MISE description="run the render bench and save benches/results/<stamp>.toml; `mise run bench` calls this"
+#MISE hide=true
+#
+# Writes one file per run, holding only the cases this run measured, beside
+# the machine and commit that produced them. Results from every machine go
+# in one folder: a reader filters by [machine]. Extra args go to criterion,
+# such as dry/8 or --quick.
+set -euo pipefail
+
+results=benches/results
+criterion=target/criterion/callback
+
+# criterion keeps every case it has ever measured, so only estimates newer
+# than this marker come from this run
+mkdir -p target "$results"
+marker=$(mktemp target/bench-start.XXXXXX)
+trap 'rm -f "$marker"' EXIT
+
+echo "running automated benchmarks..."
+cargo bench --bench render -- "$@"
+
+now=$(date -u +%s)
+stamp() { date -u -d "@$now" "+$1" 2>/dev/null || date -u -r "$now" "+$1"; }
+file="$results/$(stamp %Y%m%d-%H%M%S).toml"
+
+cpu=""
+if [ -r /proc/cpuinfo ]; then
+    cpu=$(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | head -1)
+elif command -v sysctl >/dev/null; then
+    cpu=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)
+fi
+
+# a TOML basic string: backslash and quote escaped
+quote() {
+    local s=${1//\\/\\\\}
+    printf '"%s"' "${s//\"/\\\"}"
+}
+
+dirty=false
+if [ -n "$(git status --porcelain --untracked-files=no -- . ":!$results")" ]; then
+    dirty=true
+fi
+
+cases=$(find "$criterion" -path '*/new/estimates.json' -newer "$marker" 2>/dev/null | sort -V)
+if [ -z "$cases" ]; then
+    echo "::error title=bench::no case ran, so nothing was saved"
+    exit 1
+fi
+
+{
+    echo "[run]"
+    echo "at = $(stamp %Y-%m-%dT%H:%M:%SZ)"
+    echo "commit = $(quote "$(git rev-parse --short HEAD)")"
+    echo "dirty = $dirty"
+    echo "args = $(quote "$*")"
+    echo "rustc = $(quote "$(rustc --version | cut -d' ' -f2)")"
+    echo "ci = ${GITHUB_ACTIONS:-false}"
+    echo
+    echo "[machine]"
+    echo "cpu = $(quote "${cpu:-unknown}")"
+    echo "cores = $(getconf _NPROCESSORS_ONLN)"
+    echo "os = $(quote "$(uname -s)")"
+    echo "arch = $(quote "$(uname -m)")"
+    for estimates in $cases; do
+        dir=$(dirname "$(dirname "$estimates")")      # .../callback/dry/8
+        voices=$(basename "$dir")
+        variant=$(basename "$(dirname "$dir")")
+        frames=$(yq -p json -oy '.throughput.Elements' "$dir/new/benchmark.json")
+        read -r mean low high < <(yq -p json -o tsv \
+            '[.mean.point_estimate, .mean.confidence_interval.lower_bound, .mean.confidence_interval.upper_bound]' \
+            "$estimates")
+        echo
+        echo "[callback.$variant.$voices]"
+        printf 'mean_ns = %.0f\nlow_ns = %.0f\nhigh_ns = %.0f\n' "$mean" "$low" "$high"
+        echo "frames = $frames"
+        awk -v m="$mean" -v f="$frames" 'BEGIN { printf "per_frame_ns = %.1f\n", m / f }'
+    done
+} >"$file"
+
+echo "benchmark saved $file"
