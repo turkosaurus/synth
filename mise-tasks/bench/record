@@ -123,4 +123,8 @@ if ! yq -p toml -o json '.' "$file" >/dev/null; then
 fi
 
 echo "benchmark saved $file" >&2
-echo "$file"
+# the bare path is for a caller such as `file=$(mise run bench)`; in a
+# terminal it would only repeat the line above
+if [ ! -t 1 ]; then
+    echo "$file"
+fi
