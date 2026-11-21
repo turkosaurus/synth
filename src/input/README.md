@@ -26,4 +26,4 @@ How a note ends depends on whether the terminal reports key release. `synth doct
 | mode | when | note ends |
 | --- | --- | --- |
 | `Held` | release reported: Windows, or a terminal with the kitty keyboard protocol | on release |
-| `Fixed` | no release reported | after `gate` ms; a repeat press within `repeat_window` ms is OS autorepeat and ignored |
+| `Fixed` | no release reported | after `gate` ms; a press within `autorepeat_threshold` ms of the key's last press is OS autorepeat and ignored, so a held key sounds once, then once more at the OS repeat delay |

@@ -33,10 +33,11 @@ pub(crate) struct Keymap {
     /// How long a note lasts in `Fixed` gating, from the keyboard's `gate`.
     pub gate: Duration,
     /// In `Fixed` gating, a press of a key this soon after its last press
-    /// is taken as autorepeat and ignored, from the keyboard's `repeat_window`.
-    pub repeat: Duration,
-    /// A second press of `stop` this soon after the first adds All Sound
-    /// Off, from the keyboard's `doubletap_window`.
+    /// is taken as autorepeat and ignored, from the keyboard's
+    /// `autorepeat_threshold`.
+    pub autorepeat: Duration,
+    /// A second press of a key this soon after the first is a double tap,
+    /// from the keyboard's `doubletap_threshold`. `stop` uses it.
     pub doubletap: Duration,
     /// Every note's velocity: a key has no depth to time, so there is none
     /// to measure. MIDI hardware supplies a real one.

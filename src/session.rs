@@ -168,7 +168,7 @@ mod tests {
             stop: vec![],
             help: vec![Key::Char('?')],
             gate: Duration::ZERO,
-            repeat: Duration::ZERO,
+            autorepeat: Duration::ZERO,
             doubletap: Duration::ZERO,
             velocity: 100,
             octave: 0,
