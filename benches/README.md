@@ -9,8 +9,11 @@ What one audio callback costs, measured two ways, to catch big regressions in th
 
 Both play [`support/sustain.rs`](./support/sustain.rs), 512 stereo frames per callback at 48 kHz, which has a 10.7 ms deadline. Each case plays a chord of 1, 8, or 32 voices from [`tests/lua/bench/`](../tests/lua/bench):
 
-- `dry` and `filtered`: the chord as a sequence, sustaining, without and with the patch's filter
-- `live`: the chord's instrument fed from a ring, as the TUI's is; before every callback one note is released and one started, and each note started steals a voice
+| case | plays | measures |
+| --- | --- | --- |
+| `dry` | the chord as a sequence, sustaining | the per-sample loop, summing the voices, and the timeline check on every sample |
+| `filtered` | the same, through the patch's filter | the same, plus the filter |
+| `live` | the chord's instrument fed from a ring, as the TUI's is; before every callback one note is released and one started, and each note started steals a voice | the ring check on every sample, note-on, note-off, and voice stealing |
 
 ## running
 
