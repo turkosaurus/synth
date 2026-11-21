@@ -15,7 +15,7 @@ sudo apt install libasound2-dev pkg-config build-essential
 
 ### validation
 ```sh
-mise doctor
+mise run doctor
 ```
 
 ### play
@@ -24,8 +24,14 @@ mise tui
 ```
 
 ### test
+Local:
 ```sh
-mise test
+mise run test:local
+```
+
+Everything (local, E2E, etc.):
+```sh
+mise tests
 ```
 
 ### lint

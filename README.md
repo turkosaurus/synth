@@ -6,7 +6,7 @@ _Lua-defined, Rust-driven synthesizer and sequencer_
 
 ## install
 
-### Linux/MacOS [^requires]
+### Linux[^requires]/MacOS
 
 [`install.sh`](./install.sh) downloads and verifies the latest stable release, installing it to `$XDG_BIN_HOME`, or `~/.local/bin`.
 
