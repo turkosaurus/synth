@@ -17,8 +17,10 @@ mkdir -p target "$results"
 marker=$(mktemp target/bench-start.XXXXXX)
 trap 'rm -f "$marker"' EXIT
 
-echo "running automated benchmarks..."
-cargo bench --bench render -- "$@"
+# stdout carries only the saved file's path, so `file=$(mise run bench)`
+# works; everything meant for a person reading along goes to stderr
+echo "running automated benchmarks..." >&2
+cargo bench --bench render -- "$@" >&2
 
 now=$(date -u +%s)
 stamp() { date -u -d "@$now" "+$1" 2>/dev/null || date -u -r "$now" "+$1"; }
@@ -87,4 +89,5 @@ if ! yq -p toml -o json '.' "$file" >/dev/null; then
     exit 1
 fi
 
-echo "benchmark saved $file"
+echo "benchmark saved $file" >&2
+echo "$file"

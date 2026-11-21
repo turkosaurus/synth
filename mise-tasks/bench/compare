@@ -4,7 +4,12 @@
 # usage: mise run bench:compare [NEW] [OLD]
 #
 # Only results from the same CPU are comparable, so with no OLD this picks
-# the latest earlier file whose [machine].cpu matches NEW's.
+# the latest earlier file whose [machine].cpu matches NEW's. The table goes
+# to stdout, and inside Actions to the job summary as well.
+#
+# A change counts only when the two runs' confidence intervals do not
+# overlap; otherwise the difference is within what either run could have
+# measured by chance, and the table says so.
 set -euo pipefail
 
 results=benches/results
@@ -27,36 +32,48 @@ if [ -z "$old" ]; then
     done
 fi
 
-# one line per case: variant/voices per_frame_ns
+# one line per case: variant/voices, then ns per frame: mean, low, high
 # shellcheck disable=SC2016 # $variant is a yq variable, not the shell's
 cases() {
     yq -p toml -o tsv '.callback | to_entries | .[] | .key as $variant
-        | .value | to_entries | .[] | [$variant + "/" + .key, .value.per_frame_ns]' "$1"
+        | .value | to_entries | .[] | [$variant + "/" + .key,
+          .value.per_frame_ns, .value.low_ns / .value.frames, .value.high_ns / .value.frames]' "$1"
 }
 
-echo "### bench: \`$(yq -p toml -oy '.run.commit' "$new")\` on $cpu"
-echo
-if [ -z "$old" ]; then
-    echo "No earlier result on this CPU to compare with."
+report() {
+    echo "### bench: \`$(yq -p toml -oy '.run.commit' "$new")\` on $cpu"
     echo
-    echo "| case | ns per frame |"
-    echo "| --- | --- |"
-    cases "$new" | while IFS=$'\t' read -r name ns; do
-        echo "| $name | $ns |"
-    done
-    exit 0
-fi
-
-echo "Against \`$(yq -p toml -oy '.run.commit' "$old")\` ($(basename "$old" .toml))."
-echo
-echo "| case | before (ns per frame) | after | change |"
-echo "| --- | --- | --- | --- |"
-cases "$new" | while IFS=$'\t' read -r name ns; do
-    before=$(cases "$old" | awk -F'\t' -v n="$name" '$1 == n { print $2 }')
-    if [ -z "$before" ]; then
-        echo "| $name | | $ns | new case |"
-    else
-        change=$(awk -v a="$before" -v b="$ns" 'BEGIN { printf "%+.1f%%", (b - a) / a * 100 }')
-        echo "| $name | $before | $ns | $change |"
+    if [ -z "$old" ]; then
+        echo "No earlier result on this CPU to compare with."
+        echo
+        echo "| case | ns per frame |"
+        echo "| --- | --- |"
+        cases "$new" | while IFS=$'\t' read -r name ns _ _; do
+            echo "| $name | $ns |"
+        done
+        return
     fi
-done
+
+    echo "Against \`$(yq -p toml -oy '.run.commit' "$old")\` ($(basename "$old" .toml))."
+    echo
+    echo "| case | before (ns per frame) | after | change |"
+    echo "| --- | --- | --- | --- |"
+    cases "$new" | while IFS=$'\t' read -r name ns low high; do
+        read -r before blow bhigh < <(cases "$old" | awk -F'\t' -v n="$name" '$1 == n { print $2, $3, $4 }') || true
+        if [ -z "${before:-}" ]; then
+            echo "| $name | | $ns | new case |"
+            continue
+        fi
+        change=$(awk -v a="$before" -v b="$ns" -v al="$blow" -v ah="$bhigh" -v bl="$low" -v bh="$high" 'BEGIN {
+            if (bl > ah || bh < al) printf "%+.1f%%", (b - a) / a * 100
+            else printf "within noise"
+        }')
+        echo "| $name | $before | $ns | $change |"
+    done
+}
+
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    report | tee -a "$GITHUB_STEP_SUMMARY"
+else
+    report
+fi

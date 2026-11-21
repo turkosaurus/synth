@@ -78,11 +78,11 @@ jobs:
         if: steps.changed.outputs.run != 'false'
         run: mise run bench
 
+      # bench:compare writes the job summary itself; the copy kept here is
+      # for the PR comment
       - name: Compare
         if: steps.changed.outputs.run != 'false'
-        run: |
-          mise run bench:compare >comparison.md
-          cat comparison.md >>"$GITHUB_STEP_SUMMARY"
+        run: mise run bench:compare >comparison.md
 
       # main's ruleset requires status checks, so this push needs either
       # BENCH_TOKEN or a ruleset that admits the workflow's token. A push
