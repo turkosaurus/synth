@@ -444,12 +444,36 @@ impl Player {
         }
     }
 
-    fn next(&mut self) -> f32 {
+    /// Applies every event due now: a timeline's stamped at or before the
+    /// clock, or everything waiting in a live ring.
+    fn apply_due(&mut self) {
         // several events can land on the same sample, so drain rather than peek
         while let Some(event) = self.pull() {
             self.apply(event);
         }
+    }
 
+    /// Samples that can be rendered before the next event is due. Live
+    /// events carry no time stamp, so a live feed is read once per callback
+    /// and never splits one.
+    fn until_event(&self) -> u64 {
+        match &self.feed {
+            Feed::Timeline { events, next } => events
+                .get(*next)
+                .map_or(u64::MAX, |(at, _)| at.saturating_sub(self.clock)),
+            Feed::Live(_) => u64::MAX,
+        }
+    }
+
+    /// One sample as a one-frame callback would play it.
+    #[cfg(test)]
+    fn next(&mut self) -> f32 {
+        self.apply_due();
+        self.render()
+    }
+
+    /// One sample, without reading the feed.
+    fn render(&mut self) -> f32 {
         self.clock += 1;
         let sum: f32 = self.pools.iter_mut().map(Pool::next).sum();
         match &mut self.filter {
@@ -497,28 +521,45 @@ const CLIP: f32 = 1.0;
 /// sample beyond full scale is clamped to it. A NaN or infinity is written
 /// as silence and resets the filter, whose state would otherwise carry the
 /// NaN into every sample after it.
+///
+/// The feed is read where an event can land: once at the start, which
+/// takes everything a live ring holds, then at each timeline event's
+/// sample. The spans between render without looking at it.
 pub(super) fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tally {
     let mut tally = Tally::default();
-
-    for frame in out.chunks_mut(channels) {
-        let raw = player.next();
-        let sample = if raw.is_finite() {
-            if raw.abs() > CLIP {
-                tally.clips += 1;
-            }
-            tally.peak = tally.peak.max(raw.abs());
-            raw.clamp(-CLIP, CLIP)
-        } else {
-            tally.non_finite += 1;
-            player.reset_filter();
-            0.0
-        };
-        tally.frames += 1;
-        for channel in frame.iter_mut() {
-            *channel = sample;
+    let mut frames = out.chunks_mut(channels);
+    loop {
+        player.apply_due();
+        let span = usize::try_from(player.until_event()).unwrap_or(usize::MAX);
+        let mut written = 0;
+        for frame in frames.by_ref().take(span) {
+            write(frame, player, &mut tally);
+            written += 1;
+        }
+        if written < span {
+            return tally;
         }
     }
-    tally
+}
+
+/// Renders one sample and lays it across `frame`, bounded as `fill` says.
+fn write(frame: &mut [f32], player: &mut Player, tally: &mut Tally) {
+    let raw = player.render();
+    let sample = if raw.is_finite() {
+        if raw.abs() > CLIP {
+            tally.clips += 1;
+        }
+        tally.peak = tally.peak.max(raw.abs());
+        raw.clamp(-CLIP, CLIP)
+    } else {
+        tally.non_finite += 1;
+        player.reset_filter();
+        0.0
+    };
+    tally.frames += 1;
+    for channel in frame.iter_mut() {
+        *channel = sample;
+    }
 }
 
 #[cfg(test)]
@@ -1060,6 +1101,59 @@ mod tests {
         assert_eq!(tally.frames, 4);
         // each pair is one frame: both channels carry the same sample
         assert_eq!(out, [0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0]);
+    }
+
+    // splitting the buffer at each event must sound the same as reading the
+    // feed before every sample: events mid-buffer, two on one sample, one on
+    // a buffer's first sample, and one on its last
+    #[test]
+    fn fill_splits_the_buffer_at_each_timeline_event() {
+        let on = |note| Event::NoteOn {
+            instrument: 0,
+            note,
+            velocity: 127,
+        };
+        let off = |note| Event::NoteOff {
+            instrument: 0,
+            note,
+        };
+        let timeline = || Timeline {
+            instruments: vec![flat_instrument()],
+            events: vec![(1, on(1)), (3, off(1)), (3, on(2)), (5, off(2)), (8, on(1))],
+            total_samples: 12,
+        };
+        let mut freqs = freqs();
+        freqs[2] = 2.0;
+
+        let mut stepped = Player::new(timeline(), freqs.clone(), 4.0);
+        let expected: Vec<f32> = (0..12).map(|_| stepped.next()).collect();
+
+        let mut split = Player::new(timeline(), freqs, 4.0);
+        let mut out = Vec::new();
+        for frames in [5, 1, 3, 3] {
+            let mut buffer = vec![9.0; frames];
+            fill(&mut buffer, 1, &mut split);
+            out.extend(buffer);
+        }
+        assert_eq!(out, expected);
+    }
+
+    // live events carry no time stamp, so all of them land on a callback's
+    // first frame
+    #[test]
+    fn fill_plays_live_events_from_the_first_frame() {
+        let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
+        let mut player = Player::live(vec![flat_instrument()], freqs(), rx, 4.0);
+        tx.push(Event::NoteOn {
+            instrument: 0,
+            note: 1,
+            velocity: 127,
+        })
+        .unwrap();
+
+        let mut out = [0.0f32; 4];
+        fill(&mut out, 1, &mut player);
+        assert_eq!(out, [0.25, 0.5, 0.75, 1.0]);
     }
 
     #[test]
