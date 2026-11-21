@@ -30,9 +30,11 @@ const LUA_SEQUENCE: &str = include_str!("../lua/sequence.lua");
 const LUA_KEYBOARD: &str = include_str!("../lua/keyboard.lua");
 const LUA_FILTER: &str = include_str!("../lua/filter.lua");
 const LUA_ROOT: &str = include_str!("../lua/synth.lua");
+const LUA_CONSTRUCT: &str = include_str!("../lua/construct.lua");
 
 /// Every embedded module, by the name `require` finds it under.
-const MODULES: [(&str, &str); 9] = [
+const MODULES: [(&str, &str); 10] = [
+    (module::CONSTRUCT, LUA_CONSTRUCT),
     (module::SLOPE, LUA_SLOPE),
     (module::WAVE, LUA_WAVE),
     (module::ENVELOPE, LUA_ENVELOPE),
@@ -155,6 +157,8 @@ fn site(lua: &mlua::Lua) -> String {
 /// Names the embedded modules are registered under. Used both to register
 /// them and to require them, so the two cannot drift.
 mod module {
+    /// The helper every constructor builds its value with; not re-exported.
+    pub(super) const CONSTRUCT: &str = "synth.construct";
     pub(super) const SLOPE: &str = "synth.slope";
     pub(super) const WAVE: &str = "synth.wave";
     pub(super) const ENVELOPE: &str = "synth.envelope";
