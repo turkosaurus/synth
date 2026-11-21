@@ -1,3 +1,5 @@
+use std::ops::RangeInclusive;
+
 use anyhow::Context;
 use tracing::{debug_span, instrument};
 
@@ -130,31 +132,23 @@ pub(super) fn bake_instrument(
 ) -> anyhow::Result<(Instrument, Report)> {
     let env = spec.envelope;
 
-    let mut clamped = 0usize;
-    let mut wave = Vec::with_capacity(TABLE_SIZE);
-    {
+    // phase 1 is phase 0 again, so a cycle stops one point short of it
+    let (cycle, clamped) = {
         let _span = debug_span!("bake_wave", points = TABLE_SIZE).entered();
-        for i in 0..TABLE_SIZE {
-            let value: f64 = spec
-                .waveform
-                .call(i as f64 / TABLE_SIZE as f64)
-                .context("waveform must return a number for every phase")?;
-            let value = value as f32;
-            if !(-1.0..=1.0).contains(&value) {
-                clamped += 1;
-            }
-            wave.push(value.clamp(-1.0, 1.0));
-        }
-    }
+        let phases = (0..TABLE_SIZE).map(|i| i as f64 / TABLE_SIZE as f64);
+        sample(phases, -1.0..=1.0, |phase| {
+            spec.waveform
+                .call(phase)
+                .context("waveform must return a number for every phase")
+        })?
+    };
 
     // each curve is sampled at the same points whatever its stage's
     // length; render stretches it over the stage and scales it from the
     // stage's start level to its end
     let curve = |ms: f64, shape: &mlua::Function, name: &str| -> anyhow::Result<(Segment, usize)> {
-        let mut out = Vec::with_capacity(CURVE_POINTS + 1);
-        let mut clamped = 0usize;
-        for i in 0..=CURVE_POINTS {
-            let t = i as f64 / CURVE_POINTS as f64;
+        let ts = (0..=CURVE_POINTS).map(|i| i as f64 / CURVE_POINTS as f64);
+        let (curve, clamped) = sample(ts, 0.0..=1.0, |t| {
             let along = match shape.call::<mlua::Value>(t)? {
                 mlua::Value::Number(n) => n,
                 mlua::Value::Integer(n) => n as f64,
@@ -173,12 +167,9 @@ pub(super) fn bake_instrument(
                 along.is_finite(),
                 "envelope.{name} returned {along} at t = {t}; must be a number from 0 to 1"
             );
-            if !(0.0..=1.0).contains(&along) {
-                clamped += 1;
-            }
-            out.push(along.clamp(0.0, 1.0) as f32);
-        }
-        Ok((Segment { curve: out, ms }, clamped))
+            Ok(along)
+        })?;
+        Ok((Segment { curve, ms }, clamped))
     };
 
     let ((attack, attack_clamped), (decay, decay_clamped), (release, release_clamped)) = {
@@ -190,8 +181,8 @@ pub(super) fn bake_instrument(
         )
     };
 
-    let instrument = Instrument {
-        wave,
+    let mut instrument = Instrument {
+        wave: cycle.into(),
         attack,
         decay,
         sustain_level: env.sustain_level as f32,
@@ -203,8 +194,40 @@ pub(super) fn bake_instrument(
         (field::DECAY_CURVE, decay_clamped),
         (field::RELEASE_CURVE, release_clamped),
     ];
+    // inspect first, so its warnings describe the cycle as written
     let report = inspect(&instrument, sample_rate, clamped, &curves);
+    if let Some(start) = rising_zero(instrument.wave.frame(0)) {
+        instrument.wave.frames.rotate_left(start);
+    }
     Ok((instrument, report))
+}
+
+// Where a cycle first rises through 0: the first point at or above 0 whose
+// previous point, wrapping, is below 0. Every note starts here, from rest
+// and rising, whatever phase the waveform was written from.
+pub(super) fn rising_zero(cycle: &[f32]) -> Option<usize> {
+    let n = cycle.len();
+    (0..n).find(|&i| cycle[(i + n - 1) % n] < 0.0 && cycle[i] >= 0.0)
+}
+
+// The one sampler behind every baked table, waveform or curve: `read` at
+// each point of `xs`, clamped into `range`. Returns the values and how many
+// left the range.
+fn sample(
+    xs: impl Iterator<Item = f64>,
+    range: RangeInclusive<f64>,
+    mut read: impl FnMut(f64) -> anyhow::Result<f64>,
+) -> anyhow::Result<(Vec<f32>, usize)> {
+    let mut out = Vec::with_capacity(xs.size_hint().0);
+    let mut clamped = 0usize;
+    for x in xs {
+        let value = read(x)?;
+        if !range.contains(&value) {
+            clamped += 1;
+        }
+        out.push(value.clamp(*range.start(), *range.end()) as f32);
+    }
+    Ok((out, clamped))
 }
 
 // each warning corresponds to something audible: flattened peaks, a click
@@ -218,7 +241,7 @@ pub(super) fn inspect(
     curves: &[(&str, usize)],
 ) -> Report {
     let rate = f64::from(sample_rate);
-    let wave = &instrument.wave;
+    let wave = instrument.wave.frame(0);
     let peak = wave.iter().fold(0.0f32, |acc, v| acc.max(v.abs()));
     let dc = wave.iter().sum::<f32>() / wave.len() as f32;
     let seam = (wave[wave.len() - 1] - wave[0]).abs();
@@ -238,6 +261,11 @@ pub(super) fn inspect(
     }
     if dc.abs() > 0.01 {
         diagnostics.push(shape(format!("waveform has a DC offset of {dc:.4}")));
+    }
+    if rising_zero(wave).is_none() {
+        diagnostics.push(shape(
+            "waveform never rises through 0, so notes start at phase 0 as written".to_string(),
+        ));
     }
     if peak < 0.5 {
         diagnostics.push(shape(format!("waveform peaks at only {peak:.3}")));

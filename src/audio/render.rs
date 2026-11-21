@@ -155,12 +155,12 @@ impl Note {
     }
 
     fn wave(&self) -> f32 {
-        let n = self.instrument.wave.len();
+        let wave = self.instrument.wave.frame(0);
+        let n = wave.len();
         let pos = self.phase * n as f32;
         let i = pos as usize % n;
         let j = (i + 1) % n;
-        self.instrument.wave[i]
-            + (self.instrument.wave[j] - self.instrument.wave[i]) * (pos - pos.floor())
+        wave[i] + (wave[j] - wave[i]) * (pos - pos.floor())
     }
 
     fn next(&mut self) -> f32 {
@@ -540,7 +540,7 @@ mod tests {
     // 4-entry wave so interpolation is checkable by hand
     fn instrument() -> Instrument {
         Instrument {
-            wave: vec![0.0, 1.0, 0.0, -1.0],
+            wave: vec![0.0, 1.0, 0.0, -1.0].into(),
             attack: stage(&[0.0, 0.5]),
             decay: stage(&[0.0, 0.5]), // 1.0, 0.85
             sustain_level: 0.7,
@@ -647,7 +647,7 @@ mod tests {
     // waveform alone and easy to predict
     fn flat_instrument() -> Instrument {
         Instrument {
-            wave: vec![0.25, 0.5, 0.75, 1.0],
+            wave: vec![0.25, 0.5, 0.75, 1.0].into(),
             attack: stage(&[]),
             decay: stage(&[]),
             sustain_level: 1.0,
@@ -1076,7 +1076,7 @@ mod tests {
     #[test]
     fn fill_tracks_peak_and_clipping() {
         let mut instrument = flat_instrument();
-        instrument.wave = vec![0.5, -2.0, 1.5, 0.1];
+        instrument.wave = vec![0.5, -2.0, 1.5, 0.1].into();
 
         let mut out = [0.0f32; 8];
         let tally = fill(&mut out, 2, &mut player(instrument));
@@ -1092,7 +1092,7 @@ mod tests {
     fn fill_drops_non_finite_samples() {
         for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             let mut instrument = flat_instrument();
-            instrument.wave = vec![0.5, bad, 0.25, 0.75];
+            instrument.wave = vec![0.5, bad, 0.25, 0.75].into();
 
             let mut out = [0.0f32; 4];
             let tally = fill(&mut out, 1, &mut player(instrument));
@@ -1112,7 +1112,7 @@ mod tests {
     fn the_filter_recovers_after_a_non_finite_sample() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let mut broken = flat_instrument();
-        broken.wave = vec![0.5, f32::NAN, 0.25, 0.75];
+        broken.wave = vec![0.5, f32::NAN, 0.25, 0.75].into();
         let lowpass = Filter {
             kind: Kind::Lowpass,
             cutoff: 20000.0, // clamps just below Nyquist
@@ -1150,7 +1150,7 @@ mod tests {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let loud = || {
             let mut instrument = flat_instrument();
-            instrument.wave = vec![1.0, -1.0, 1.0, -1.0];
+            instrument.wave = vec![1.0, -1.0, 1.0, -1.0].into();
             instrument
         };
         let mut player = Player::live(vec![loud(), loud()], freqs(), rx, 4.0);
