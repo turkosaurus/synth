@@ -1,4 +1,6 @@
-local new -- the constructor, defined below
+local construct = require("synth.construct")
+
+local defaults, override -- defined below
 
 -- `file:line` of whoever called the constructor, read by Rust
 local site = require("synth.site")
@@ -7,7 +9,7 @@ local site = require("synth.site")
 ---@overload fun(opts?: synth.Keyboard): synth.Keyboard
 local keyboard = setmetatable({}, {
 	__call = function(_, opts)
-		return setmetatable(new(opts), { kind = "keyboard", at = site() })
+		return override(construct("keyboard", site(), opts, defaults))
 	end,
 })
 
@@ -201,7 +203,7 @@ keyboard.colemak = keyboard.grid({ template = keyboard.templates.colemak })
 ---@field octave_up? string[]
 ---@field octave_down? string[]
 ---@field help? string[]
-local defaults = {
+defaults = {
 	-- `{ name, notes, octave_up, octave_down, help }`, where `notes` maps
 	-- each character to a MIDI note. Rust reads only this table, so a patch
 	-- may write its own. `help` may be empty. `octave_up`, `octave_down`, and
@@ -229,23 +231,10 @@ local defaults = {
 	octave_high = 3,
 }
 
--- A new table: the caller's fields, then defaults for any left out. The
--- caller's table is left alone, and nothing is discarded, so a misspelled
--- field reaches Rust and gets named instead of silently taking a default.
-new = function(opts)
-	local out = {}
-	for key, value in pairs(opts or {}) do
-		out[key] = value
-	end
-	for key, default in pairs(defaults) do
-		if out[key] == nil then
-			out[key] = default
-		end
-	end
-
-	-- `octave_up`, `octave_down`, and `help` on the keyboard replace the
-	-- layout's. The layout is copied first, so a shared one such as
-	-- `keyboard.qwerty` is left alone.
+-- `octave_up`, `octave_down`, and `help` on the keyboard replace the
+-- layout's. The layout is copied first, so a shared one such as
+-- `keyboard.qwerty` passed by the caller is left alone.
+override = function(out)
 	local layout
 	for _, key in ipairs({ "octave_up", "octave_down", "help" }) do
 		-- a layout that is not a table is left for Rust to name

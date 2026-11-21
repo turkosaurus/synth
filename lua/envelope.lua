@@ -2,8 +2,9 @@
 -- defined as a table of parameters and first-class functions,
 -- baked by Rust into an amplitude curve at load.
 local slope = require("synth.slope")
+local construct = require("synth.construct")
 
-local new -- the constructor, defined below
+local defaults -- defined below
 
 -- `file:line` of whoever called the constructor, read by Rust
 local site = require("synth.site")
@@ -12,7 +13,7 @@ local site = require("synth.site")
 ---@overload fun(opts?: synth.Envelope): synth.Envelope
 local envelope = setmetatable({}, {
 	__call = function(_, opts)
-		return setmetatable(new(opts), { kind = "envelope", at = site() })
+		return construct("envelope", site(), opts, defaults)
 	end,
 })
 
@@ -24,7 +25,7 @@ local envelope = setmetatable({}, {
 ---@field sustain? number 0.0 to 1.0
 ---@field release? number ms
 ---@field release_curve? synth.Curve
-local defaults = {
+defaults = {
 	attack = 15, -- ms
 	attack_curve = slope.linear(),
 	decay = 0, -- ms
@@ -33,21 +34,5 @@ local defaults = {
 	release = 300, -- ms
 	release_curve = slope.linear(),
 }
-
--- A new table: the caller's fields, then defaults for any left out. The
--- caller's table is left alone. Unknown fields are kept, so a misspelling
--- reaches Rust and gets named instead of silently taking a default.
-new = function(opts)
-	local out = {}
-	for key, value in pairs(opts or {}) do
-		out[key] = value
-	end
-	for key, default in pairs(defaults) do
-		if out[key] == nil then
-			out[key] = default
-		end
-	end
-	return out
-end
 
 return envelope

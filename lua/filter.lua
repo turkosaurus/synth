@@ -37,20 +37,17 @@ local defaults = {
 	high_shelf = { gain = 0 },
 }
 
--- a fresh table: the caller's table and the defaults are never modified
+local construct = require("synth.construct")
+
 local function constructor(kind)
+	-- `_kind` is the filter type Rust reads; the stamp marks what built the
+	-- table, as every constructor's does
+	local fill = { _kind = kind }
+	for key, value in pairs(defaults[kind]) do
+		fill[key] = value
+	end
 	return function(opts)
-		local at = site()
-		local out = { _kind = kind }
-		for key, value in pairs(defaults[kind]) do
-			out[key] = value
-		end
-		for key, value in pairs(opts or {}) do
-			out[key] = value
-		end
-		-- `_kind` above is the filter type Rust reads; the stamp marks what
-		-- built the table, as every constructor's does
-		return setmetatable(out, { kind = "filter", at = at })
+		return construct("filter", site(), opts, fill)
 	end
 end
 
