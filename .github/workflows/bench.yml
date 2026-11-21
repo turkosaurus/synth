@@ -80,10 +80,20 @@ jobs:
         run: mise run bench
 
       # bench:compare writes the job summary itself; the copy kept here is
-      # for the PR comment
+      # for the PR comment. A regression is held until the last step, so
+      # the result is still committed and the comment still posted.
       - name: Compare
+        id: compare
         if: steps.changed.outputs.run != 'false'
-        run: mise run bench:compare >comparison.md
+        run: |
+          # exit 2 is a regression; any other failure fails here
+          code=0
+          mise run bench:compare >comparison.md || code=$?
+          if [ "$code" = 2 ]; then
+            echo "regressed=true" >>"$GITHUB_OUTPUT"
+          elif [ "$code" != 0 ]; then
+            exit "$code"
+          fi
 
       # main's ruleset requires status checks, so this push needs either
       # BENCH_TOKEN or a ruleset that admits the workflow's token. A push
@@ -104,3 +114,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
         run: gh pr comment "$PR" --body-file comparison.md --edit-last || gh pr comment "$PR" --body-file comparison.md
+
+      - name: Fail on a regression
+        if: steps.compare.outputs.regressed == 'true'
+        run: |
+          echo "::error title=bench::instructions rose beyond the regression limit; see the job summary"
+          exit 1

@@ -6,7 +6,10 @@
 # Two tables, each against the latest earlier result it can compare with:
 # - instructions: counts depend on the code and the architecture, not the
 #   CPU model, so OLD is the latest result on the same arch. A change under
-#   0.1% is within the count's own variation
+#   0.1% is within the count's own variation; one CPU model against another
+#   differs by up to about 0.3%. A rise beyond REGRESSION percent is a
+#   regression, and the task exits 2 after printing the tables (1 is any
+#   other failure)
 # - time: only the same CPU compares, and a change counts only when the two
 #   runs' confidence intervals do not overlap. Time also drifts between
 #   runs in ways no interval catches, so trust instructions first
@@ -15,6 +18,9 @@
 set -euo pipefail
 
 results=benches/results
+# percent more instructions than the earlier result that counts as a regression
+REGRESSION=${BENCH_REGRESSION:-5}
+regressed=0
 new=${1:-$(find "$results" -name '*.toml' | sort | tail -1)}
 if [ -z "$new" ]; then
     echo "::error title=bench:compare::no results in $results; run mise run bench"
@@ -72,18 +78,24 @@ instructions() {
     echo
     echo "| case | before | after | change |"
     echo "| --- | --- | --- | --- |"
-    cases instructions .value.per_frame "$new" | while IFS=$'\t' read -r name n; do
+    # read from a substitution, not a pipe, so the loop can set $regressed
+    while IFS=$'\t' read -r name n; do
         before=$(lookup instructions .value.per_frame "$old_count" "$name")
         if [ -z "$before" ]; then
             echo "| $name | | $n | new case |"
             continue
         fi
-        change=$(awk -v a="$before" -v b="$n" 'BEGIN {
+        change=$(awk -v a="$before" -v b="$n" -v r="$REGRESSION" 'BEGIN {
             d = (b - a) / a * 100
-            if (d < 0.1 && d > -0.1) printf "unchanged"; else printf "%+.2f%%", d
+            if (d > r) printf "**%+.2f%%, regressed**", d
+            else if (d < 0.1 && d > -0.1) printf "unchanged"
+            else printf "%+.2f%%", d
         }')
+        if [[ "$change" == *regressed* ]]; then
+            regressed=1
+        fi
         echo "| $name | $before | $n | $change |"
-    done
+    done < <(cases instructions .value.per_frame "$new")
     echo
 }
 
@@ -124,6 +136,11 @@ report() {
     echo
     instructions
     timing
+    if [ "$regressed" = 1 ]; then
+        echo
+        echo "Instructions rose more than ${REGRESSION}% in at least one case."
+        return 2
+    fi
 }
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then

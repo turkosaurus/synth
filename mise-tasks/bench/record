@@ -30,7 +30,10 @@ trap 'rm -f "$marker"' EXIT
 # stdout carries only the saved file's path, so `file=$(mise run bench)`
 # works; everything meant for a person reading along goes to stderr
 echo "running automated benchmarks..." >&2
-cargo bench --bench render -- "$@" >&2
+# one plain line per case: criterion's own "improved" and "regressed" judge
+# time against its last run, which on a laptop mostly measures the clock;
+# bench:compare does the comparing
+cargo bench --bench render -- --output-format bencher "$@" >&2
 if command -v valgrind >/dev/null; then
     echo "counting instructions..." >&2
     cargo bench --bench instructions -- --save-summary=json >&2
