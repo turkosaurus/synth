@@ -19,11 +19,13 @@ Both play [`support/sustain.rs`](./support/sustain.rs), 512 stereo frames per ca
 
 - `mise run bench` runs both benches, saves `results/YYYYMMDD-HHMMSS.toml`, and compares it with earlier results; without Valgrind it saves time only
 - `mise run bench:record` and `mise run bench:compare` are the two halves
-- [`bench.yml`](../.github/workflows/bench.yml) runs both daily on main, committing the result, and on PRs ready for review, commenting the comparison
+- [`bench.yml`](../.github/workflows/bench.yml) runs both daily on main, committing the result; on PRs ready for review, it benches the PR's base and head on the same runner and comments the comparison
 
 ## threshold
 
 Instructions more than 5% above the earlier result are a regression: `bench:compare` marks the case and exits 2, which fails `bench.yml`. `BENCH_REGRESSION` sets another percentage. Time is never a regression on its own.
+
+Main's ruleset requires the `bench` check, so a PR that regresses does not merge. A PR that costs more on purpose merges by admin bypass, and the comment records what it cost.
 
 ## adding a case
 

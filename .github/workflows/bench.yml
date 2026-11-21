@@ -1,10 +1,13 @@
 name: bench
 
-# Times the render path and keeps the result. Daily on main, the result is
-# committed to benches/results/, one file per run; on a PR ready for review,
-# it is compared with main's latest result on the same CPU and posted as a
-# comment. Separate from test.yml, so a minute of benchmarking never holds
-# up the required check.
+# Times the render path and counts its instructions.
+# - daily on main: compared with main's last result, and committed to
+#   benches/results/, one file per run
+# - on a PR ready for review: the PR's base is benched too, on the same
+#   runner, and the two compared and posted as a comment. Main's ruleset
+#   requires this check, so a regression blocks the merge; a PR that costs
+#   more on purpose merges by admin bypass
+# Separate from test.yml, so benchmarking never holds up the test check.
 on:
   schedule:
     - cron: "35 2 * * *"
@@ -75,9 +78,28 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # A PR checks out its merge commit, whose first parent is the base as
+      # it is now. Benched here, on the same runner, it compares with no
+      # difference in CPU and nothing merged since main's last result.
+      - name: Bench the base
+        id: base
+        if: github.event_name == 'pull_request'
+        run: |
+          set -o pipefail
+          head=$(git rev-parse HEAD)
+          git checkout -q HEAD^1
+          file=$(mise run bench:record | tail -1)
+          git checkout -q "$head"
+          echo "file=$file" >>"$GITHUB_OUTPUT"
+
+      # the saved file's path is the last line on stdout
       - name: Bench
+        id: bench
         if: steps.changed.outputs.run != 'false'
-        run: mise run bench:record
+        run: |
+          set -o pipefail
+          file=$(mise run bench:record | tail -1)
+          echo "file=$file" >>"$GITHUB_OUTPUT"
 
       # bench:compare writes the job summary itself; the copy kept here is
       # for the PR comment. A regression is held until the last step, so
@@ -85,10 +107,14 @@ jobs:
       - name: Compare
         id: compare
         if: steps.changed.outputs.run != 'false'
+        env:
+          NEW: ${{ steps.bench.outputs.file }}
+          # empty on main, where compare finds main's last result itself
+          OLD: ${{ steps.base.outputs.file }}
         run: |
           # exit 2 is a regression; any other failure fails here
           code=0
-          mise run bench:compare >comparison.md || code=$?
+          mise run bench:compare "$NEW" ${OLD:+"$OLD"} >comparison.md || code=$?
           if [ "$code" = 2 ]; then
             echo "regressed=true" >>"$GITHUB_OUTPUT"
           elif [ "$code" != 0 ]; then
