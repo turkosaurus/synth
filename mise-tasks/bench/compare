@@ -1,65 +1,112 @@
 #!/usr/bin/env bash
-#MISE description="compare two bench results as a Markdown table: newest against the one before it on the same CPU, or NEW and OLD files"
+#MISE description="compare bench results as Markdown: the newest against earlier comparable runs, or NEW against OLD"
 #
 # usage: mise run bench:compare [NEW] [OLD]
 #
-# Only results from the same CPU are comparable, so with no OLD this picks
-# the latest earlier file whose [machine].cpu matches NEW's. The table goes
-# to stdout, and inside Actions to the job summary as well.
+# Two tables, each against the latest earlier result it can compare with:
+# - instructions: counts depend on the code and the architecture, not the
+#   CPU model, so OLD is the latest result on the same arch. A change under
+#   0.1% is within the count's own variation
+# - time: only the same CPU compares, and a change counts only when the two
+#   runs' confidence intervals do not overlap. Time also drifts between
+#   runs in ways no interval catches, so trust instructions first
 #
-# A change counts only when the two runs' confidence intervals do not
-# overlap; otherwise the difference is within what either run could have
-# measured by chance, and the table says so.
+# The tables go to stdout, and inside Actions to the job summary as well.
 set -euo pipefail
 
 results=benches/results
 new=${1:-$(find "$results" -name '*.toml' | sort | tail -1)}
-old=${2:-}
 if [ -z "$new" ]; then
     echo "::error title=bench:compare::no results in $results; run mise run bench"
     exit 1
 fi
 
-cpu=$(yq -p toml -oy '.machine.cpu' "$new")
-if [ -z "$old" ]; then
-    # names are timestamps, so sorting them sorts by time
+field() { yq -p toml -oy "$1" "$2"; }
+
+# the latest file before NEW whose FIELD equals NEW's and that has SECTION
+earlier() {
+    local key=$1 section=$2 want f
+    want=$(field "$key" "$new")
     for f in $(find "$results" -name '*.toml' | sort -r); do
         [[ "$f" < "$new" ]] || continue
-        if [ "$(yq -p toml -oy '.machine.cpu' "$f")" = "$cpu" ]; then
-            old=$f
-            break
+        if [ "$(field "$key" "$f")" = "$want" ] && [ "$(field "has(\"$section\")" "$f")" = true ]; then
+            echo "$f"
+            return
         fi
     done
-fi
-
-# one line per case: variant/voices, then ns per frame: mean, low, high
-# shellcheck disable=SC2016 # $variant is a yq variable, not the shell's
-cases() {
-    yq -p toml -o tsv '.callback | to_entries | .[] | .key as $variant
-        | .value | to_entries | .[] | [$variant + "/" + .key,
-          .value.per_frame_ns, .value.low_ns / .value.frames, .value.high_ns / .value.frames]' "$1"
 }
 
-report() {
-    echo "### bench: \`$(yq -p toml -oy '.run.commit' "$new")\` on $cpu"
+old_time=${2:-$(earlier .machine.cpu time)}
+old_count=${2:-$(earlier .machine.arch instructions)}
+
+# one line per case of SECTION: variant/voices, then the fields named
+# shellcheck disable=SC2016 # $variant is a yq variable, not the shell's
+cases() {
+    yq -p toml -o tsv ".$1 // {} | to_entries | .[] | .key as \$variant
+        | .value | to_entries | .[] | [\$variant + \"/\" + .key, $2]" "$3"
+}
+
+# the case NAME's fields in an earlier file
+lookup() {
+    cases "$1" "$2" "$3" | awk -F'\t' -v n="$4" '$1 == n { $1 = ""; print substr($0, 2) }'
+}
+
+label() { echo "\`$(field .run.commit "$1")\` ($(basename "$1" .toml))"; }
+
+instructions() {
+    [ "$(field 'has("instructions")' "$new")" = true ] || return 0
+    echo "#### instructions per frame"
     echo
-    if [ -z "$old" ]; then
-        echo "No earlier result on this CPU to compare with."
+    if [ -z "$old_count" ]; then
+        echo "No earlier count on $(field .machine.arch "$new")."
         echo
-        echo "| case | ns per frame |"
+        echo "| case | instructions |"
         echo "| --- | --- |"
-        cases "$new" | while IFS=$'\t' read -r name ns _ _; do
+        cases instructions .value.per_frame "$new" | while IFS=$'\t' read -r name n; do
+            echo "| $name | $n |"
+        done
+        echo
+        return
+    fi
+    echo "Against $(label "$old_count")."
+    echo
+    echo "| case | before | after | change |"
+    echo "| --- | --- | --- | --- |"
+    cases instructions .value.per_frame "$new" | while IFS=$'\t' read -r name n; do
+        before=$(lookup instructions .value.per_frame "$old_count" "$name")
+        if [ -z "$before" ]; then
+            echo "| $name | | $n | new case |"
+            continue
+        fi
+        change=$(awk -v a="$before" -v b="$n" 'BEGIN {
+            d = (b - a) / a * 100
+            if (d < 0.1 && d > -0.1) printf "unchanged"; else printf "%+.2f%%", d
+        }')
+        echo "| $name | $before | $n | $change |"
+    done
+    echo
+}
+
+timing() {
+    local fields='.value.per_frame_ns, .value.low_ns / .value.frames, .value.high_ns / .value.frames'
+    echo "#### time per frame (ns)"
+    echo
+    if [ -z "$old_time" ]; then
+        echo "No earlier time on this CPU."
+        echo
+        echo "| case | ns |"
+        echo "| --- | --- |"
+        cases time "$fields" "$new" | while IFS=$'\t' read -r name ns _ _; do
             echo "| $name | $ns |"
         done
         return
     fi
-
-    echo "Against \`$(yq -p toml -oy '.run.commit' "$old")\` ($(basename "$old" .toml))."
+    echo "Against $(label "$old_time")."
     echo
-    echo "| case | before (ns per frame) | after | change |"
+    echo "| case | before | after | change |"
     echo "| --- | --- | --- | --- |"
-    cases "$new" | while IFS=$'\t' read -r name ns low high; do
-        read -r before blow bhigh < <(cases "$old" | awk -F'\t' -v n="$name" '$1 == n { print $2, $3, $4 }') || true
+    cases time "$fields" "$new" | while IFS=$'\t' read -r name ns low high; do
+        read -r before blow bhigh < <(lookup time "$fields" "$old_time" "$name") || true
         if [ -z "${before:-}" ]; then
             echo "| $name | | $ns | new case |"
             continue
@@ -70,6 +117,13 @@ report() {
         }')
         echo "| $name | $before | $ns | $change |"
     done
+}
+
+report() {
+    echo "### bench: \`$(field .run.commit "$new")\` on $(field .machine.cpu "$new")"
+    echo
+    instructions
+    timing
 }
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then

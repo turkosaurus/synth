@@ -59,9 +59,10 @@ jobs:
             echo "run=true" >>"$GITHUB_OUTPUT"
           fi
 
-      - name: Install ALSA headers
+      # Valgrind for the instruction count; gungraun-runner comes from mise
+      - name: Install ALSA headers and Valgrind
         if: steps.changed.outputs.run != 'false'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev valgrind
 
       - name: Install tools
         if: steps.changed.outputs.run != 'false'

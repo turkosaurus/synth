@@ -1,18 +1,28 @@
 #!/usr/bin/env bash
-#MISE description="run the render bench and save benches/results/<stamp>.toml; `mise run bench` calls this"
+#MISE description="run the render benches and save benches/results/<stamp>.toml; `mise run bench` calls this"
 #MISE hide=true
 #
 # Writes one file per run, holding only the cases this run measured, beside
 # the machine and commit that produced them. Results from every machine go
-# in one folder: a reader filters by [machine]. Extra args go to criterion,
-# such as dry/8 or --quick.
+# in one folder: a reader filters by [machine].
+#
+# Two measures of the same callbacks:
+# - [time.*], from benches/render.rs (criterion): real time, which drifts
+#   with the machine's clock and load between runs
+# - [instructions.*], from benches/instructions.rs (gungraun, Callgrind):
+#   instruction counts, which repeat to within about 0.01% on any machine.
+#   Needs Valgrind; without it the section is left out
+#
+# Extra args go to criterion, such as dry/8 or --quick; the instruction
+# count always runs every case.
 set -euo pipefail
 
 results=benches/results
 criterion=target/criterion/callback
+gungraun=target/gungraun/synth/instructions/render
 
-# criterion keeps every case it has ever measured, so only estimates newer
-# than this marker come from this run
+# both tools keep every case they have measured, so only output newer than
+# this marker comes from this run
 mkdir -p target "$results"
 marker=$(mktemp target/bench-start.XXXXXX)
 trap 'rm -f "$marker"' EXIT
@@ -21,6 +31,12 @@ trap 'rm -f "$marker"' EXIT
 # works; everything meant for a person reading along goes to stderr
 echo "running automated benchmarks..." >&2
 cargo bench --bench render -- "$@" >&2
+if command -v valgrind >/dev/null; then
+    echo "counting instructions..." >&2
+    cargo bench --bench instructions -- --save-summary=json >&2
+else
+    echo "valgrind is not installed, so instructions are not counted" >&2
+fi
 
 now=$(date -u +%s)
 stamp() { date -u -d "@$now" "+$1" 2>/dev/null || date -u -r "$now" "+$1"; }
@@ -45,12 +61,14 @@ if [ -n "$(git status --porcelain --untracked-files=no -- . ":!$results")" ]; th
     dirty=true
 fi
 
-cases=$(find "$criterion" -path '*/new/estimates.json' -newer "$marker" 2>/dev/null | sort -V)
-if [ -z "$cases" ]; then
+timed=$(find "$criterion" -path '*/new/estimates.json' -newer "$marker" 2>/dev/null | sort -V)
+counted=$(find "$gungraun" -name summary.json -newer "$marker" 2>/dev/null | sort -V)
+if [ -z "$timed" ]; then
     echo "::error title=bench::no case ran, so nothing was saved"
     exit 1
 fi
 
+frames=""
 {
     echo "[run]"
     echo "time = $(stamp %Y-%m-%dT%H:%M:%SZ)"
@@ -66,8 +84,9 @@ fi
     echo "cores = $(getconf _NPROCESSORS_ONLN)"
     echo "os = $(quote "$(uname -s)")"
     echo "arch = $(quote "$(uname -m)")"
-    for estimates in $cases; do
-        dir=$(dirname "$(dirname "$estimates")")      # .../callback/dry/8
+
+    for estimates in $timed; do
+        dir=$(dirname "$(dirname "$estimates")") # .../callback/dry/8
         voices=$(basename "$dir")
         variant=$(basename "$(dirname "$dir")")
         frames=$(yq -p json -oy '.throughput.Elements' "$dir/new/benchmark.json")
@@ -75,10 +94,24 @@ fi
             '[.mean.point_estimate, .mean.confidence_interval.lower_bound, .mean.confidence_interval.upper_bound]' \
             "$estimates")
         echo
-        echo "[callback.$variant.$voices]"
+        echo "[time.$variant.$voices]"
         printf 'mean_ns = %.0f\nlow_ns = %.0f\nhigh_ns = %.0f\n' "$mean" "$low" "$high"
         echo "frames = $frames"
         awk -v m="$mean" -v f="$frames" 'BEGIN { printf "per_frame_ns = %.1f\n", m / f }'
+    done
+
+    # every case plays the same callback size, which criterion recorded
+    for summary in $counted; do
+        id=$(yq -p json -oy '.id' "$summary") # dry_8
+        read -r count cycles < <(yq -p json -o tsv \
+            '.profiles[] | select(.tool == "Callgrind") | .data.total.metrics
+                | [.Ir.values.new, .EstimatedCycles.values.new]' "$summary")
+        echo
+        echo "[instructions.${id%_*}.${id##*_}]"
+        echo "count = $count"
+        echo "estimated_cycles = $cycles"
+        echo "frames = $frames"
+        awk -v c="$count" -v f="$frames" 'BEGIN { printf "per_frame = %.1f\n", c / f }'
     done
 } >"$file"
 
