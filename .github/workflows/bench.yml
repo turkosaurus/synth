@@ -11,6 +11,7 @@ name: bench
 # Instruction counts repeat across runners, so history serves the
 # regression check. Time compares only on the same CPU model, so a PR's
 # time table is often empty.
+# Skipped unless Rust, Lua, or Cargo files changed.
 # Separate from test.yml, so benchmarking never holds up the test check.
 on:
   push:
@@ -54,19 +55,26 @@ jobs:
           # the workflow's own token is used
           token: ${{ secrets.BENCH_TOKEN || github.token }}
 
-      # main gains a results commit each run, so "changed" means changed
-      # outside benches/results/ since the commit the last result measured
-      - name: Skip if main is unchanged since its last result
+      # Only Rust, Lua, and Cargo changes can move a result. A PR compares
+      # with its base, the merge commit's first parent; main compares with
+      # the commit its last result measured. The job still runs and passes
+      # when skipping, since main's ruleset requires this check.
+      - name: Skip unless Rust or Lua changed
         id: changed
-        if: github.event_name != 'pull_request'
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
-          last=$(find benches/results -name '*.toml' 2>/dev/null | sort | tail -1)
-          commit=""
-          if [ -n "$last" ]; then
-            commit=$(sed -n 's/^commit = "\(.*\)"$/\1/p' "$last")
+          if [ "$EVENT" = pull_request ]; then
+            base=HEAD^1
+          else
+            last=$(find benches/results -name '*.toml' 2>/dev/null | sort | tail -1)
+            base=""
+            if [ -n "$last" ]; then
+              base=$(sed -n 's/^commit = "\(.*\)"$/\1/p' "$last")
+            fi
           fi
-          if [ -n "$commit" ] && git diff --quiet "$commit" HEAD -- . ':!benches/results'; then
-            echo "::notice title=bench::main is unchanged since $commit; nothing to measure"
+          if [ -n "$base" ] && git diff --quiet "$base" HEAD -- '*.rs' '*.lua' Cargo.toml Cargo.lock; then
+            echo "::notice title=bench::no Rust or Lua change since $base; nothing to measure"
             echo "run=false" >>"$GITHUB_OUTPUT"
           else
             echo "run=true" >>"$GITHUB_OUTPUT"
@@ -142,7 +150,7 @@ jobs:
 
       # a fork's PR gets a read-only token, so it has only the job summary
       - name: Comment on the PR
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.changed.outputs.run != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
