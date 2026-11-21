@@ -31,10 +31,11 @@ elif command -v sysctl >/dev/null; then
     cpu=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)
 fi
 
-# a TOML basic string: backslash and quote escaped
+# A string as a TOML value, encoded by yq. Keys and headers below are fixed
+# names, and numbers come from printf, so strings are the only text from
+# outside (CPU model, args, tag) and yq does all their escaping.
 quote() {
-    local s=${1//\\/\\\\}
-    printf '"%s"' "${s//\"/\\\"}"
+    VALUE=$1 yq -n -o toml '.v = strenv(VALUE)' | sed 's/^v = //'
 }
 
 dirty=false
@@ -80,5 +81,12 @@ fi
         awk -v m="$mean" -v f="$frames" 'BEGIN { printf "per_frame_ns = %.1f\n", m / f }'
     done
 } >"$file"
+
+# read it back, so a file that is not valid TOML is never left behind
+if ! yq -p toml -o json '.' "$file" >/dev/null; then
+    rm -f "$file"
+    echo "::error title=bench::the result was not valid TOML, so nothing was saved"
+    exit 1
+fi
 
 echo "benchmark saved $file"
