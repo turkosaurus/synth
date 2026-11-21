@@ -25,4 +25,4 @@ flowchart LR
     update --> install
 ```
 
-`mlua` stays in `script`, `cpal` in `audio/device.rs`, and `spec` names neither; [`test:separation`](../mise-tasks/test/separation) checks it.
+`mlua` stays in `script`, `cpal` in `audio/device.rs`, `crossterm` in `view` and `terminal.rs`, and `spec` names none of them; [`test:separation`](../mise-tasks/test/separation) checks it.

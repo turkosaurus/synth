@@ -1,34 +1,29 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-
 use crate::spec::{Event, Key, Keymap};
 
-/// The terminal key a binding names, for matching events and for showing
-/// the binding the way the terminal names it.
-pub(crate) fn code(key: Key) -> KeyCode {
-    match key {
-        Key::Char(ch) => KeyCode::Char(ch),
-        Key::Backspace => KeyCode::Backspace,
-        Key::Delete => KeyCode::Delete,
-        Key::Enter => KeyCode::Enter,
-        Key::Tab => KeyCode::Tab,
-        Key::Esc => KeyCode::Esc,
-        Key::Up => KeyCode::Up,
-        Key::Down => KeyCode::Down,
-        Key::Left => KeyCode::Left,
-        Key::Right => KeyCode::Right,
-        Key::Home => KeyCode::Home,
-        Key::End => KeyCode::End,
-        Key::PageUp => KeyCode::PageUp,
-        Key::PageDown => KeyCode::PageDown,
-    }
+/// One key event, translated by the view from whatever its library reports,
+/// so this module names no terminal library.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Stroke {
+    pub(crate) key: Key,
+    pub(crate) kind: Kind,
+    pub(crate) ctrl: bool,
 }
 
-/// Whether `code` is one of `keys`.
-fn bound(keys: &[Key], code: KeyCode) -> bool {
-    keys.iter().any(|&key| self::code(key) == code)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Kind {
+    Press,
+    Release,
+    Repeat,
+}
+
+impl Stroke {
+    /// Quit is ctrl-c/d only, hardcoded to survive an invalid keymap.
+    fn quits(self) -> bool {
+        self.ctrl && matches!(self.key, Key::Char('c' | 'd'))
+    }
 }
 
 /// The keyboard plays the patch's first instrument.
@@ -44,7 +39,7 @@ pub enum Gating {
     Fixed,
 }
 
-/// What the view should do about a key the keyboard has seen. Dispatch stays
+/// What the session should do about a key the keyboard has seen. Dispatch stays
 /// here rather than in the view sniffing key codes, so the keymap remains the
 /// one place a binding is decided.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -125,68 +120,63 @@ impl Keyboard {
     /// that must work everywhere are honoured, and nothing sounds. Releases
     /// report `Continue`, so the press that opened an overlay is not undone
     /// by its own key coming back up.
-    pub(crate) fn global(&self, key: KeyEvent) -> Outcome {
-        if key.kind != KeyEventKind::Press {
+    pub(crate) fn global(&self, stroke: Stroke) -> Outcome {
+        if stroke.kind != Kind::Press {
             return Outcome::Continue;
         }
-        if matches!(key.code, KeyCode::Char('c' | 'd'))
-            && key.modifiers.contains(KeyModifiers::CONTROL)
-        {
+        if stroke.quits() {
             return Outcome::Quit;
         }
-        if bound(&self.keymap.help, key.code) {
+        if self.keymap.help.contains(&stroke.key) {
             return Outcome::Help;
         }
         Outcome::Continue
     }
 
-    pub(crate) fn handle(&mut self, key: KeyEvent) -> Outcome {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-
-        // quit is ctrl-c/d only, hardcoded to survive an invalid keymap.
-        // sound stop is configurable via the keymap's `stop` list.
-        if matches!(key.code, KeyCode::Char('c' | 'd')) && ctrl {
+    pub(crate) fn handle(&mut self, stroke: Stroke) -> Outcome {
+        // sound stop is configurable via the keymap's `stop` list
+        if stroke.quits() {
             return Outcome::Quit;
         }
 
-        match key.kind {
-            KeyEventKind::Press => {
+        match stroke.kind {
+            Kind::Press => {
                 // tested before press(), so a layout that puts the help key
                 // somewhere in the note grid cannot also sound it
-                if bound(&self.keymap.help, key.code) {
+                if self.keymap.help.contains(&stroke.key) {
                     return Outcome::Help;
                 }
-                self.press(key.code)
+                self.press(stroke.key)
             }
             // release only arrives when gating is Held;
             // in Fixed mode, `tick` ends the note
-            KeyEventKind::Release => {
-                if let KeyCode::Char(ch) = key.code {
+            Kind::Release => {
+                if let Key::Char(ch) = stroke.key {
                     self.release(ch);
                 }
             }
-            KeyEventKind::Repeat => {}
+            Kind::Repeat => {}
         }
         Outcome::Continue
     }
 
-    fn press(&mut self, code: KeyCode) {
-        // control bindings are matched as key codes,
+    fn press(&mut self, key: Key) {
+        // control bindings are matched as keys,
         // so "backspace" works alongside "="
-        if bound(&self.keymap.stop, code) {
+        if self.keymap.stop.contains(&key) {
             self.panic();
             return;
         }
-        if bound(&self.keymap.octave_up, code) {
+        if self.keymap.octave_up.contains(&key) {
             self.octave = (self.octave + 1).min(self.reach().1);
             return;
         }
-        if bound(&self.keymap.octave_down, code) {
+        if self.keymap.octave_down.contains(&key) {
             self.octave = (self.octave - 1).max(self.reach().0);
             return;
         }
 
-        let KeyCode::Char(ch) = code else {
+        let Key::Char(ch) = key else {
             return;
         };
         if self.repeated(ch, Instant::now()) {
@@ -316,8 +306,16 @@ mod tests {
         (Keyboard::new(keymap, gating, tx), rx)
     }
 
-    fn press(keyboard: &mut Keyboard, code: KeyCode) {
-        keyboard.handle(KeyEvent::new(code, KeyModifiers::NONE));
+    fn stroke(key: Key, kind: Kind) -> Stroke {
+        Stroke {
+            key,
+            kind,
+            ctrl: false,
+        }
+    }
+
+    fn press(keyboard: &mut Keyboard, key: Key) {
+        keyboard.handle(stroke(key, Kind::Press));
     }
 
     /// A held-gating keyboard starting at `octave`, with `low` and `high`
@@ -336,7 +334,7 @@ mod tests {
     #[test]
     fn the_start_octave_shifts_every_note() {
         let (mut keyboard, mut rx) = octaves(-1, 4, 4);
-        press(&mut keyboard, KeyCode::Char('a'));
+        press(&mut keyboard, Key::Char('a'));
         assert_eq!(ons(&mut rx), vec![48], "60 an octave down");
         assert_eq!(keyboard.octave(), (-1, true));
     }
@@ -345,22 +343,18 @@ mod tests {
     fn the_octave_keys_stop_at_separate_limits() {
         let (mut keyboard, _rx) = octaves(-1, 3, 4);
         for _ in 0..10 {
-            press(&mut keyboard, KeyCode::Char('-'));
+            press(&mut keyboard, Key::Char('-'));
         }
         assert_eq!(keyboard.octave(), (-4, false), "three below the start");
         for _ in 0..10 {
-            press(&mut keyboard, KeyCode::Char('='));
+            press(&mut keyboard, Key::Char('='));
         }
         assert_eq!(keyboard.octave(), (3, false), "four above the start");
         assert_eq!(keyboard.reach(), (-4, 3));
     }
 
-    fn release(keyboard: &mut Keyboard, code: KeyCode) {
-        keyboard.handle(KeyEvent::new_with_kind(
-            code,
-            KeyModifiers::NONE,
-            KeyEventKind::Release,
-        ));
+    fn release(keyboard: &mut Keyboard, key: Key) {
+        keyboard.handle(stroke(key, Kind::Release));
     }
 
     fn ons(rx: &mut rtrb::Consumer<Event>) -> Vec<u8> {
@@ -380,8 +374,8 @@ mod tests {
     #[test]
     fn fixed_gating_ends_every_note_in_a_chord() {
         let (mut keyboard, mut rx) = keyboard(Gating::Fixed, Duration::ZERO);
-        press(&mut keyboard, KeyCode::Char('a'));
-        press(&mut keyboard, KeyCode::Char('s'));
+        press(&mut keyboard, Key::Char('a'));
+        press(&mut keyboard, Key::Char('s'));
         drain(&mut rx);
 
         keyboard.tick();
@@ -401,7 +395,7 @@ mod tests {
     #[test]
     fn fixed_gating_waits_for_the_deadline() {
         let (mut keyboard, mut rx) = keyboard(Gating::Fixed, Duration::from_secs(60));
-        press(&mut keyboard, KeyCode::Char('a'));
+        press(&mut keyboard, Key::Char('a'));
         drain(&mut rx);
 
         keyboard.tick();
@@ -411,11 +405,11 @@ mod tests {
     #[test]
     fn panic_releases_everything_once() {
         let (mut keyboard, mut rx) = keyboard(Gating::Held, Duration::ZERO);
-        press(&mut keyboard, KeyCode::Char('a'));
-        press(&mut keyboard, KeyCode::Char('s'));
+        press(&mut keyboard, Key::Char('a'));
+        press(&mut keyboard, Key::Char('s'));
         drain(&mut rx);
 
-        press(&mut keyboard, KeyCode::Backspace);
+        press(&mut keyboard, Key::Backspace);
         assert_eq!(
             drain(&mut rx),
             vec![Event::AllNotesOff {
@@ -430,7 +424,7 @@ mod tests {
     fn held_gating_ignores_autorepeat() {
         let (mut keyboard, mut rx) = keyboard(Gating::Held, Duration::ZERO);
         for _ in 0..3 {
-            press(&mut keyboard, KeyCode::Char('a'));
+            press(&mut keyboard, Key::Char('a'));
         }
         assert_eq!(ons(&mut rx), vec![60]);
     }
@@ -438,18 +432,18 @@ mod tests {
     #[test]
     fn held_gating_retriggers_after_release() {
         let (mut keyboard, mut rx) = keyboard(Gating::Held, Duration::ZERO);
-        press(&mut keyboard, KeyCode::Char('a'));
-        release(&mut keyboard, KeyCode::Char('a'));
-        press(&mut keyboard, KeyCode::Char('a'));
+        press(&mut keyboard, Key::Char('a'));
+        release(&mut keyboard, Key::Char('a'));
+        press(&mut keyboard, Key::Char('a'));
         assert_eq!(ons(&mut rx), vec![60, 60]);
     }
 
     #[test]
     fn held_gating_plays_and_releases_shifted_keys() {
         let (mut keyboard, mut rx) = keyboard(Gating::Held, Duration::ZERO);
-        press(&mut keyboard, KeyCode::Char('A'));
-        press(&mut keyboard, KeyCode::Char('A'));
-        release(&mut keyboard, KeyCode::Char('A'));
+        press(&mut keyboard, Key::Char('A'));
+        press(&mut keyboard, Key::Char('A'));
+        release(&mut keyboard, Key::Char('A'));
         assert_eq!(
             drain(&mut rx),
             vec![
@@ -469,10 +463,10 @@ mod tests {
     #[test]
     fn fixed_gating_ignores_autorepeat() {
         let (mut keyboard, mut rx) = keyboard(Gating::Fixed, Duration::ZERO);
-        press(&mut keyboard, KeyCode::Char('a'));
+        press(&mut keyboard, Key::Char('a'));
         // the note ends before the first repeat, as with a short gate
         keyboard.tick();
-        press(&mut keyboard, KeyCode::Char('a'));
+        press(&mut keyboard, Key::Char('a'));
         assert_eq!(ons(&mut rx), vec![60]);
     }
 
@@ -496,8 +490,8 @@ mod tests {
     fn fixed_gating_zero_window_retriggers_every_press() {
         let (mut keyboard, mut rx) = keyboard(Gating::Fixed, Duration::ZERO);
         keyboard.keymap.repeat = Duration::ZERO;
-        press(&mut keyboard, KeyCode::Char('a'));
-        press(&mut keyboard, KeyCode::Char('a'));
+        press(&mut keyboard, Key::Char('a'));
+        press(&mut keyboard, Key::Char('a'));
         assert_eq!(ons(&mut rx), vec![60, 60]);
     }
 }

@@ -1,6 +1,6 @@
 # input
 
-Key presses to note events. A layout is Lua's, checked into a `Keymap` by [`script/keymap.rs`](../script/keymap.rs); this module reads terminal keys against it and pushes each `Event` into the ring the audio callback reads.
+Key presses to note events. A layout is Lua's, checked into a `Keymap` by [`script/keymap.rs`](../script/keymap.rs); this module reads keys against it, translated by the view from its own library, and pushes each `Event` into the ring the audio callback reads.
 
 | file | purpose |
 | --- | --- |
@@ -9,10 +9,10 @@ Key presses to note events. A layout is Lua's, checked into a `Keymap` by [`scri
 ```mermaid
 flowchart LR
     layout["synth.keyboard (Lua)"] --> keymap[script::keymap] --> Keymap
-    key[terminal key] --> Keyboard
+    key[terminal key] --> view -- Stroke --> session --> Keyboard
     Keymap --> Keyboard
     Keyboard -- Event --> ring[(rtrb ring)] --> audio
-    Keyboard -- Outcome --> view
+    Keyboard -- Outcome --> session
 ```
 
 ## layouts
