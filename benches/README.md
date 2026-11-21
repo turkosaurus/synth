@@ -19,7 +19,7 @@ Both play [`support/sustain.rs`](./support/sustain.rs), 512 stereo frames per ca
 
 - `mise run bench` runs both benches, saves `results/YYYYMMDD-HHMMSS.toml`, and compares it with earlier results; without Valgrind it saves time only
 - `mise run bench:record` and `mise run bench:compare` are the two halves
-- [`bench.yml`](../.github/workflows/bench.yml) runs both daily on main, committing the result; on PRs ready for review, it benches the PR's base and head on the same runner and comments the comparison
+- [`bench.yml`](../.github/workflows/bench.yml) runs both on each merge to main and daily, committing the result; on PRs ready for review, it benches the PR once and comments a comparison with main's last result
 
 ## threshold
 
