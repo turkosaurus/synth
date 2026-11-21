@@ -45,6 +45,9 @@ flowchart LR
 
 details: [`lua`](./lua), [`script`](./src/script), [`spec`](./src/spec), [`audio`](./src/audio), [`view`](./src/view), or [`src`](./src)
 
-## license
+## contributing
+- see [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
-[GPL-3.0-or-later](./LICENSE)
+### roadmap
+- [v1.0 issues](https://github.com/turkosaurus/synth/milestone/1)
+- [kanban](https://github.com/users/turkosaurus/projects/4/views/2)
