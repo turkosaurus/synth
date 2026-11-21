@@ -4,7 +4,7 @@ local new -- the constructor, defined below
 local site = require("synth.site")
 
 ---@class synth.keyboard
----@overload fun(opts?: table): table
+---@overload fun(opts?: synth.Keyboard): synth.Keyboard
 local keyboard = setmetatable({}, {
 	__call = function(_, opts)
 		return setmetatable(new(opts), { kind = "keyboard", at = site() })
@@ -19,6 +19,24 @@ local keyboard = setmetatable({}, {
 -- The octave and help keys are the layout's own, so none of them falls in
 -- its note rows. Where qwerty's spot holds a letter or a dead key, a nearby
 -- symbol key stands in.
+---@class synth.Template
+---@field name string
+---@field anchor string
+---@field rows string[]
+---@field shifted string[]
+---@field octave_down string[]
+---@field octave_up string[]
+---@field help string[]
+
+-- What Rust reads as a keyboard's `layout`: `notes` maps each character to
+-- a MIDI note.
+---@class synth.Layout
+---@field name string
+---@field notes table<string, integer>
+---@field octave_up string[]
+---@field octave_down string[]
+---@field help string[] may be empty
+
 keyboard.templates = {
 	qwerty = {
 		name = "qwerty",
@@ -76,6 +94,11 @@ keyboard.templates = {
 --   7 (perfect fifth):   mandolin or violin (also good for character keyboards)
 -- Note is the MIDI note of the template's anchor key, around which all others
 -- are derived.
+---@class synth.Grid
+---@field template? synth.Template
+---@field offset? integer semitones offset between rows
+---@field note? integer MIDI note of the template's anchor key
+
 local grid_defaults = {
 	template = keyboard.templates.qwerty,
 	offset = 5, -- semitones offset between rows
@@ -96,6 +119,8 @@ end
 -- name and control keys. Along a row each key is a semitone up, each row is
 -- `offset` above the one below it, and a shifted key is its plain key an
 -- octave up. Keys that land outside MIDI's 0 to 127 are left out.
+---@param opts? synth.Grid
+---@return synth.Layout
 function keyboard.grid(opts)
 	opts = opts or {}
 	for key in pairs(opts) do
@@ -162,6 +187,19 @@ keyboard.azerty = keyboard.grid({ template = keyboard.templates.azerty })
 keyboard.dvorak = keyboard.grid({ template = keyboard.templates.dvorak })
 keyboard.colemak = keyboard.grid({ template = keyboard.templates.colemak })
 
+-- `octave_up`, `octave_down`, and `help` replace the layout's.
+---@class synth.Keyboard
+---@field layout? synth.Layout
+---@field stop? string[] silence everything; must not be empty
+---@field gate? number ms; note length when key release is unreported
+---@field repeat_window? number ms; a press this soon is autorepeat; 0 off
+---@field velocity? integer 1 to 127, for every note
+---@field octave? integer the octave shift to start at
+---@field octave_low? integer octaves octave_down may move from the start
+---@field octave_high? integer octaves octave_up may move from the start
+---@field octave_up? string[]
+---@field octave_down? string[]
+---@field help? string[]
 local defaults = {
 	-- `{ name, notes, octave_up, octave_down, help }`, where `notes` maps
 	-- each character to a MIDI note. Rust reads only this table, so a patch

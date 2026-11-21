@@ -9,13 +9,21 @@ local new -- the constructor, defined below
 local site = require("synth.site")
 
 ---@class synth.envelope
----@overload fun(opts?: table): table
+---@overload fun(opts?: synth.Envelope): synth.Envelope
 local envelope = setmetatable({}, {
 	__call = function(_, opts)
 		return setmetatable(new(opts), { kind = "envelope", at = site() })
 	end,
 })
 
+---@class synth.Envelope
+---@field attack? number ms
+---@field attack_curve? synth.Curve
+---@field decay? number ms
+---@field decay_curve? synth.Curve
+---@field sustain? number 0.0 to 1.0
+---@field release? number ms
+---@field release_curve? synth.Curve
 local defaults = {
 	attack = 15, -- ms
 	attack_curve = slope.linear(),

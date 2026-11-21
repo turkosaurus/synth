@@ -8,6 +8,20 @@
 --
 -- Unknown fields pass through so Rust can name a misspelling.
 
+---@class synth.Filter
+---@field cutoff number Hz
+---@field resonance? number 0 (flat) to 1 (rings hard); not on shelves
+---@field gain? number dB; only on bell and shelves
+
+-- built in the loop at the end, so declared here for editors
+---@class synth.filter
+---@field lowpass fun(opts: synth.Filter): synth.Filter
+---@field highpass fun(opts: synth.Filter): synth.Filter
+---@field bandpass fun(opts: synth.Filter): synth.Filter
+---@field notch fun(opts: synth.Filter): synth.Filter
+---@field bell fun(opts: synth.Filter): synth.Filter
+---@field low_shelf fun(opts: synth.Filter): synth.Filter
+---@field high_shelf fun(opts: synth.Filter): synth.Filter
 local filter = {}
 
 -- `file:line` of whoever called the constructor, read by Rust
