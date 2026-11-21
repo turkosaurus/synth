@@ -11,8 +11,8 @@ Both play [`support/sustain.rs`](./support/sustain.rs): a chord of sustaining vo
 
 ## running
 
-- `mise run bench` runs both and saves `results/YYYYMMDD-HHMMSS.toml`; without Valgrind it saves time only
-- `mise run bench:compare` compares the newest result with earlier ones
+- `mise run bench` runs both benches, saves `results/YYYYMMDD-HHMMSS.toml`, and compares it with earlier results; without Valgrind it saves time only
+- `mise run bench:record` and `mise run bench:compare` are the two halves
 - [`bench.yml`](../.github/workflows/bench.yml) runs both daily on main, committing the result, and on PRs ready for review, commenting the comparison
 
 ## threshold

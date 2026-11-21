@@ -77,7 +77,7 @@ jobs:
 
       - name: Bench
         if: steps.changed.outputs.run != 'false'
-        run: mise run bench
+        run: mise run bench:record
 
       # bench:compare writes the job summary itself; the copy kept here is
       # for the PR comment. A regression is held until the last step, so

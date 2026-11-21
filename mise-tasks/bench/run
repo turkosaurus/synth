@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="bench:record, then bench:compare on the result it saved; extra args go to criterion, e.g. dry/8 or --quick"
+#MISE alias="bench"
+#
+# Not a test:* task, so `tests` does not run it: a full run takes about two
+# minutes. bench.yml runs record and compare as separate steps.
+set -euo pipefail
+
+dir=$(dirname "$0")
+file=$("$dir/record" "$@")
+exec "$dir/compare" "$file"
