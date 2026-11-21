@@ -2,7 +2,7 @@ use std::io::Stdout;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use crossterm::event;
+use crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Flex, Layout, Rect, Spacing};
 use ratatui::style::{Color, Modifier, Style};
@@ -13,9 +13,9 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 
-use crate::audio::{Snapshot, Stats};
-use crate::input::keyboard::{code, Gating, Keyboard, Outcome};
-use crate::session::Session;
+use crate::audio::Snapshot;
+use crate::input::keyboard::{Gating, Keyboard, Kind, Stroke};
+use crate::session::{Msg, Session};
 use crate::spec::{Key, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
@@ -32,7 +32,7 @@ const STATS_ROWS: u16 = 2 + SPARK_ROWS;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
-    let gating = session.keyboard.gating();
+    let gating = session.model().keyboard.gating();
 
     // built before enter(), so a failure here needs no teardown.
     // backend goes straight over stdout rather than through ratatui::init()
@@ -41,21 +41,12 @@ pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
 
     // restores the terminal on every way out of here, a panic included
     let _restore = crate::terminal::enter(gating)?;
-    update(
-        &mut terminal,
-        &mut session.keyboard,
-        &session.stats,
-        &session.freqs,
-        gating,
-        config,
-    )
+    drive(&mut terminal, session, gating, config)
 }
 
-fn update(
+fn drive(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    keyboard: &mut Keyboard,
-    stats: &Stats,
-    freqs: &[f32],
+    session: &mut Session,
     gating: Gating,
     config: &TuiConfig,
 ) -> anyhow::Result<()> {
@@ -64,7 +55,6 @@ fn update(
     let mut peak = Meter::new(config.meter_hold, config.meter_fall);
     let mut activity = Activity::default();
     let mut last = Instant::now();
-    let mut help = false;
 
     loop {
         // SIGTERM and SIGHUP only set a flag; leaving here restores the
@@ -75,7 +65,7 @@ fn update(
 
         // one snapshot() per frame gauges reset,
         // so widgets must share one capture
-        let snap = stats.snapshot();
+        let snap = session.stats.snapshot();
 
         let now = Instant::now();
         let dt = now - last;
@@ -83,14 +73,15 @@ fn update(
         peak.update(meter::scale(snap.peak, config.meter_floor_db), dt);
         activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clips);
 
+        let model = session.model();
         let view = View {
-            keyboard,
+            keyboard: &model.keyboard,
             snap: &snap,
             peak: &peak,
             activity: &activity,
-            freqs,
+            freqs: &model.freqs,
             gating,
-            help,
+            help: model.help,
             floor_db: config.meter_floor_db,
         };
         terminal.draw(|frame| draw(frame, &view))?;
@@ -98,26 +89,75 @@ fn update(
         if event::poll(config.poll)? {
             // drain immediately
             while event::poll(Duration::ZERO)? {
-                if let event::Event::Key(key) = event::read()? {
-                    // the overlay owns the keyboard while it is up: no key
-                    // reaches the note grid, so nothing can be left sounding
-                    // behind it. quit still works, and the help key toggles.
-                    let outcome = if help {
-                        keyboard.global(key)
-                    } else {
-                        keyboard.handle(key)
-                    };
-                    match outcome {
-                        Outcome::Quit => return Ok(()),
-                        Outcome::Help => help = !help,
-                        Outcome::Continue => {}
-                    }
+                let event::Event::Key(key) = event::read()? else {
+                    continue;
+                };
+                let Some(stroke) = stroke(key) else {
+                    continue;
+                };
+                if session.update(Msg::Key(stroke)).is_break() {
+                    return Ok(());
                 }
             }
         }
 
-        // ends a Fixed-mode note whose time is up; a no-op when Held
-        keyboard.tick();
+        if session.update(Msg::Tick).is_break() {
+            return Ok(());
+        }
+    }
+}
+
+/// The terminal's key as the keyboard reads it; `None` for a key no binding
+/// can name, which no binding could have matched.
+fn stroke(event: KeyEvent) -> Option<Stroke> {
+    Some(Stroke {
+        key: key(event.code)?,
+        kind: match event.kind {
+            KeyEventKind::Press => Kind::Press,
+            KeyEventKind::Release => Kind::Release,
+            KeyEventKind::Repeat => Kind::Repeat,
+        },
+        ctrl: event.modifiers.contains(KeyModifiers::CONTROL),
+    })
+}
+
+fn key(code: KeyCode) -> Option<Key> {
+    Some(match code {
+        KeyCode::Char(ch) => Key::Char(ch),
+        KeyCode::Backspace => Key::Backspace,
+        KeyCode::Delete => Key::Delete,
+        KeyCode::Enter => Key::Enter,
+        KeyCode::Tab => Key::Tab,
+        KeyCode::Esc => Key::Esc,
+        KeyCode::Up => Key::Up,
+        KeyCode::Down => Key::Down,
+        KeyCode::Left => Key::Left,
+        KeyCode::Right => Key::Right,
+        KeyCode::Home => Key::Home,
+        KeyCode::End => Key::End,
+        KeyCode::PageUp => Key::PageUp,
+        KeyCode::PageDown => Key::PageDown,
+        _ => return None,
+    })
+}
+
+/// A binding the way the terminal names it, for the help overlay.
+fn code(key: Key) -> KeyCode {
+    match key {
+        Key::Char(ch) => KeyCode::Char(ch),
+        Key::Backspace => KeyCode::Backspace,
+        Key::Delete => KeyCode::Delete,
+        Key::Enter => KeyCode::Enter,
+        Key::Tab => KeyCode::Tab,
+        Key::Esc => KeyCode::Esc,
+        Key::Up => KeyCode::Up,
+        Key::Down => KeyCode::Down,
+        Key::Left => KeyCode::Left,
+        Key::Right => KeyCode::Right,
+        Key::Home => KeyCode::Home,
+        Key::End => KeyCode::End,
+        Key::PageUp => KeyCode::PageUp,
+        Key::PageDown => KeyCode::PageDown,
     }
 }
 
@@ -477,4 +517,37 @@ fn name(note: u8) -> String {
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
     ];
     format!("{}{}", NAMES[(note % 12) as usize], note as i32 / 12 - 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_key_survives_the_terminal_and_back() {
+        let keys = [
+            Key::Char('a'),
+            Key::Backspace,
+            Key::Delete,
+            Key::Enter,
+            Key::Tab,
+            Key::Esc,
+            Key::Up,
+            Key::Down,
+            Key::Left,
+            Key::Right,
+            Key::Home,
+            Key::End,
+            Key::PageUp,
+            Key::PageDown,
+        ];
+        for k in keys {
+            assert_eq!(key(code(k)), Some(k));
+        }
+    }
+
+    #[test]
+    fn a_key_no_binding_names_is_dropped() {
+        assert_eq!(stroke(KeyEvent::from(KeyCode::F(1))), None);
+    }
 }

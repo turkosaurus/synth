@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-#MISE description="lua stays in script.rs and script/, cpal stays in audio/device.rs, spec/ depends on neither"
+#MISE description="lua stays in script.rs and script/, cpal stays in audio/device.rs, crossterm stays in view/ and terminal.rs, spec/ depends on none of them"
 set -euo pipefail
 
 failed=0
 
 # allowed paths are extended regexes, anchored at the start
-for rule in 'mlua:src/script(\.rs|/)' 'cpal:src/audio/device\.rs'; do
+for rule in 'mlua:src/script(\.rs|/)' 'cpal:src/audio/device\.rs' 'crossterm:src/(view/|terminal\.rs)'; do
     name=${rule%%:*}
     allowed=${rule#*:}
     if offenders=$(grep -rln "use $name\|$name::" src/ | grep -vE "^($allowed)"); then
