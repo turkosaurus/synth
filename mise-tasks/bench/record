@@ -20,11 +20,36 @@ results=benches/results
 criterion=target/criterion/callback
 gungraun=target/gungraun/synth/instructions/render
 
+mkdir -p target "$results"
+
+# Runs at the same time would collect each other's output. The lock holds
+# its start time, so one left by a killed run is ignored after 30 minutes.
+lock=benches/.lock
+stale=1800
+take() { (set -C; date -u +%s >"$lock") 2>/dev/null; }
+if ! take; then
+    started=$(cat "$lock" 2>/dev/null || true)
+    if [[ $started =~ ^[0-9]+$ ]]; then
+        age=$(($(date -u +%s) - started))
+        if [ "$age" -lt "$stale" ]; then
+            echo "::error title=bench::another run started $((age / 60)) minutes ago; it holds $lock, which is ignored after $((stale / 60)) minutes"
+            exit 1
+        fi
+        echo "ignoring $lock from $((age / 60)) minutes ago" >&2
+    else
+        echo "ignoring $lock, which holds no start time" >&2
+    fi
+    rm -f "$lock"
+    if ! take; then
+        echo "::error title=bench::another run took $lock just now"
+        exit 1
+    fi
+fi
+
 # both tools keep every case they have measured, so only output newer than
 # this marker comes from this run
-mkdir -p target "$results"
 marker=$(mktemp target/bench-start.XXXXXX)
-trap 'rm -f "$marker"' EXIT
+trap 'rm -f "$marker" "$lock"' EXIT
 
 # stdout carries only the saved file's path, so `file=$(mise run bench)`
 # works; everything meant for a person reading along goes to stderr
