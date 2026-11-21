@@ -16,7 +16,7 @@ local instrument = setmetatable({}, {
 })
 
 -- `keyboard`, `tuning`, and `filter` apply when the instrument is the
--- patch's root.
+-- patch's root, and are rejected on an instrument inside a sequence.
 ---@class synth.Instrument
 ---@field waveform? synth.Waveform
 ---@field envelope? synth.Envelope
