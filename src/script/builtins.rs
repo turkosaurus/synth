@@ -1,9 +1,11 @@
-//! Editable copies of the built-in modules, in `synth/` under the patches folder.
+//! Copies of the built-in files under the patches folder: each module in
+//! `synth/`, and the guides at the folder's root.
 //!
-//! `.base.sha256` records the hash of the built-in each copy was written
-//! from, in `sha256sum`'s format, so `sha256sum -c .base.sha256` lists the
-//! copies a user edited. A copy still matching its base is not used, so a
-//! newer built-in reaches the user; an edited copy replaces the built-in.
+//! Each folder's `.base.sha256` records the hash of the built-in each copy
+//! there was written from, in `sha256sum`'s format, so
+//! `sha256sum -c .base.sha256` lists the copies a user edited. A copy still
+//! matching its base follows a newer built-in; an edited copy is kept, and
+//! an edited module replaces the built-in.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -14,17 +16,50 @@ use sha2::{Digest, Sha256};
 
 use super::MODULES;
 
-/// The folder under the patches folder that holds the copies.
+/// The folder under the patches folder that holds the module copies.
 const DIR: &str = "synth";
 /// The record of each copy's base, beside the copies.
 const BASES: &str = ".base.sha256";
 
+/// Guides for the patches folder, written to its root.
+const GUIDES: [(&str, &str); 3] = [
+    ("README.md", include_str!("../../lua/patches/README.md")),
+    ("AGENTS.md", include_str!("../../lua/patches/AGENTS.md")),
+    (".luarc.json", include_str!("../../lua/patches/.luarc.json")),
+];
+
+/// One built-in file and where its copy goes.
+struct Entry {
+    name: &'static str,
+    /// folder under the patches folder; empty for its root
+    dir: &'static str,
+    file: String,
+    source: &'static str,
+}
+
+/// Every built-in with a copy: the modules, then the guides.
+fn entries() -> impl Iterator<Item = Entry> {
+    let modules = MODULES.iter().map(|(name, source)| Entry {
+        name,
+        dir: DIR,
+        file: file_name(name),
+        source,
+    });
+    let guides = GUIDES.iter().map(|(file, source)| Entry {
+        name: file,
+        dir: "",
+        file: file.to_string(),
+        source,
+    });
+    modules.chain(guides)
+}
+
 /// Where one built-in stands against its copy.
 #[derive(Debug, PartialEq)]
 pub enum State {
-    /// no copy, or a copy still matching its base: the built-in loads
+    /// no copy, or a copy still matching its base: the built-in stands
     BuiltIn,
-    /// the copy differs from its base, so it loads instead of the built-in
+    /// the copy differs from its base; a module's loads instead
     Edited(PathBuf),
     /// edited, and the built-in has changed since the copy was written
     EditedBehind(PathBuf),
@@ -73,8 +108,8 @@ fn bases(dir: &Path) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The copy that replaces built-in `name`, if one is edited. Read by the
-/// module searcher on every `require` of a `synth.*` name.
+/// The copy that replaces built-in module `name`, if one is edited. Read
+/// by the module searcher on every `require` of a `synth.*` name.
 pub(super) fn edited(patches: &Path, name: &str) -> Option<(PathBuf, String)> {
     let dir = patches.join(DIR);
     let file = file_name(name);
@@ -86,16 +121,15 @@ pub(super) fn edited(patches: &Path, name: &str) -> Option<(PathBuf, String)> {
 
 /// Where every built-in stands, for `doctor`.
 pub fn states(patches: &Path) -> Vec<(&'static str, State)> {
-    let dir = patches.join(DIR);
-    let bases = bases(&dir);
-    MODULES
-        .iter()
-        .map(|(name, source)| {
-            let file = file_name(name);
-            let path = dir.join(&file);
-            let state = match (fs::read(&path), bases.get(&file)) {
+    let mut records: BTreeMap<&str, BTreeMap<String, String>> = BTreeMap::new();
+    entries()
+        .map(|entry| {
+            let dir = patches.join(entry.dir);
+            let bases = records.entry(entry.dir).or_insert_with(|| bases(&dir));
+            let path = dir.join(&entry.file);
+            let state = match (fs::read(&path), bases.get(&entry.file)) {
                 (Ok(copy), base) if base != Some(&hash(&copy)) => {
-                    if base.is_some_and(|base| *base != hash(source.as_bytes())) {
+                    if base.is_some_and(|base| *base != hash(entry.source.as_bytes())) {
                         State::EditedBehind(path)
                     } else {
                         State::Edited(path)
@@ -103,30 +137,33 @@ pub fn states(patches: &Path) -> Vec<(&'static str, State)> {
                 }
                 _ => State::BuiltIn,
             };
-            (*name, state)
+            (entry.name, state)
         })
         .collect()
 }
 
 /// Writes a copy of every built-in that has none, refreshes unedited copies
 /// to the current built-in, and leaves edited ones alone, then rewrites
-/// `.base.sha256`.
+/// each folder's `.base.sha256`.
 pub fn write(patches: &Path) -> anyhow::Result<Vec<(&'static str, Wrote)>> {
-    let dir = patches.join(DIR);
-    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    let mut bases = bases(&dir);
+    let mut records: BTreeMap<&str, BTreeMap<String, String>> = BTreeMap::new();
     let mut wrote = Vec::new();
 
-    for (name, source) in MODULES {
-        let file = file_name(name);
-        let path = dir.join(&file);
-        let built_in = hash(source.as_bytes());
+    for entry in entries() {
+        let dir = patches.join(entry.dir);
+        if !records.contains_key(entry.dir) {
+            fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+            records.insert(entry.dir, bases(&dir));
+        }
+        let bases = records.get_mut(entry.dir).expect("inserted above");
+        let path = dir.join(&entry.file);
+        let built_in = hash(entry.source.as_bytes());
         let copy = match fs::read(&path) {
             Ok(copy) => Some(hash(&copy)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
         };
-        let base = bases.get(&file).cloned();
+        let base = bases.get(&entry.file).cloned();
 
         let outcome = match (copy, base) {
             (None, _) => Wrote::Written,
@@ -141,17 +178,19 @@ pub fn write(patches: &Path) -> anyhow::Result<Vec<(&'static str, Wrote)>> {
             (Some(_), None) => Wrote::Kept,
         };
         if matches!(outcome, Wrote::Written | Wrote::Refreshed) {
-            fs::write(&path, source).with_context(|| format!("write {}", path.display()))?;
+            fs::write(&path, entry.source).with_context(|| format!("write {}", path.display()))?;
         }
         // a kept copy behind the built-in keeps its old base, so `doctor`
         // and the prompt to come can still tell it is behind
         if outcome != Wrote::KeptBehind {
-            bases.insert(file, built_in);
+            bases.insert(entry.file, built_in);
         }
-        wrote.push((name, outcome));
+        wrote.push((entry.name, outcome));
     }
 
-    save_bases(&dir, &bases)?;
+    for (dir, bases) in &records {
+        save_bases(&patches.join(dir), bases)?;
+    }
     Ok(wrote)
 }
 
@@ -177,27 +216,31 @@ pub struct Behind {
     pub path: PathBuf,
     pub copy: String,
     pub built_in: &'static str,
+    dir: &'static str,
+    file: String,
 }
 
 /// The copy of `name` and its new built-in, for the prompt, if the copy is
 /// behind.
 pub fn behind(patches: &Path, name: &str) -> anyhow::Result<Option<Behind>> {
-    let Some((name, source)) = MODULES.iter().find(|(n, _)| *n == name) else {
+    let Some(entry) = entries().find(|entry| entry.name == name) else {
         return Ok(None);
     };
-    let path = patches.join(DIR).join(file_name(name));
     if !matches!(
-        states(patches).into_iter().find(|(n, _)| n == name),
+        states(patches).into_iter().find(|(n, _)| *n == name),
         Some((_, State::EditedBehind(_)))
     ) {
         return Ok(None);
     }
+    let path = patches.join(entry.dir).join(&entry.file);
     let copy = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     Ok(Some(Behind {
-        name,
+        name: entry.name,
         path,
         copy,
-        built_in: source,
+        built_in: entry.source,
+        dir: entry.dir,
+        file: entry.file,
     }))
 }
 
@@ -217,9 +260,9 @@ pub fn keep(patches: &Path, behind: &Behind) -> anyhow::Result<()> {
 }
 
 fn rebase(patches: &Path, behind: &Behind) -> anyhow::Result<()> {
-    let dir = patches.join(DIR);
+    let dir = patches.join(behind.dir);
     let mut bases = bases(&dir);
-    bases.insert(file_name(behind.name), hash(behind.built_in.as_bytes()));
+    bases.insert(behind.file.clone(), hash(behind.built_in.as_bytes()));
     save_bases(&dir, &bases)
 }
 
@@ -270,9 +313,12 @@ mod tests {
         let dir = patches("first");
         let wrote = write(&dir).unwrap();
         assert!(wrote.iter().all(|(_, w)| *w == Wrote::Written), "{wrote:?}");
-        assert_eq!(wrote.len(), MODULES.len());
+        assert_eq!(wrote.len(), MODULES.len() + GUIDES.len());
         let record = fs::read_to_string(dir.join(DIR).join(BASES)).unwrap();
         assert_eq!(record.lines().count(), MODULES.len());
+        let record = fs::read_to_string(dir.join(BASES)).unwrap();
+        assert_eq!(record.lines().count(), GUIDES.len());
+        assert!(dir.join("AGENTS.md").exists());
         assert!(states(&dir).iter().all(|(_, s)| *s == State::BuiltIn));
         assert!(write(&dir)
             .unwrap()
@@ -375,6 +421,32 @@ mod tests {
 
         assert_eq!(outcome(&write(&dir).unwrap(), "synth.wave"), "kept");
         assert_eq!(fs::read_to_string(wave(&dir)).unwrap(), "someone's own");
+    }
+
+    #[test]
+    fn an_edited_guide_is_kept_and_an_unedited_one_follows() {
+        let dir = patches("guides");
+        write(&dir).unwrap();
+        fs::write(dir.join("AGENTS.md"), "mine").unwrap();
+        fs::write(dir.join("README.md"), "old").unwrap();
+        let record = fs::read_to_string(dir.join(BASES)).unwrap();
+        let record: String = record
+            .lines()
+            .map(|line| match line.ends_with("  README.md") {
+                true => format!("{}  README.md\n", hash(b"old")),
+                false => format!("{line}\n"),
+            })
+            .collect();
+        fs::write(dir.join(BASES), record).unwrap();
+
+        let wrote = write(&dir).unwrap();
+        assert_eq!(outcome(&wrote, "AGENTS.md"), "kept");
+        assert_eq!(outcome(&wrote, "README.md"), "refreshed");
+        assert_eq!(fs::read_to_string(dir.join("AGENTS.md")).unwrap(), "mine");
+        assert_eq!(
+            fs::read_to_string(dir.join("README.md")).unwrap(),
+            GUIDES[0].1
+        );
     }
 
     #[test]
