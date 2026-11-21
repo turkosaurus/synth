@@ -57,15 +57,6 @@ description = "lint example.lua; nonzero exit on warnings"
 run = "cargo run -- check lua/example.lua || { echo '::error file=lua/example.lua,title=test:example::synth check found warnings'; exit 1; }"
 
 
-### BENCH ###
-
-# not a test:* task, so `tests` does not run it: a full run takes about
-# two minutes. bench.yml runs it daily on main and on PRs ready for review.
-[tasks.bench]
-description = "time the render path, count its instructions, and save benches/results/<stamp>.toml; extra args go to criterion, e.g. dry/8 or --quick"
-run = "mise-tasks/bench/record"
-
-
 ### LINT ###
 
 [tasks.lint]
