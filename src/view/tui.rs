@@ -101,8 +101,9 @@ fn drive(
             }
         }
 
-        // Tick never quits
-        let _ = session.update(Msg::Tick);
+        if session.update(Msg::Tick).is_break() {
+            return Ok(());
+        }
     }
 }
 
