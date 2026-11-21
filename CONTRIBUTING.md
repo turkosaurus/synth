@@ -39,11 +39,13 @@ mise tests
 mise lint
 ```
 
-## guidelines
+## checklist
 
+- [ ] changes backed by clear and concise justification
 - [ ] [`RULES.md`](RULES.md) followed
 - [ ] [`TERMS.md`](TERMS.md) consistently applied
 - [ ] `mise bump {major|minor|patch}` versioned (as appropriate per [semver](https://semver.org))
 - [ ] [`LICENSE`](LICENSE) honored
-
-
+- [ ] issue or draft PR has type, label, milestone
+- [ ] draft PR passes CI
+- [ ] mark as _ready for review_
