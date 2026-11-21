@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="open a scratch patches folder from this build in $VISUAL or $EDITOR"
+#MISE depends=["lsp:folder"]
+
+# The folder is kept between runs, and each run refreshes the copies that
+# have not been edited.
+
+set -euo pipefail
+
+patches="$PWD/target/lsp/data/synth/patches"
+editor="${VISUAL:-${EDITOR:-nvim}}"
+cd "$patches"
+echo "patches folder: $patches"
+# word splitting is wanted: an editor may come with flags, as `code -w`
+# shellcheck disable=SC2086
+exec $editor .

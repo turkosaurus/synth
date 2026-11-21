@@ -15,9 +15,20 @@ pub use render::Player;
 #[doc(hidden)]
 pub mod bench {
     use super::render::{fill as render_fill, Player};
+    use crate::spec::{Event, Freqs, Instrument};
 
     /// Fills `out` as the audio callback does, returning the frames written.
     pub fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> u32 {
         render_fill(out, channels, player).frames
+    }
+
+    /// A player fed from a ring, as the TUI's is.
+    pub fn live(
+        instruments: Vec<Instrument>,
+        freqs: Freqs,
+        events: rtrb::Consumer<Event>,
+        sample_rate: f32,
+    ) -> Player {
+        Player::live(instruments, freqs, events, sample_rate)
     }
 }
