@@ -193,6 +193,7 @@ keyboard.colemak = keyboard.grid({ template = keyboard.templates.colemak })
 ---@field stop? string[] silence everything; must not be empty
 ---@field gate? number ms; note length when key release is unreported
 ---@field repeat_window? number ms; a press this soon is autorepeat; 0 off
+---@field doubletap_window? number ms; a second stop this soon cuts sound; 0 off
 ---@field velocity? integer 1 to 127, for every note
 ---@field octave? integer the octave shift to start at
 ---@field octave_low? integer octaves octave_down may move from the start
@@ -214,6 +215,10 @@ local defaults = {
 	-- must outlast the OS repeat delay (GNOME defaults to 500ms, X11 to
 	-- 660ms), and one key cannot retrigger faster than this. 0 turns it off.
 	repeat_window = 550, -- ms
+	-- one press of stop releases every note, and the release still plays; a
+	-- second press this soon after the first cuts the sound at once. The
+	-- first press never waits for a second. 0 to 1000; 0 turns it off.
+	doubletap_window = 400, -- ms
 	-- a key has no depth to time, so every note gets this velocity; 1 to 127
 	velocity = 100,
 	-- the octave shift to start at; 0 plays the layout as written

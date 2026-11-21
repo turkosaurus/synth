@@ -287,6 +287,10 @@ impl Pool {
         }
     }
 
+    fn silence_all(&mut self) {
+        self.voices.fill_with(|| None);
+    }
+
     fn next(&mut self) -> f32 {
         let mut sum = 0.0;
         for slot in &mut self.voices {
@@ -433,6 +437,11 @@ impl Player {
             Event::AllNotesOff { instrument } => {
                 if let Some(pool) = self.pools.get_mut(instrument) {
                     pool.release_all();
+                }
+            }
+            Event::AllSoundOff { instrument } => {
+                if let Some(pool) = self.pools.get_mut(instrument) {
+                    pool.silence_all();
                 }
             }
         }
@@ -1073,6 +1082,31 @@ mod tests {
         tx.push(Event::AllNotesOff { instrument: 0 }).unwrap();
         player.next();
         assert_eq!(pitches(&player), vec![None, None]);
+        assert!(player.pools[1].voices[0].is_some(), "other instrument kept");
+    }
+
+    // a release stage that All Notes Off would play, so silence on the next
+    // sample shows it was skipped
+    #[test]
+    fn all_sound_off_silences_its_instrument_with_no_release() {
+        let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
+        let mut releasing = flat_instrument();
+        releasing.release = stage(&[0.0, 0.5, 0.75]);
+        let instruments = vec![releasing, flat_instrument()];
+        let mut player = Player::live(instruments, freqs(), rx, 4.0);
+
+        tx.push(on(1)).unwrap();
+        tx.push(Event::NoteOn {
+            instrument: 1,
+            note: 2,
+            velocity: 127,
+        })
+        .unwrap();
+        player.next();
+
+        tx.push(Event::AllSoundOff { instrument: 0 }).unwrap();
+        player.next();
+        assert_eq!(pitches(&player), vec![None]);
         assert!(player.pools[1].voices[0].is_some(), "other instrument kept");
     }
 

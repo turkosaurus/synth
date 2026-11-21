@@ -169,6 +169,7 @@ mod tests {
             help: vec![Key::Char('?')],
             gate: Duration::ZERO,
             repeat: Duration::ZERO,
+            doubletap: Duration::ZERO,
             velocity: 100,
             octave: 0,
             octave_low: 0,

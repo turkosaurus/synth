@@ -159,6 +159,12 @@ pub(super) const KEYBOARD: Schema = Schema {
         field(field::GATE, Ty::Number, Bound::Above(0.0)),
         // zero turns repeat detection off
         field(field::REPEAT_WINDOW, Ty::Number, Bound::AtLeast(0.0)),
+        // zero turns the double tap off; past a second it is two taps
+        field(
+            field::DOUBLETAP_WINDOW,
+            Ty::Number,
+            Bound::Between(0.0, 1000.0),
+        ),
         // 0 is MIDI's note-off spelled as a note-on; above 127 is not MIDI
         field(field::VELOCITY, Ty::Integer, Bound::Between(1.0, 127.0)),
         // past 10 octaves every shift leaves MIDI's note range

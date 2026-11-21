@@ -100,6 +100,11 @@ pub enum Event {
     AllNotesOff {
         instrument: usize,
     },
+    /// MIDI All Sound Off (CC 120): every voice on the instrument stops on
+    /// the next sample, with no release stage.
+    AllSoundOff {
+        instrument: usize,
+    },
 }
 
 /// Events stamped with the sample they fire on. A single sustained note is

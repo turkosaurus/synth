@@ -16,6 +16,8 @@ struct KeyboardConfig {
     gate_ms: f64,
     #[serde(rename = "repeat_window")]
     repeat_ms: f64,
+    #[serde(rename = "doubletap_window")]
+    doubletap_ms: f64,
     velocity: u8,
     octave: i32,
     octave_low: i32,
@@ -91,7 +93,8 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
         }
     }
 
-    // gate, repeat_window, velocity, and octave ranges: schema::KEYBOARD
+    // gate, repeat_window, doubletap_window, velocity, and octave ranges:
+    // schema::KEYBOARD
 
     Ok(Keymap {
         notes,
@@ -102,6 +105,7 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
         help,
         gate: std::time::Duration::from_secs_f64(config.gate_ms / 1000.0),
         repeat: std::time::Duration::from_secs_f64(config.repeat_ms / 1000.0),
+        doubletap: std::time::Duration::from_secs_f64(config.doubletap_ms / 1000.0),
         velocity: config.velocity,
         octave: config.octave,
         octave_low: config.octave_low,

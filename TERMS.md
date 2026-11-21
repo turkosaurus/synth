@@ -73,6 +73,8 @@
 | trigger | | instantaneous event; a fixed-length note follows one |
 | note stealing | | ending a sounding note to free its slot |
 | retrigger | | striking a pitch already sounding |
+| all notes off | MIDI CC 123 | every note on an instrument releases, and its release stage plays; one tap of `stop` |
+| all sound off | MIDI CC 120 | every note on an instrument stops on the next sample, with no release; a second tap of `stop` within `doubletap_window` |
 | buffer | frames | frames the device asks for per callback |
 | deadline | µs | buffer / sample rate; time budget for one callback |
 | xrun | | callback missed its deadline; device had no audio |

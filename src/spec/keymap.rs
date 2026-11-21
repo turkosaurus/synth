@@ -35,6 +35,9 @@ pub(crate) struct Keymap {
     /// In `Fixed` gating, a press of a key this soon after its last press
     /// is taken as autorepeat and ignored, from the keyboard's `repeat_window`.
     pub repeat: Duration,
+    /// A second press of `stop` this soon after the first adds All Sound
+    /// Off, from the keyboard's `doubletap_window`.
+    pub doubletap: Duration,
     /// Every note's velocity: a key has no depth to time, so there is none
     /// to measure. MIDI hardware supplies a real one.
     pub velocity: u8,

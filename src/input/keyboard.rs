@@ -64,6 +64,8 @@ pub(crate) struct Keyboard {
     /// when each key last arrived as a press, repeats included, so a
     /// `Fixed` key held down stays one note however long the repeats run
     pressed_at: HashMap<char, Instant>,
+    /// when `stop` was last pressed, so a second press can be a double tap
+    stopped_at: Option<Instant>,
     last_key: Option<char>,
 }
 
@@ -77,6 +79,7 @@ impl Keyboard {
             sounding: None,
             release_at: HashMap::new(),
             pressed_at: HashMap::new(),
+            stopped_at: None,
             last_key: None,
         }
     }
@@ -163,7 +166,7 @@ impl Keyboard {
         // control bindings are matched as keys,
         // so "backspace" works alongside "="
         if self.keymap.stop.contains(&key) {
-            self.panic(out);
+            self.stop(Instant::now(), out);
             return;
         }
         if self.keymap.octave_up.contains(&key) {
@@ -252,6 +255,22 @@ impl Keyboard {
         });
     }
 
+    /// A press of `stop`: All Notes Off at once, and All Sound Off as well
+    /// when it follows another inside the double-tap window. The first
+    /// press never waits to learn whether a second follows.
+    fn stop(&mut self, now: Instant, out: &mut Vec<Event>) {
+        self.panic(out);
+        if self
+            .stopped_at
+            .is_some_and(|last| now - last < self.keymap.doubletap)
+        {
+            out.push(Event::AllSoundOff {
+                instrument: INSTRUMENT,
+            });
+        }
+        self.stopped_at = Some(now);
+    }
+
     fn end(&mut self, note: u8, out: &mut Vec<Event>) {
         // also reached by tick(), which sees no key release, so this is the
         // only place `held` drains one note at a time
@@ -279,6 +298,7 @@ mod tests {
     use super::*;
 
     const REPEAT: Duration = Duration::from_millis(750);
+    const DOUBLETAP: Duration = Duration::from_millis(400);
 
     fn keyboard(gating: Gating, gate: Duration) -> (Keyboard, Vec<Event>) {
         let keymap = Keymap {
@@ -290,6 +310,7 @@ mod tests {
             help: vec![],
             gate,
             repeat: REPEAT,
+            doubletap: DOUBLETAP,
             velocity: 100,
             octave: 0,
             octave_low: 4,
@@ -410,6 +431,48 @@ mod tests {
         );
         assert!(keyboard.held.is_empty());
         assert_eq!(keyboard.sounding(), None);
+    }
+
+    const NOTES_OFF: Event = Event::AllNotesOff {
+        instrument: INSTRUMENT,
+    };
+    const SOUND_OFF: Event = Event::AllSoundOff {
+        instrument: INSTRUMENT,
+    };
+
+    // the first tap sends at once, so it is never held back to wait for a
+    // second; the second adds All Sound Off after the release
+    #[test]
+    fn a_double_tap_of_stop_cuts_the_sound() {
+        let (mut keyboard, mut out) = keyboard(Gating::Held, Duration::ZERO);
+        press(&mut keyboard, &mut out, Key::Char('a'));
+        drain(&mut out);
+        let start = Instant::now();
+
+        keyboard.stop(start, &mut out);
+        assert_eq!(drain(&mut out), vec![NOTES_OFF]);
+        keyboard.stop(start + DOUBLETAP / 2, &mut out);
+        assert_eq!(drain(&mut out), vec![NOTES_OFF, SOUND_OFF]);
+        assert!(keyboard.held.is_empty());
+    }
+
+    #[test]
+    fn taps_of_stop_apart_only_release() {
+        let (mut keyboard, mut out) = keyboard(Gating::Held, Duration::ZERO);
+        let start = Instant::now();
+        keyboard.stop(start, &mut out);
+        keyboard.stop(start + DOUBLETAP, &mut out);
+        assert_eq!(drain(&mut out), vec![NOTES_OFF, NOTES_OFF]);
+    }
+
+    #[test]
+    fn a_zero_doubletap_window_never_cuts_the_sound() {
+        let (mut keyboard, mut out) = keyboard(Gating::Held, Duration::ZERO);
+        keyboard.keymap.doubletap = Duration::ZERO;
+        let start = Instant::now();
+        keyboard.stop(start, &mut out);
+        keyboard.stop(start, &mut out);
+        assert_eq!(drain(&mut out), vec![NOTES_OFF, NOTES_OFF]);
     }
 
     #[test]
