@@ -16,4 +16,32 @@ function wave.triangle(phase)
 	return 4 * phase - 4
 end
 
+-- phase (0.0 to 1.0) to sine wave (-1.0 to 1.0)
+---@param phase number
+---@return number
+function wave.sine(phase)
+	return math.sin(2 * math.pi * phase)
+end
+
+-- phase (0.0 to 1.0) to saw wave (-1.0 to 1.0)
+-- rises from 0, so the jump falls mid-cycle and the wrap is smooth
+---@param phase number
+---@return number
+function wave.saw(phase)
+	if phase < 0.5 then
+		return 2 * phase
+	end
+	return 2 * phase - 2
+end
+
+-- phase (0.0 to 1.0) to square wave (-1.0 to 1.0)
+---@param phase number
+---@return number
+function wave.square(phase)
+	if phase < 0.5 then
+		return 1
+	end
+	return -1
+end
+
 return wave
