@@ -8,6 +8,8 @@ name: release
 on:
   push:
     branches: [main]
+    # bench.yml's daily results commit changes no code, so it is no build
+    paths-ignore: ["benches/results/**"]
   # retries a failed release of the version Cargo.toml has now
   workflow_dispatch:
 

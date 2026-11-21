@@ -1,0 +1,122 @@
+name: bench
+
+# Times the render path and keeps the result. Daily on main, the result is
+# committed to benches/results/, one file per run; on a PR ready for review,
+# it is compared with main's latest result on the same CPU and posted as a
+# comment. Separate from test.yml, so a minute of benchmarking never holds
+# up the required check.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  MISE_JOBS: 1
+  MISE_TASK_OUTPUT: interleave
+
+jobs:
+  bench:
+    # a draft is still changing; marking it ready runs this
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the results commit on main
+      pull-requests: write # the comparison comment on a PR
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the last benchmarked commit, for the skip check
+          # git-auto-commit-action pushes with these credentials. BENCH_TOKEN,
+          # when set, is one that main's ruleset lets through; without it
+          # the workflow's own token is used
+          token: ${{ secrets.BENCH_TOKEN || github.token }}
+
+      # main gains a results commit each run, so "changed" means changed
+      # outside benches/results/ since the commit the last result measured
+      - name: Skip if main is unchanged since its last result
+        id: changed
+        if: github.event_name != 'pull_request'
+        run: |
+          last=$(find benches/results -name '*.toml' 2>/dev/null | sort | tail -1)
+          commit=""
+          if [ -n "$last" ]; then
+            commit=$(sed -n 's/^commit = "\(.*\)"$/\1/p' "$last")
+          fi
+          if [ -n "$commit" ] && git diff --quiet "$commit" HEAD -- . ':!benches/results'; then
+            echo "::notice title=bench::main is unchanged since $commit; nothing to measure"
+            echo "run=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          fi
+
+      # Valgrind for the instruction count; gungraun-runner comes from mise
+      - name: Install ALSA headers and Valgrind
+        if: steps.changed.outputs.run != 'false'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev valgrind
+
+      - name: Install tools
+        if: steps.changed.outputs.run != 'false'
+        uses: jdx/mise-action@v5
+
+      # Pinned to a commit, since it is a third-party action.
+      - name: Cache cargo
+        if: steps.changed.outputs.run != 'false'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Bench
+        if: steps.changed.outputs.run != 'false'
+        run: mise run bench
+
+      # bench:compare writes the job summary itself; the copy kept here is
+      # for the PR comment. A regression is held until the last step, so
+      # the result is still committed and the comment still posted.
+      - name: Compare
+        id: compare
+        if: steps.changed.outputs.run != 'false'
+        run: |
+          # exit 2 is a regression; any other failure fails here
+          code=0
+          mise run bench:compare >comparison.md || code=$?
+          if [ "$code" = 2 ]; then
+            echo "regressed=true" >>"$GITHUB_OUTPUT"
+          elif [ "$code" != 0 ]; then
+            exit "$code"
+          fi
+
+      # main's ruleset requires status checks, so this push needs either
+      # BENCH_TOKEN or a ruleset that admits the workflow's token. A push
+      # with the workflow's token starts no workflow; one with BENCH_TOKEN
+      # does, though bench itself never runs on push.
+      # Pinned to a commit, since it is a third-party action.
+      - name: Commit the result
+        if: github.event_name != 'pull_request' && steps.changed.outputs.run != 'false'
+        uses: stefanzweifel/git-auto-commit-action@d0b01107b5db882071f96de5dd4b54961ea93f4c # v7.2.1
+        with:
+          commit_message: "bench: results for ${{ github.sha }}"
+          file_pattern: benches/results/*.toml
+
+      # a fork's PR gets a read-only token, so it has only the job summary
+      - name: Comment on the PR
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR" --body-file comparison.md --edit-last || gh pr comment "$PR" --body-file comparison.md
+
+      - name: Fail on a regression
+        if: steps.compare.outputs.regressed == 'true'
+        run: |
+          echo "::error title=bench::instructions rose beyond the regression limit; see the job summary"
+          exit 1

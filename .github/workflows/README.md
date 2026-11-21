@@ -4,6 +4,7 @@
 | --- | --- |
 | [`test.yml`](./test.yml) | every push to main and every PR: Linux in full, then macOS and Windows |
 | [`test-platform.yml`](./test-platform.yml) | Rust tests and clippy on one platform; called by `test.yml` |
+| [`bench.yml`](./bench.yml) | daily on main, committing a result to `benches/results/`; on PRs ready for review, a comparison comment |
 | [`release.yml`](./release.yml) | a GitHub release for every push to main: stable when Cargo.toml bumps to X.Y.Z, a prerelease otherwise |
 
 ```mermaid

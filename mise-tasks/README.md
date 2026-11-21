@@ -10,6 +10,8 @@ Tasks long enough for their own file. Shorter ones live in [`mise.toml`](../mise
 | [`lint:licenses`](./lint/licenses) | every dependency is GPLv3-compatible and from crates.io |
 | [`version`](./version) | Cargo.toml's version is one bump from the last and has no tag yet |
 | [`notices`](./notices) | writes third-party license notices for a release |
+| [`bench:record`](./bench/record), alias `bench` | times and counts instructions for the render path and writes `benches/results/<stamp>.toml` |
+| [`bench:compare`](./bench/compare) | Markdown tables of the newest result: instructions against the last on the same arch, time against the last on the same CPU |
 
 `test:separation` and `test:core` are text checks, not compiler guarantees: they hold the module boundaries the [architecture](../RULES.md#architecture) depends on.
 
