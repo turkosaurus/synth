@@ -44,7 +44,7 @@ struct Note {
     ramp: f32,  // samples in GLIDE at this sample rate
     phase: f32, // 0.0..1.0
     /// the two frames either side of the table's position, and how far
-    /// toward the second; fixed per note until something moves `position`
+    /// toward the second; read once, when the note starts
     from: usize,
     to: usize,
     mix: f32,

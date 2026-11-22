@@ -4,8 +4,6 @@
 //! LFO has whatever shape a patch can write. One LFO is shared by every
 //! voice it drives.
 
-// nothing reads an LFO until a destination is wired to one, which is the
-// next step of #49
 #![cfg_attr(not(test), allow(dead_code))]
 
 pub(crate) struct Lfo {
