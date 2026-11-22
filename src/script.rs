@@ -273,11 +273,8 @@ pub fn load(
     sample_rate: u32,
     patches: Option<&std::path::Path>,
 ) -> anyhow::Result<Patch> {
-    let source = std::fs::read_to_string(path).map_err(|source| Error::Io {
-        action: "reading",
-        path: path.to_path_buf(),
-        source: source.into(),
-    })?;
+    let source =
+        std::fs::read_to_string(path).map_err(|source| Error::io("reading", path, source))?;
     load_in(
         &source,
         &path.display().to_string(),
@@ -333,6 +330,7 @@ fn load_in(
         mlua::Value::Table(table) => table,
         other => {
             return Err(Error::ReturnNotATable {
+                what: "file".to_string(),
                 got: other.type_name(),
             }
             .into())

@@ -159,8 +159,21 @@ pub enum Error {
         source: std::sync::Arc<std::io::Error>,
     },
 
-    #[error("file must return a table, got {got}")]
-    ReturnNotATable { got: &'static str },
+    #[error("{what} must return a table, got {got}")]
+    ReturnNotATable { what: String, got: &'static str },
+
+    #[error("running {name}")]
+    Run {
+        name: String,
+        #[source]
+        source: mlua::Error,
+    },
+
+    #[error("config.lua: `patch_dir` starts with ~/, but there is no home directory")]
+    PatchDirNoHome,
+
+    #[error("config.lua: `patch_dir` is {setting:?}; must be absolute, start with ~/, or be \"\"")]
+    PatchDirRelative { setting: String },
 
     #[error("{what} is not callable")]
     NotCallable { what: &'static str },
@@ -168,6 +181,16 @@ pub enum Error {
     /// Lua's own message already says what failed, so it is shown as is.
     #[error(transparent)]
     Lua(mlua::Error),
+}
+
+impl Error {
+    pub(super) fn io(action: &'static str, path: &std::path::Path, source: std::io::Error) -> Self {
+        Self::Io {
+            action,
+            path: path.to_path_buf(),
+            source: source.into(),
+        }
+    }
 }
 
 impl From<mlua::Error> for Error {

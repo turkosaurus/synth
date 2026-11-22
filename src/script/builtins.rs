@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use super::Error;
 use sha2::{Digest, Sha256};
 
 use super::MODULES;
@@ -145,14 +145,14 @@ pub fn states(patches: &Path) -> Vec<(&'static str, State)> {
 /// Writes a copy of every built-in that has none, refreshes unedited copies
 /// to the current built-in, and leaves edited ones alone, then rewrites
 /// each folder's `.base.sha256`.
-pub fn write(patches: &Path) -> anyhow::Result<Vec<(&'static str, Wrote)>> {
+pub fn write(patches: &Path) -> Result<Vec<(&'static str, Wrote)>, Error> {
     let mut records: BTreeMap<&str, BTreeMap<String, String>> = BTreeMap::new();
     let mut wrote = Vec::new();
 
     for entry in entries() {
         let dir = patches.join(entry.dir);
         if !records.contains_key(entry.dir) {
-            fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+            fs::create_dir_all(&dir).map_err(|error| Error::io("create", &dir, error))?;
             records.insert(entry.dir, bases(&dir));
         }
         let bases = records.get_mut(entry.dir).expect("inserted above");
@@ -161,7 +161,7 @@ pub fn write(patches: &Path) -> anyhow::Result<Vec<(&'static str, Wrote)>> {
         let copy = match fs::read(&path) {
             Ok(copy) => Some(hash(&copy)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+            Err(error) => return Err(Error::io("read", &path, error)),
         };
         let base = bases.get(&entry.file).cloned();
 
@@ -178,7 +178,7 @@ pub fn write(patches: &Path) -> anyhow::Result<Vec<(&'static str, Wrote)>> {
             (Some(_), None) => Wrote::Kept,
         };
         if matches!(outcome, Wrote::Written | Wrote::Refreshed) {
-            fs::write(&path, entry.source).with_context(|| format!("write {}", path.display()))?;
+            fs::write(&path, entry.source).map_err(|error| Error::io("write", &path, error))?;
         }
         // a kept copy behind the built-in keeps its old base, so `doctor`
         // and the prompt to come can still tell it is behind
@@ -194,13 +194,13 @@ pub fn write(patches: &Path) -> anyhow::Result<Vec<(&'static str, Wrote)>> {
     Ok(wrote)
 }
 
-fn save_bases(dir: &Path, bases: &BTreeMap<String, String>) -> anyhow::Result<()> {
+fn save_bases(dir: &Path, bases: &BTreeMap<String, String>) -> Result<(), Error> {
     let record: String = bases
         .iter()
         .map(|(file, hash)| format!("{hash}  {file}\n"))
         .collect();
     let path = dir.join(BASES);
-    fs::write(&path, record).with_context(|| format!("write {}", path.display()))
+    fs::write(&path, record).map_err(|error| Error::io("write", &path, error))
 }
 
 /// Whether `synth patches` has written copies under `patches`, so there is
@@ -222,7 +222,7 @@ pub struct Behind {
 
 /// The copy of `name` and its new built-in, for the prompt, if the copy is
 /// behind.
-pub fn behind(patches: &Path, name: &str) -> anyhow::Result<Option<Behind>> {
+pub fn behind(patches: &Path, name: &str) -> Result<Option<Behind>, Error> {
     let Some(entry) = entries().find(|entry| entry.name == name) else {
         return Ok(None);
     };
@@ -233,7 +233,7 @@ pub fn behind(patches: &Path, name: &str) -> anyhow::Result<Option<Behind>> {
         return Ok(None);
     }
     let path = patches.join(entry.dir).join(&entry.file);
-    let copy = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let copy = fs::read_to_string(&path).map_err(|error| Error::io("read", &path, error))?;
     Ok(Some(Behind {
         name: entry.name,
         path,
@@ -246,20 +246,20 @@ pub fn behind(patches: &Path, name: &str) -> anyhow::Result<Option<Behind>> {
 
 /// Replaces the copy with the current built-in, as the user chose, and
 /// records it as unedited.
-pub fn overwrite(patches: &Path, behind: &Behind) -> anyhow::Result<()> {
+pub fn overwrite(patches: &Path, behind: &Behind) -> Result<(), Error> {
     fs::write(&behind.path, behind.built_in)
-        .with_context(|| format!("write {}", behind.path.display()))?;
+        .map_err(|error| Error::io("write", &behind.path, error))?;
     rebase(patches, behind)
 }
 
 /// Keeps the copy, as the user chose, and records the current built-in as
 /// its base, so it counts as edited but no longer behind until the
 /// built-in changes again.
-pub fn keep(patches: &Path, behind: &Behind) -> anyhow::Result<()> {
+pub fn keep(patches: &Path, behind: &Behind) -> Result<(), Error> {
     rebase(patches, behind)
 }
 
-fn rebase(patches: &Path, behind: &Behind) -> anyhow::Result<()> {
+fn rebase(patches: &Path, behind: &Behind) -> Result<(), Error> {
     let dir = patches.join(behind.dir);
     let mut bases = bases(&dir);
     bases.insert(behind.file.clone(), hash(behind.built_in.as_bytes()));

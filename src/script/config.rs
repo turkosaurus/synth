@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::Context;
+use super::Error;
 
 use super::field;
 use crate::spec::{Config, TuiConfig};
@@ -118,7 +118,7 @@ fn template_for(dirs: &Dirs) -> String {
 
 /// Reads `config.lua` from the user's config directory over the defaults.
 /// A missing file, or no directory to look in, is the defaults alone.
-pub fn config() -> anyhow::Result<Config> {
+pub fn config() -> Result<Config, Error> {
     let user = match config_path() {
         Some(path) => read(&path)?.map(|source| (source, path.display().to_string())),
         None => None,
@@ -142,17 +142,17 @@ pub fn log_path() -> Option<PathBuf> {
 }
 
 /// The file's source, or `None` when there is no file.
-fn read(path: &Path) -> anyhow::Result<Option<String>> {
+fn read(path: &Path) -> Result<Option<String>, Error> {
     match std::fs::read_to_string(path) {
         Ok(source) => Ok(Some(source)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
+        Err(error) => Err(Error::io("reading", path, error)),
     }
 }
 
 /// The defaults, with `user` (source and name) laid over them. Both run in
 /// one bare Lua state: `config.lua` needs none of the `synth` modules.
-fn resolve(user: Option<(&str, &str)>) -> anyhow::Result<Config> {
+fn resolve(user: Option<(&str, &str)>) -> Result<Config, Error> {
     let lua = mlua::Lua::new();
     let base = table(&lua, TEMPLATE, TEMPLATE_NAME)?;
     if let Some((source, name)) = user {
@@ -164,14 +164,20 @@ fn resolve(user: Option<(&str, &str)>) -> anyhow::Result<Config> {
 /// Runs a config file and checks the table it returns. Every field is
 /// optional here, so a user's file is checked on its own terms and names
 /// its own mistakes.
-fn table(lua: &mlua::Lua, source: &str, name: &str) -> anyhow::Result<mlua::Table> {
-    let returned: mlua::Value = lua
-        .load(source)
-        .set_name(name)
-        .eval()
-        .with_context(|| format!("running {name}"))?;
+fn table(lua: &mlua::Lua, source: &str, name: &str) -> Result<mlua::Table, Error> {
+    let returned: mlua::Value =
+        lua.load(source)
+            .set_name(name)
+            .eval()
+            .map_err(|source| Error::Run {
+                name: name.to_string(),
+                source,
+            })?;
     let mlua::Value::Table(table) = returned else {
-        anyhow::bail!("{name} must return a table, got {}", returned.type_name());
+        return Err(Error::ReturnNotATable {
+            what: name.to_string(),
+            got: returned.type_name(),
+        });
     };
     super::schema::CONFIG.check(&table, None)?;
     if let Some(tui) = table.get::<Option<mlua::Table>>(field::TUI)? {
@@ -197,25 +203,24 @@ fn overlay(base: &mlua::Table, over: &mlua::Table) -> mlua::Result<()> {
 /// The patches folder `setting` names. `""` is `synth/patches` under the
 /// data directory; any other value is an absolute path or one starting
 /// `~/`. `None` when the default is asked for and there is no data directory.
-fn patch_dir(setting: &str, dirs: &Dirs) -> anyhow::Result<Option<PathBuf>> {
+fn patch_dir(setting: &str, dirs: &Dirs) -> Result<Option<PathBuf>, Error> {
     if setting.is_empty() {
         return Ok(dirs.data().map(|dir| under(dir, &PATCHES)));
     }
     if let Some(rest) = setting.strip_prefix("~/") {
-        let home = dirs
-            .home()
-            .context("config.lua: `patch_dir` starts with ~/, but there is no home directory")?;
+        let home = dirs.home().ok_or(Error::PatchDirNoHome)?;
         return Ok(Some(home.join(rest)));
     }
     let path = PathBuf::from(setting);
-    anyhow::ensure!(
-        path.is_absolute(),
-        "config.lua: `patch_dir` is {setting:?}; must be absolute, start with ~/, or be \"\""
-    );
+    if !path.is_absolute() {
+        return Err(Error::PatchDirRelative {
+            setting: setting.to_string(),
+        });
+    }
     Ok(Some(path))
 }
 
-fn settings(table: &mlua::Table) -> anyhow::Result<Config> {
+fn settings(table: &mlua::Table) -> Result<Config, Error> {
     let tui: mlua::Table = table.get(field::TUI)?;
     let ms = |key: &str| -> mlua::Result<Duration> {
         Ok(Duration::from_secs_f64(tui.get::<f64>(key)? / 1000.0))
@@ -324,7 +329,7 @@ mod tests {
         assert_eq!(log(Some("x"), None), None);
     }
 
-    fn user(source: &str) -> anyhow::Result<Config> {
+    fn user(source: &str) -> Result<Config, Error> {
         resolve(Some((source, "test")))
     }
 
@@ -469,11 +474,11 @@ mod tests {
     fn a_relative_patches_folder_is_named() {
         let error = patch_dir("music", &unix(None, Some("/h"))).unwrap_err();
         assert!(
-            error.to_string().contains("`patch_dir` is \"music\""),
+            matches!(&error, Error::PatchDirRelative { setting } if setting == "music"),
             "{error}"
         );
         let error = patch_dir("~/music", &unix(None, None)).unwrap_err();
-        assert!(error.to_string().contains("no home directory"), "{error}");
+        assert!(matches!(error, Error::PatchDirNoHome), "{error}");
     }
 
     #[test]
@@ -516,5 +521,19 @@ mod tests {
                 "{source}: {error:#}"
             );
         }
+    }
+
+    #[test]
+    fn a_config_that_does_not_run_is_matched_by_variant() {
+        let error = user("return {").unwrap_err();
+        assert!(
+            matches!(&error, Error::Run { name, .. } if name == "test"),
+            "{error}"
+        );
+        let error = user("return 256").unwrap_err();
+        assert!(
+            matches!(&error, Error::ReturnNotATable { what, got: "integer" } if what == "test"),
+            "{error}"
+        );
     }
 }
