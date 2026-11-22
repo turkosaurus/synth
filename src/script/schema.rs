@@ -16,10 +16,8 @@ enum Ty {
     Table,
     Text,
     Flag,
-    /// a `wave.periodic`, whose stamp the structure walk checks
-    Periodic,
-    /// a `wave.table`, whose stamp the structure walk checks
-    Wavetable,
+    /// a `synth.osc`, whose stamp the structure walk checks
+    Osc,
 }
 
 impl Ty {
@@ -31,8 +29,7 @@ impl Ty {
             Self::Table => "a table",
             Self::Text => "a string",
             Self::Flag => "true or false",
-            Self::Periodic => "a synth.wave.periodic(…)",
-            Self::Wavetable => "a synth.wave.table({…})",
+            Self::Osc => "a synth.osc.periodic({…}) or synth.osc.table({…})",
         }
     }
 }
@@ -116,8 +113,7 @@ pub(super) const ENVELOPE: Schema = Schema {
 pub(super) const INSTRUMENT: Schema = Schema {
     what: "instrument",
     fields: &[
-        optional(field::WAVEFORM, Ty::Periodic, Bound::Any),
-        optional(field::WAVETABLE, Ty::Wavetable, Bound::Any),
+        field(field::OSCILLATOR, Ty::Osc, Bound::Any),
         field(field::ENVELOPE, Ty::Table, Bound::Any),
         // a pool of zero voices could never sound
         field(field::VOICE_COUNT, Ty::Integer, Bound::AtLeast(1.0)),
@@ -199,16 +195,20 @@ pub(super) const SEQUENCE: Schema = Schema {
     ],
 };
 
-/// A `wave.periodic`, as its constructor fills it.
-pub(super) const PERIODIC: Schema = Schema {
-    what: "wave.periodic",
-    fields: &[field(field::SHAPE, Ty::Function, Bound::Any)],
+/// A `synth.osc.periodic`, as its constructor fills it.
+pub(super) const OSC_PERIODIC: Schema = Schema {
+    what: "osc.periodic",
+    fields: &[
+        field(field::KIND, Ty::Text, Bound::Any),
+        field(field::WAVE, Ty::Function, Bound::Any),
+    ],
 };
 
-/// A `wave.table`, as its constructor fills it.
-pub(super) const WAVETABLE: Schema = Schema {
-    what: "wave.table",
+/// A `synth.osc.table`, as its constructor fills it.
+pub(super) const OSC_TABLE: Schema = Schema {
+    what: "osc.table",
     fields: &[
+        field(field::KIND, Ty::Text, Bound::Any),
         field(field::WAVES, Ty::Table, Bound::Any),
         field(field::SLOPES, Ty::Table, Bound::Any),
         field(field::POSITION, Ty::Number, Bound::Between(0.0, 1.0)),
@@ -272,7 +272,7 @@ impl Schema {
                 | (mlua::Value::Table(_), Ty::Table)
                 | (mlua::Value::String(_), Ty::Text)
                 | (mlua::Value::Boolean(_), Ty::Flag)
-                | (mlua::Value::Table(_), Ty::Periodic | Ty::Wavetable) => None,
+                | (mlua::Value::Table(_), Ty::Osc) => None,
                 (_, ty) => {
                     return Err(Error::WrongType {
                         what,

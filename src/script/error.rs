@@ -119,19 +119,13 @@ pub enum Error {
     #[error("tuning returned {} Hz for note {note}; must be positive and finite", hz_shown(*hz))]
     TuningHz { note: u8, hz: f64 },
 
-    #[error("{what}: sets both `waveform` and `wavetable`; set one")]
-    BothWaves { what: String },
-
-    #[error("{what}: sets neither `waveform` nor `wavetable`; set one")]
-    NoWave { what: String },
-
     #[error("waveform must return a number for every phase")]
     Waveform {
         #[source]
         source: mlua::Error,
     },
 
-    #[error("wave.table waves[{index}] must return a number for every phase")]
+    #[error("osc.table waves[{index}] must return a number for every phase")]
     Wave {
         index: usize,
         #[source]
@@ -139,17 +133,15 @@ pub enum Error {
     },
 
     #[error(
-        "wave.table slopes[{index}] returned a function, not a number: a curve \
+        "osc.table slopes[{index}] returned a function, not a number: a curve \
          constructor needs its (), as in synth.slope.exponential(2)"
     )]
     SlopeUncalled { index: usize },
 
-    #[error("wave.table slopes[{index}] must return a number from 0 to 1, got {got}")]
+    #[error("osc.table slopes[{index}] must return a number from 0 to 1, got {got}")]
     SlopeType { index: usize, got: &'static str },
 
-    #[error(
-        "wave.table slopes[{index}] returned {value} at t = {t}; must be a number from 0 to 1"
-    )]
+    #[error("osc.table slopes[{index}] returned {value} at t = {t}; must be a number from 0 to 1")]
     SlopeNotFinite { index: usize, value: f64, t: f64 },
 
     #[error(
