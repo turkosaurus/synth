@@ -1,3 +1,5 @@
+//! Raw mode and key release detection.
+
 use crossterm::{
     event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
     execute, terminal,

@@ -1,3 +1,5 @@
+//! Printed reports: patch, config, environment.
+
 use crate::audio::Snapshot;
 use crate::input::keyboard::Gating;
 use crate::spec::{Config, Patch};
