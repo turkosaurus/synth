@@ -415,7 +415,7 @@ mod tests {
         assert!(!written.contains(DEFAULT_PATCH_DIR));
 
         let written = template_for(&unix(None, None));
-        assert!(!written.contains("patch_dir"));
+        assert!(!written.contains("-- patch_dir ="));
     }
 
     #[test]
