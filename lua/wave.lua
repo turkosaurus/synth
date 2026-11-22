@@ -49,6 +49,16 @@ function wave.square(phase)
 	return -1
 end
 
+-- One waveform as an instrument's cycle, fixed for as long as a note sounds.
+---@class synth.Periodic
+---@field shape synth.Waveform
+
+---@param shape synth.Waveform
+---@return synth.Periodic
+function wave.periodic(shape)
+	return construct("wave.periodic", site(), { shape = shape }, {})
+end
+
 -- Waveforms baked one frame each and blended by `position`: n waves make
 -- n - 1 transitions, spaced evenly over 0 to 1.
 ---@class synth.Wavetable

@@ -16,8 +16,10 @@ enum Ty {
     Table,
     Text,
     Flag,
-    /// a waveform function, or a `wave.table`
-    Wave,
+    /// a `wave.periodic`, whose stamp the structure walk checks
+    Periodic,
+    /// a `wave.table`, whose stamp the structure walk checks
+    Wavetable,
 }
 
 impl Ty {
@@ -29,7 +31,8 @@ impl Ty {
             Self::Table => "a table",
             Self::Text => "a string",
             Self::Flag => "true or false",
-            Self::Wave => "a waveform or a wave.table",
+            Self::Periodic => "a synth.wave.periodic(…)",
+            Self::Wavetable => "a synth.wave.table({…})",
         }
     }
 }
@@ -113,7 +116,8 @@ pub(super) const ENVELOPE: Schema = Schema {
 pub(super) const INSTRUMENT: Schema = Schema {
     what: "instrument",
     fields: &[
-        field(field::WAVEFORM, Ty::Wave, Bound::Any),
+        optional(field::WAVEFORM, Ty::Periodic, Bound::Any),
+        optional(field::WAVETABLE, Ty::Wavetable, Bound::Any),
         field(field::ENVELOPE, Ty::Table, Bound::Any),
         // a pool of zero voices could never sound
         field(field::VOICE_COUNT, Ty::Integer, Bound::AtLeast(1.0)),
@@ -195,6 +199,12 @@ pub(super) const SEQUENCE: Schema = Schema {
     ],
 };
 
+/// A `wave.periodic`, as its constructor fills it.
+pub(super) const PERIODIC: Schema = Schema {
+    what: "wave.periodic",
+    fields: &[field(field::SHAPE, Ty::Function, Bound::Any)],
+};
+
 /// A `wave.table`, as its constructor fills it.
 pub(super) const WAVETABLE: Schema = Schema {
     what: "wave.table",
@@ -262,7 +272,7 @@ impl Schema {
                 | (mlua::Value::Table(_), Ty::Table)
                 | (mlua::Value::String(_), Ty::Text)
                 | (mlua::Value::Boolean(_), Ty::Flag)
-                | (mlua::Value::Function(_) | mlua::Value::Table(_), Ty::Wave) => None,
+                | (mlua::Value::Table(_), Ty::Periodic | Ty::Wavetable) => None,
                 (_, ty) => {
                     return Err(Error::WrongType {
                         what,

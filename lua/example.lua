@@ -28,7 +28,7 @@ return synth.sequence({
 	-- define the synthesizer
 	instruments = {
 		tri = synth.instrument({
-			waveform = synth.wave.triangle,
+			waveform = synth.wave.periodic(synth.wave.triangle),
 			envelope = synth.envelope({
 				attack = 100, -- ms
 				decay = 150,

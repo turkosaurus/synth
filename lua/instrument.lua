@@ -11,14 +11,26 @@ local site = require("synth.site")
 ---@overload fun(opts?: synth.Instrument): synth.Instrument
 local instrument = setmetatable({}, {
 	__call = function(_, opts)
-		return construct("instrument", site(), opts, defaults)
+		-- a patch that sets `wavetable` takes no default `waveform`, so
+		-- setting both is always the patch's own doing
+		local fill = defaults
+		if opts and opts.wavetable ~= nil then
+			fill = {}
+			for key, value in pairs(defaults) do
+				if key ~= "waveform" then
+					fill[key] = value
+				end
+			end
+		end
+		return construct("instrument", site(), opts, fill)
 	end,
 })
 
 -- `keyboard`, `tuning`, and `filter` apply when the instrument is the
 -- patch's root, and are rejected on an instrument inside a sequence.
 ---@class synth.Instrument
----@field waveform? synth.Waveform|synth.Wavetable
+---@field waveform? synth.Periodic one cycle, fixed; set this or `wavetable`
+---@field wavetable? synth.Wavetable frames blended by position; set this or `waveform`
 ---@field envelope? synth.Envelope
 ---@field voice_count? integer notes it can sound at once; 1 is mono
 ---@field keyboard? synth.Keyboard
@@ -26,7 +38,7 @@ local instrument = setmetatable({}, {
 ---@field filter? synth.Filter
 
 defaults = {
-	waveform = wave.triangle,
+	waveform = wave.periodic(wave.triangle),
 	-- copied for each instrument, so none shares another's envelope
 	envelope = envelope(),
 	-- notes this instrument can sound at once; 1 is mono

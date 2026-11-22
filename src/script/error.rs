@@ -119,6 +119,12 @@ pub enum Error {
     #[error("tuning returned {} Hz for note {note}; must be positive and finite", hz_shown(*hz))]
     TuningHz { note: u8, hz: f64 },
 
+    #[error("{what}: sets both `waveform` and `wavetable`; set one")]
+    BothWaves { what: String },
+
+    #[error("{what}: sets neither `waveform` nor `wavetable`; set one")]
+    NoWave { what: String },
+
     #[error("waveform must return a number for every phase")]
     Waveform {
         #[source]
