@@ -1,11 +1,6 @@
 -- A waveform is a shape: phase (0.0 to 1.0) to amplitude (-1.0 to 1.0).
 ---@alias synth.Waveform fun(phase: number): number
 
-local construct = require("synth.construct")
-
--- `file:line` of whoever called the constructor, read by Rust
-local site = require("synth.site")
-
 local wave = {}
 
 -- phase (0.0 to 1.0) to triangle wave (-1.0 to 1.0)
@@ -47,24 +42,6 @@ function wave.square(phase)
 		return 1
 	end
 	return -1
-end
-
--- Waveforms baked one frame each and blended by `position`: n waves make
--- n - 1 transitions, spaced evenly over 0 to 1.
----@class synth.Wavetable
----@field waves synth.Waveform[] one frame each, in order
----@field slopes? synth.Curve[] transition i uses slopes[(i - 1) % #slopes + 1]; none is linear
----@field position? number 0 to 1: where between the first and last wave a note sounds
-
-local table_defaults = {
-	slopes = {},
-	position = 0,
-}
-
----@param opts synth.Wavetable
----@return synth.Wavetable
-function wave.table(opts)
-	return construct("wave.table", site(), opts, table_defaults)
 end
 
 return wave

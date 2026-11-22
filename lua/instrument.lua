@@ -1,4 +1,4 @@
-local wave = require("synth.wave")
+local osc = require("synth.osc")
 local envelope = require("synth.envelope")
 local construct = require("synth.construct")
 
@@ -18,7 +18,7 @@ local instrument = setmetatable({}, {
 -- `keyboard`, `tuning`, and `filter` apply when the instrument is the
 -- patch's root, and are rejected on an instrument inside a sequence.
 ---@class synth.Instrument
----@field waveform? synth.Waveform|synth.Wavetable
+---@field oscillator? synth.Osc
 ---@field envelope? synth.Envelope
 ---@field voice_count? integer notes it can sound at once; 1 is mono
 ---@field keyboard? synth.Keyboard
@@ -26,7 +26,7 @@ local instrument = setmetatable({}, {
 ---@field filter? synth.Filter
 
 defaults = {
-	waveform = wave.triangle,
+	oscillator = osc(),
 	-- copied for each instrument, so none shares another's envelope
 	envelope = envelope(),
 	-- notes this instrument can sound at once; 1 is mono

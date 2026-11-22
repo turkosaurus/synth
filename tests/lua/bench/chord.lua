@@ -15,7 +15,7 @@ return function(voices)
 		filter = synth.filter.lowpass({ cutoff = 2000, resonance = 0.3 }),
 		instruments = {
 			tri = synth.instrument({
-				waveform = synth.wave.triangle,
+				oscillator = synth.osc({ waveforms = { synth.wave.triangle } }),
 				voice_count = voices,
 			}),
 		},
