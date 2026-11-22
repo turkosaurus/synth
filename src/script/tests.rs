@@ -42,7 +42,7 @@ fn instrument_with(wave: Vec<f32>) -> Instrument {
 
 #[test]
 fn clean_triangle_raises_nothing() {
-    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 1000, 0, &[]);
+    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 1000, &[0], &[]);
     assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     assert_eq!(report.peak, 1.0);
     assert!(report.dc.abs() < 1e-6);
@@ -50,7 +50,12 @@ fn clean_triangle_raises_nothing() {
 
 #[test]
 fn flags_clamping() {
-    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 1000, 17, &[]);
+    let report = inspect(
+        &instrument_with(wave_from(triangle, 2048)),
+        1000,
+        &[17],
+        &[],
+    );
     assert!(report
         .diagnostics
         .iter()
@@ -63,7 +68,7 @@ fn flags_dc_offset() {
     let report = inspect(
         &instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)),
         1000,
-        0,
+        &[0],
         &[],
     );
     assert!(report
@@ -78,7 +83,7 @@ fn flags_wrap_discontinuity() {
     let report = inspect(
         &instrument_with(wave_from(|p| 2.0 * p - 1.0, 2048)),
         1000,
-        0,
+        &[0],
         &[],
     );
     assert!(report
@@ -94,7 +99,7 @@ fn a_jump_the_shape_already_makes_is_not_flagged_at_the_wrap() {
     let report = inspect(
         &instrument_with(wave_from(|p| if p < 0.5 { 1.0 } else { -1.0 }, 2048)),
         1000,
-        0,
+        &[0],
         &[],
     );
     assert!(!report
@@ -108,7 +113,7 @@ fn flags_a_wave_that_never_rises_through_zero() {
     let report = inspect(
         &instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)),
         1000,
-        0,
+        &[0],
         &[],
     );
     assert!(report
@@ -150,7 +155,7 @@ fn flags_weak_peak() {
     let report = inspect(
         &instrument_with(wave_from(|p| triangle(p) * 0.2, 2048)),
         1000,
-        0,
+        &[0],
         &[],
     );
     assert!(report
@@ -165,7 +170,7 @@ fn flags_zero_release() {
     // rejects it before anything is baked
     let mut instrument = instrument_with(wave_from(triangle, 2048));
     instrument.release = segment(0.0);
-    let report = inspect(&instrument, 1000, 0, &[]);
+    let report = inspect(&instrument, 1000, &[0], &[]);
     assert!(report
         .diagnostics
         .iter()
@@ -1560,6 +1565,32 @@ fn a_step_naming_an_undefined_instrument_is_matched_by_variant() {
         ),
         "{error:#}"
     );
+}
+
+#[test]
+fn a_wave_table_bakes_one_frame_per_wave_each_rising_from_zero() {
+    let patch = load_source(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({
+            waveform = synth.wave.table({
+                waves = { synth.wave.sine, synth.wave.saw, synth.wave.square },
+                slopes = { synth.slope.exponential(3) },
+                position = 0.25,
+            }),
+        })
+        "#,
+        "patch.lua",
+        48000,
+    )
+    .unwrap();
+    let wave = &patch.timeline.instruments[0].wave;
+    assert_eq!(wave.frame_count(), 3);
+    assert_eq!(patch.reports[0].1.frames, 3);
+    for k in 0..3 {
+        assert_eq!(rising_zero(wave.frame(k)), Some(0), "frame {k}");
+    }
+    assert!(patch.clean(), "{:?}", patch.reports[0].1.diagnostics);
 }
 
 #[test]
