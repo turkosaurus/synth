@@ -35,36 +35,32 @@ synth tui
 ### components
 
 ```mermaid
-``flowchart LR
+flowchart LR
     lua[(lua)] --> script
-    subgraph hardware
-        input
-        output
-        display
-    end
-    spec -->|instrument|input
     subgraph rust
-        model
-        spec --> model
+        script -->|validate| spec
+        spec -->|keymap| input
+        spec --> |defaults| session
+        input -->|event| session
+        view -->|msg| session
+        view -->|read| session
+        session -->|play| events
+        spec -->|sequence| events
         subgraph audio
             events --> render
         end
-        subgraph ui
-            script -->|validate| spec
-            spec -->|sequence| events
-            view
-        end
-        spec --> model
     end
-    input -->|play|events
-    input -->|msg|view
-    view -->|cmd|model
-    view -->|read|model
-    view -->|render|display
-    render --> output
-`
+    subgraph hardware
+        controller["controller (keyboard, MIDI)"]
+        speakers
+        display
+    end
+    controller --> input
+    view -->|draw| display
+    render --> speakers
+```
 
-details: [`lua`](./lua), [`script`](./src/script), [`spec`](./src/spec), [`audio`](./src/audio), [`view`](./src/view), or [`src`](./src)
+details: [`lua`](./lua), [`script`](./src/script), [`spec`](./src/spec), [`input`](./src/input), [`session`](./src/session.rs), [`audio`](./src/audio), [`view`](./src/view), or [`src`](./src)
 
 ## contributing
 - see [`CONTRIBUTING.md`](CONTRIBUTING.md)
