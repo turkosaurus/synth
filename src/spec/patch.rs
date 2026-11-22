@@ -56,6 +56,8 @@ impl Patch {
 /// decides whether to log them, print them, or fail on them.
 #[derive(Debug)]
 pub struct Report {
+    /// waves baked into the table; 1 for a plain waveform
+    pub(crate) frames: usize,
     pub(crate) peak: f32,
     pub(crate) dc: f32,
     pub(crate) seam: f32,

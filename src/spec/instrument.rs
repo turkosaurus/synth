@@ -20,6 +20,12 @@ pub struct Instrument {
 pub struct Wavetable {
     pub(crate) frames: Vec<f32>,
     pub(crate) points: usize,
+    /// one curve per transition, 0..1 at evenly spaced points from t = 0 to
+    /// t = 1; reused in order when there are fewer slopes than transitions,
+    /// and linear when there are none
+    pub(crate) slopes: Vec<Vec<f32>>,
+    /// 0..1, from the first frame to the last
+    pub(crate) position: f32,
 }
 
 impl Wavetable {
@@ -31,6 +37,38 @@ impl Wavetable {
     pub fn frame(&self, k: usize) -> &[f32] {
         &self.frames[k * self.points..(k + 1) * self.points]
     }
+
+    pub(crate) fn frame_mut(&mut self, k: usize) -> &mut [f32] {
+        &mut self.frames[k * self.points..(k + 1) * self.points]
+    }
+
+    /// The two frames either side of `position`, and how far toward the
+    /// second, through that transition's slope.
+    pub(crate) fn blend(&self) -> (usize, usize, f32) {
+        let count = self.frame_count();
+        if count < 2 {
+            return (0, 0, 0.0);
+        }
+        let x = self.position.clamp(0.0, 1.0) * (count - 1) as f32;
+        let k = (x as usize).min(count - 2);
+        let along = x - k as f32;
+        let mix = match self.slopes.len() {
+            0 => along,
+            n => read(&self.slopes[k % n], along),
+        };
+        (k, k + 1, mix)
+    }
+}
+
+/// `curve` at `t` in 0..1, read between the two points either side.
+fn read(curve: &[f32], t: f32) -> f32 {
+    let last = curve.len().saturating_sub(1);
+    if last == 0 {
+        return curve.first().copied().unwrap_or(t);
+    }
+    let pos = t.clamp(0.0, 1.0) * last as f32;
+    let i = (pos as usize).min(last - 1);
+    curve[i] + (curve[i + 1] - curve[i]) * (pos - i as f32)
 }
 
 /// One cycle as a table of one frame.
@@ -40,6 +78,8 @@ impl From<Vec<f32>> for Wavetable {
         Self {
             frames: cycle,
             points,
+            slopes: Vec::new(),
+            position: 0.0,
         }
     }
 }

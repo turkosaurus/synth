@@ -25,6 +25,15 @@ struct Lengths {
 }
 
 // one sounding note
+/// One cycle at `phase`, read between the two entries either side.
+fn cycle_at(wave: &[f32], phase: f32) -> f32 {
+    let n = wave.len();
+    let pos = phase * n as f32;
+    let i = pos as usize % n;
+    let j = (i + 1) % n;
+    wave[i] + (wave[j] - wave[i]) * (pos - pos.floor())
+}
+
 struct Note {
     instrument: Arc<Instrument>,
     /// 0.0-1.0, scaling the envelope peak; differs from `target` only while
@@ -34,7 +43,12 @@ struct Note {
     glide: f32, // velocity moved per sample toward `target`
     ramp: f32,  // samples in GLIDE at this sample rate
     phase: f32, // 0.0..1.0
-    step: f32,  // phase increment per sample
+    /// the two frames either side of the table's position, and how far
+    /// toward the second; fixed per note until something moves `position`
+    from: usize,
+    to: usize,
+    mix: f32,
+    step: f32, // phase increment per sample
     stage: Stage,
     /// each stage's length in samples at this note's rate
     lengths: Lengths,
@@ -55,8 +69,12 @@ impl Note {
         sample_rate: f32,
         hold: Option<Duration>,
     ) -> Self {
+        let (from, to, mix) = instrument.wave.blend();
         Self {
             velocity,
+            from,
+            to,
+            mix,
             target: velocity,
             glide: 0.0,
             ramp: (GLIDE.as_secs_f32() * sample_rate).max(1.0),
@@ -155,12 +173,14 @@ impl Note {
     }
 
     fn wave(&self) -> f32 {
-        let wave = self.instrument.wave.frame(0);
-        let n = wave.len();
-        let pos = self.phase * n as f32;
-        let i = pos as usize % n;
-        let j = (i + 1) % n;
-        wave[i] + (wave[j] - wave[i]) * (pos - pos.floor())
+        let table = &self.instrument.wave;
+        let a = cycle_at(table.frame(self.from), self.phase);
+        // a single waveform, or a position on a frame, reads one frame
+        if self.mix == 0.0 {
+            return a;
+        }
+        let b = cycle_at(table.frame(self.to), self.phase);
+        a + (b - a) * self.mix
     }
 
     fn next(&mut self) -> f32 {
@@ -607,6 +627,46 @@ mod tests {
             4.0,
             Some(Duration::from_secs(1)),
         )
+    }
+
+    /// Frames that each hold one level, so a read at any phase shows the
+    /// blend directly.
+    fn table(levels: &[f32], slopes: Vec<Vec<f32>>, position: f32) -> Instrument {
+        Instrument {
+            wave: crate::spec::Wavetable {
+                frames: levels.iter().flat_map(|&level| [level; 4]).collect(),
+                points: 4,
+                slopes,
+                position,
+            },
+            ..instrument()
+        }
+    }
+
+    #[test]
+    fn a_table_sounds_its_end_frames_at_position_0_and_1() {
+        assert_eq!(note(table(&[0.2, 0.8], vec![], 0.0)).wave(), 0.2);
+        assert_eq!(note(table(&[0.2, 0.8], vec![], 1.0)).wave(), 0.8);
+    }
+
+    #[test]
+    fn a_table_blends_linearly_with_no_slopes() {
+        let level = note(table(&[0.2, 0.8], vec![], 0.5)).wave();
+        assert!((level - 0.5).abs() < 1e-6, "{level}");
+    }
+
+    #[test]
+    fn a_slope_shapes_the_blend() {
+        // t squared at three points: halfway along is a quarter of the way
+        let level = note(table(&[0.0, 1.0], vec![vec![0.0, 0.25, 1.0]], 0.5)).wave();
+        assert!((level - 0.25).abs() < 1e-6, "{level}");
+    }
+
+    #[test]
+    fn a_position_picks_the_transition_it_falls_in() {
+        // three frames make two transitions; 0.75 is halfway through the second
+        let level = note(table(&[0.0, 0.4, 1.0], vec![], 0.75)).wave();
+        assert!((level - 0.7).abs() < 1e-6, "{level}");
     }
 
     #[test]
