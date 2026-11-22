@@ -1,3 +1,5 @@
+//! Drives a `Session` and draws it.
+
 use std::io::Stdout;
 use std::time::{Duration, Instant};
 

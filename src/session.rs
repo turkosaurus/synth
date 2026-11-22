@@ -1,5 +1,5 @@
-//! A live session, in the Elm shape `RULES.md` names: a [`Model`], the
-//! [`Msg`]s that change it, and the [`Cmd`]s they ask for, which the
+//! A live session, in the Elm shape `RULES.md` names: a `Model`, the
+//! `Msg`s that change it, and the `Cmd`s they ask for, which the
 //! session carries out on the output device and the ring into the audio
 //! callback.
 //!

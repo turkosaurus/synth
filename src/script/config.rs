@@ -84,7 +84,7 @@ const TEMPLATE_NAME: &str = "config.lua (built in)";
 /// Stands in for the default patches folder in [`TEMPLATE`]'s comment.
 const DEFAULT_PATCH_DIR: &str = "{default}";
 
-/// [`TEMPLATE`] as `synth config` writes it, with the default patches
+/// `TEMPLATE` as `synth config` writes it, with the default patches
 /// folder filled in, so the file shows a real path in the form to copy.
 pub fn template() -> String {
     template_for(&Dirs::current())
