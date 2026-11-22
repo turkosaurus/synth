@@ -1,5 +1,6 @@
 -- library root, can be overridden
-return {
+---@class synth
+local synth = {
 	envelope = require("synth.envelope"),
 	filter = require("synth.filter"),
 	instrument = require("synth.instrument"),
@@ -9,3 +10,5 @@ return {
 	tuning = require("synth.tuning"),
 	wave = require("synth.wave"),
 }
+
+return synth

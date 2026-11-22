@@ -1,5 +1,17 @@
 -- Optional settings for this machine, evaluated when program starts.
-return {
+
+---@class synth.ConfigTui
+---@field poll? number ms between redraws and key reads
+---@field meter_hold? number ms a peak holds before it falls
+---@field meter_fall? number ms to fall across the whole meter
+---@field meter_floor? number dB, the quietest level the meter shows
+
+---@class synth.Config
+---@field buffer_frames? integer audio callback frames (0: system default)
+---@field queue? integer buffer size: input -> audio
+---@field patch_dir? string custom patches folder
+---@field tui? synth.ConfigTui
+local config = {
 	buffer_frames = 0, -- audio callback frames (0: system default)
 	queue = 256, -- buffer size: input -> audio
 	-- patch_dir = [[{default}]] -- custom patches folder
@@ -10,3 +22,5 @@ return {
 		meter_floor = -60, -- dB, the quietest level the meter shows
 	},
 }
+
+return config
