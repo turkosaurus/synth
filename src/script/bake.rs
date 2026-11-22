@@ -26,7 +26,7 @@ pub(super) struct InstrumentSpec {
     voice_count: usize,
 }
 
-/// A waveform field as Rust reads it: one waveform, or a `wave.table`.
+/// An oscillator as Rust reads it: one waveform, or a table of them.
 pub(super) enum WaveSpec {
     One(mlua::Function),
     Table(WavetableSpec),
@@ -309,7 +309,7 @@ pub(super) fn bake_instrument(
         report.diagnostics.push(Diagnostic::new(
             DiagnosticKind::Range,
             format!(
-                "wave.table slopes[{}] left 0..1 at {count} points and was clamped",
+                "osc.table slopes[{}] left 0..1 at {count} points and was clamped",
                 k + 1
             ),
         ));
