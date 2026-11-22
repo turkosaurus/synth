@@ -4,8 +4,6 @@
 //! LFO has whatever shape a patch can write. One LFO is shared by every
 //! voice it drives.
 
-#![cfg_attr(not(test), allow(dead_code))]
-
 pub(crate) struct Lfo {
     /// cycles per sample: rate over sample rate
     step: f32,
@@ -36,10 +34,6 @@ impl Lfo {
             self.phase -= 1.0;
         }
         out
-    }
-
-    pub(crate) fn reset(&mut self) {
-        self.phase = 0.0;
     }
 }
 

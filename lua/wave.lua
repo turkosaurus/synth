@@ -65,6 +65,7 @@ end
 ---@field waves synth.Waveform[] one frame each, in order
 ---@field slopes? synth.Curve[] transition i uses slopes[(i - 1) % #slopes + 1]; none is linear
 ---@field position? number 0 to 1: where between the first and last wave a note sounds
+---@field position_mod? synth.Lfo moves `position` while notes sound
 
 local table_defaults = {
 	slopes = {},

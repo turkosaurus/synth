@@ -20,6 +20,8 @@ enum Ty {
     Periodic,
     /// a `wave.table`, whose stamp the structure walk checks
     Wavetable,
+    /// a `synth.lfo`, whose stamp the structure walk checks
+    Lfo,
 }
 
 impl Ty {
@@ -33,6 +35,7 @@ impl Ty {
             Self::Flag => "true or false",
             Self::Periodic => "a synth.wave.periodic(…)",
             Self::Wavetable => "a synth.wave.table({…})",
+            Self::Lfo => "a synth.lfo({…})",
         }
     }
 }
@@ -199,6 +202,17 @@ pub(super) const SEQUENCE: Schema = Schema {
     ],
 };
 
+/// A `synth.lfo`, as its constructor fills it. `depth` is in the units of
+/// the parameter it moves; `position` is the only one, so 0 to 1.
+pub(super) const LFO: Schema = Schema {
+    what: "lfo",
+    fields: &[
+        field(field::WAVE, Ty::Periodic, Bound::Any),
+        field(field::RATE, Ty::Number, Bound::AtLeast(0.0)),
+        field(field::DEPTH, Ty::Number, Bound::Between(0.0, 1.0)),
+    ],
+};
+
 /// A `wave.periodic`, as its constructor fills it.
 pub(super) const PERIODIC: Schema = Schema {
     what: "wave.periodic",
@@ -212,6 +226,7 @@ pub(super) const WAVETABLE: Schema = Schema {
         field(field::WAVES, Ty::Table, Bound::Any),
         field(field::SLOPES, Ty::Table, Bound::Any),
         field(field::POSITION, Ty::Number, Bound::Between(0.0, 1.0)),
+        optional(field::POSITION_MOD, Ty::Lfo, Bound::Any),
     ],
 };
 
@@ -272,7 +287,7 @@ impl Schema {
                 | (mlua::Value::Table(_), Ty::Table)
                 | (mlua::Value::String(_), Ty::Text)
                 | (mlua::Value::Boolean(_), Ty::Flag)
-                | (mlua::Value::Table(_), Ty::Periodic | Ty::Wavetable) => None,
+                | (mlua::Value::Table(_), Ty::Periodic | Ty::Wavetable | Ty::Lfo) => None,
                 (_, ty) => {
                     return Err(Error::WrongType {
                         what,

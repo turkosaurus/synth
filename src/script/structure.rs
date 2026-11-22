@@ -44,6 +44,8 @@ fn expected(parent: &str, key: &str) -> Option<Expect> {
         ("instrument", "envelope") => Expect::One("envelope"),
         ("instrument", "waveform") => Expect::One("wave.periodic"),
         ("instrument", "wavetable") => Expect::One("wave.table"),
+        ("wave.table", "position_mod") => Expect::One("lfo"),
+        ("lfo", "wave") => Expect::One("wave.periodic"),
         ("instrument" | "sequence", "keyboard") => Expect::One("keyboard"),
         ("instrument" | "sequence", "filter") => Expect::One("filter"),
         ("sequence", "instruments") => Expect::MapOf("instrument"),

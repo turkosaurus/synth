@@ -8,6 +8,7 @@ mod approx;
 mod lfo;
 mod svf;
 
+pub(crate) use lfo::Lfo;
 pub(crate) use svf::Svf;
 
 #[cfg(test)]

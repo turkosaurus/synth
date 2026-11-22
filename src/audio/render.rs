@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::fx::Svf;
+use super::fx::{Lfo, Svf};
 use crate::spec::{Event, Filter, Freqs, Instrument, Timeline};
 
 /// How long a stolen voice's velocity takes to ease to the new note's own.
@@ -44,7 +44,8 @@ struct Note {
     ramp: f32,  // samples in GLIDE at this sample rate
     phase: f32, // 0.0..1.0
     /// the two frames either side of the table's position, and how far
-    /// toward the second; read once, when the note starts
+    /// toward the second; the pool sets them each sample while an LFO
+    /// moves `position`
     from: usize,
     to: usize,
     mix: f32,
@@ -253,16 +254,24 @@ struct Pool {
     /// about sqrt(N) times one. Fixed at load: a gain that followed the live
     /// note count would step every other note's level on each note-on.
     gain: f32,
+    /// shared by every voice, so they all move together
+    position_mod: Option<Lfo>,
 }
 
 impl Pool {
-    fn new(instrument: Arc<Instrument>) -> Self {
+    fn new(instrument: Arc<Instrument>, sample_rate: f32) -> Self {
         let voices = (0..instrument.voice_count).map(|_| None).collect();
         let gain = 1.0 / (instrument.voice_count.max(1) as f32).sqrt();
+        let position_mod = instrument
+            .wave
+            .position_mod
+            .as_ref()
+            .map(|lfo| Lfo::new(lfo.rate, sample_rate));
         Self {
             instrument,
             voices,
             gain,
+            position_mod,
         }
     }
 
@@ -312,9 +321,21 @@ impl Pool {
     }
 
     fn next(&mut self) -> f32 {
+        let table = &self.instrument.wave;
+        let blend = match (&mut self.position_mod, &table.position_mod) {
+            (Some(lfo), Some(baked)) => {
+                Some(table.blend_at(table.position + baked.depth * lfo.next(&baked.cycle)))
+            }
+            _ => None,
+        };
         let mut sum = 0.0;
         for slot in &mut self.voices {
             if let Some(voice) = slot {
+                if let Some((from, to, mix)) = blend {
+                    voice.note.from = from;
+                    voice.note.to = to;
+                    voice.note.mix = mix;
+                }
                 sum += voice.note.next();
                 if voice.note.done() {
                     *slot = None;
@@ -375,7 +396,7 @@ impl Player {
         Self {
             pools: instruments
                 .into_iter()
-                .map(|instrument| Pool::new(Arc::new(instrument)))
+                .map(|instrument| Pool::new(Arc::new(instrument), sample_rate))
                 .collect(),
             freqs,
             source,
@@ -638,9 +659,30 @@ mod tests {
                 points: 4,
                 slopes,
                 position,
+                position_mod: None,
             },
             ..instrument()
         }
+    }
+
+    #[test]
+    fn an_lfo_moves_every_voice_through_the_table() {
+        // a cycle held at +1 pushes position from 0.5 to the last frame
+        let mut instrument = table(&[0.2, 0.8], vec![], 0.5);
+        instrument.wave.position_mod = Some(crate::spec::Lfo {
+            cycle: vec![1.0, 1.0],
+            rate: 1.0,
+            depth: 0.5,
+        });
+        let mut pool = Pool::new(Arc::new(instrument), 4.0);
+        pool.voices[0] = Some(Voice {
+            note: Note::new(Arc::clone(&pool.instrument), 1.0, 1.0, 4.0, None),
+            pitch: 60,
+            age: 0,
+        });
+        pool.next();
+        let note = &pool.voices[0].as_ref().unwrap().note;
+        assert_eq!(note.wave(), 0.8);
     }
 
     #[test]

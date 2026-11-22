@@ -1648,3 +1648,36 @@ fn a_missing_patch_file_is_matched_by_variant() {
         "{error:#}"
     );
 }
+
+#[test]
+fn a_position_mod_bakes_an_lfo_that_starts_from_rest() {
+    let patch = load_source(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({
+            wavetable = synth.wave.table({
+                waves = { synth.wave.sine, synth.wave.saw },
+                position_mod = synth.lfo({ wave = synth.wave.periodic(synth.wave.sine), rate = 0.5, depth = 0.3 }),
+            }),
+        })
+        "#,
+        "patch.lua",
+        48000,
+    )
+    .unwrap();
+    let lfo = patch.timeline.instruments[0]
+        .wave
+        .position_mod
+        .as_ref()
+        .unwrap();
+    assert_eq!((lfo.rate, lfo.depth), (0.5, 0.3));
+    assert_eq!(rising_zero(&lfo.cycle), Some(0));
+    assert!(patch.clean(), "{:?}", patch.reports[0].1.diagnostics);
+}
+
+#[test]
+fn the_sweep_patch_loads_clean() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("lua/sweep.lua");
+    let patch = load(&path, 48000, None).unwrap();
+    assert!(patch.clean(), "{:?}", patch.reports[0].1.diagnostics);
+}

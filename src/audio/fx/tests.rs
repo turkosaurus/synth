@@ -240,7 +240,7 @@ fn an_lfo_plays_a_lua_waveform_baked_like_an_oscillators() {
     let patch = crate::script::load_source(
         r#"
         local synth = require("synth")
-        return synth.instrument({ waveform = synth.wave.triangle })
+        return synth.instrument({ waveform = synth.wave.periodic(synth.wave.triangle) })
         "#,
         "patch.lua",
         48000,
@@ -269,15 +269,4 @@ fn an_lfo_with_a_rate_that_is_not_finite_holds_still() {
 fn an_lfo_with_no_cycle_is_silent() {
     let mut lfo = Lfo::new(1.0, 100.0);
     assert_eq!(lfo.next(&[]), 0.0);
-}
-
-#[test]
-fn reset_returns_an_lfo_to_its_start() {
-    let cycle = [0.0, 1.0, 0.0, -1.0];
-    let mut lfo = Lfo::new(5.0, 100.0);
-    (0..7).for_each(|_| {
-        lfo.next(&cycle);
-    });
-    lfo.reset();
-    assert_eq!(lfo.next(&cycle), 0.0);
 }

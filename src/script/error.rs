@@ -125,6 +125,12 @@ pub enum Error {
     #[error("{what}: sets neither `waveform` nor `wavetable`; set one")]
     NoWave { what: String },
 
+    #[error("lfo wave must return a number for every phase")]
+    LfoWave {
+        #[source]
+        source: mlua::Error,
+    },
+
     #[error("waveform must return a number for every phase")]
     Waveform {
         #[source]

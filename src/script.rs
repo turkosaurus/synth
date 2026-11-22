@@ -32,11 +32,12 @@ const LUA_INSTRUMENT: &str = include_str!("../lua/instrument.lua");
 const LUA_SEQUENCE: &str = include_str!("../lua/sequence.lua");
 const LUA_KEYBOARD: &str = include_str!("../lua/keyboard.lua");
 const LUA_FILTER: &str = include_str!("../lua/filter.lua");
+const LUA_LFO: &str = include_str!("../lua/lfo.lua");
 const LUA_ROOT: &str = include_str!("../lua/synth.lua");
 const LUA_CONSTRUCT: &str = include_str!("../lua/construct.lua");
 
 /// Every embedded module, by the name `require` finds it under.
-const MODULES: [(&str, &str); 10] = [
+const MODULES: [(&str, &str); 11] = [
     (module::CONSTRUCT, LUA_CONSTRUCT),
     (module::SLOPE, LUA_SLOPE),
     (module::WAVE, LUA_WAVE),
@@ -46,6 +47,7 @@ const MODULES: [(&str, &str); 10] = [
     (module::SEQUENCE, LUA_SEQUENCE),
     (module::KEYBOARD, LUA_KEYBOARD),
     (module::FILTER, LUA_FILTER),
+    (module::LFO, LUA_LFO),
     (module::ROOT, LUA_ROOT),
 ];
 
@@ -170,6 +172,7 @@ mod module {
     pub(super) const SEQUENCE: &str = "synth.sequence";
     pub(super) const KEYBOARD: &str = "synth.keyboard";
     pub(super) const FILTER: &str = "synth.filter";
+    pub(super) const LFO: &str = "synth.lfo";
     /// Re-exports every other module, so a patch needs one `require`.
     pub(super) const ROOT: &str = "synth";
     /// a Rust function, set straight into `package.loaded`
@@ -185,6 +188,10 @@ mod field {
     pub(super) const WAVES: &str = "waves";
     pub(super) const SLOPES: &str = "slopes";
     pub(super) const POSITION: &str = "position";
+    pub(super) const POSITION_MOD: &str = "position_mod";
+    pub(super) const WAVE: &str = "wave";
+    pub(super) const RATE: &str = "rate";
+    pub(super) const DEPTH: &str = "depth";
     pub(super) const ENVELOPE: &str = "envelope";
     pub(super) const KEYBOARD: &str = "keyboard";
     pub(super) const VOICE_COUNT: &str = "voice_count";

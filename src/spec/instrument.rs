@@ -26,6 +26,17 @@ pub struct Wavetable {
     pub(crate) slopes: Vec<Vec<f32>>,
     /// 0..1, from the first frame to the last
     pub(crate) position: f32,
+    /// moves `position` either side of its value while notes sound
+    pub(crate) position_mod: Option<Lfo>,
+}
+
+/// A baked LFO: one cycle read at `rate` Hz, moving a parameter `depth`
+/// either side of its value, in that parameter's units.
+#[derive(Clone)]
+pub struct Lfo {
+    pub(crate) cycle: Vec<f32>,
+    pub(crate) rate: f32,
+    pub(crate) depth: f32,
 }
 
 impl Wavetable {
@@ -42,14 +53,20 @@ impl Wavetable {
         &mut self.frames[k * self.points..(k + 1) * self.points]
     }
 
+    /// The two frames either side of the table's own `position`, and how
+    /// far toward the second.
+    pub(crate) fn blend(&self) -> (usize, usize, f32) {
+        self.blend_at(self.position)
+    }
+
     /// The two frames either side of `position`, and how far toward the
     /// second, through that transition's slope.
-    pub(crate) fn blend(&self) -> (usize, usize, f32) {
+    pub(crate) fn blend_at(&self, position: f32) -> (usize, usize, f32) {
         let count = self.frame_count();
         if count < 2 {
             return (0, 0, 0.0);
         }
-        let x = self.position.clamp(0.0, 1.0) * (count - 1) as f32;
+        let x = position.clamp(0.0, 1.0) * (count - 1) as f32;
         let k = (x as usize).min(count - 2);
         let along = x - k as f32;
         let mix = match self.slopes.len() {
@@ -80,6 +97,7 @@ impl From<Vec<f32>> for Wavetable {
             points,
             slopes: Vec::new(),
             position: 0.0,
+            position_mod: None,
         }
     }
 }
