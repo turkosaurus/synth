@@ -117,7 +117,13 @@ fn tracing_init() -> anyhow::Result<()> {
     if std::env::var_os("RUST_LOG").is_none() {
         return Ok(());
     }
-    let file = std::fs::File::create("synth.log")?;
+    let path = script::log_path()
+        .context("no log directory: set XDG_STATE_HOME or HOME, or APPDATA on Windows")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    }
+    let file =
+        std::fs::File::create(&path).with_context(|| format!("create {}", path.display()))?;
     tracing_subscriber::fmt()
         .with_writer(file)
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

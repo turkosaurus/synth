@@ -17,7 +17,7 @@ pub mod starters;
 mod structure;
 
 use crate::spec::{Diagnostic, DiagnosticKind, Patch};
-pub use config::{config, config_path, template as config_template};
+pub use config::{config, config_path, log_path, template as config_template};
 pub use error::Error;
 use feed::{sequence, single, SINGLE};
 use keymap::keymap;
