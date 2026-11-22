@@ -2,7 +2,7 @@
 local synth = require("synth")
 
 return synth.instrument({
-	oscillator = synth.osc.periodic({ wave = synth.wave.triangle }),
+	oscillator = synth.osc({ waveforms = { synth.wave.triangle } }),
 	envelope = synth.envelope({
 		attack = 20, -- ms
 		attack_curve = synth.slope.linear(),

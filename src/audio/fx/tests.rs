@@ -240,7 +240,7 @@ fn an_lfo_plays_a_lua_waveform_baked_like_an_oscillators() {
     let patch = crate::script::load_source(
         r#"
         local synth = require("synth")
-        return synth.instrument({ oscillator = synth.osc.periodic({ wave = synth.wave.triangle }) })
+        return synth.instrument({ oscillator = synth.osc({ waveforms = { synth.wave.triangle } }) })
         "#,
         "patch.lua",
         48000,

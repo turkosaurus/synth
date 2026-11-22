@@ -2,8 +2,8 @@
 local synth = require("synth")
 
 return synth.instrument({
-	oscillator = synth.osc.table({
-		waves = { synth.wave.sine, synth.wave.saw, synth.wave.square },
+	oscillator = synth.osc({
+		waveforms = { synth.wave.sine, synth.wave.saw, synth.wave.square },
 		position = 0.5,
 		position_mod = synth.lfo({
 			wave = synth.wave.triangle,

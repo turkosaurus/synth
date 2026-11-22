@@ -31,7 +31,7 @@ impl Ty {
             Self::Table => "a table",
             Self::Text => "a string",
             Self::Flag => "true or false",
-            Self::Osc => "a synth.osc.periodic({…}) or synth.osc.table({…})",
+            Self::Osc => "a synth.osc({…})",
             Self::Lfo => "a synth.lfo({…})",
         }
     }
@@ -209,21 +209,11 @@ pub(super) const LFO: Schema = Schema {
     ],
 };
 
-/// A `synth.osc.periodic`, as its constructor fills it.
-pub(super) const OSC_PERIODIC: Schema = Schema {
-    what: "osc.periodic",
+/// A `synth.osc`, as its constructor fills it.
+pub(super) const OSC: Schema = Schema {
+    what: "osc",
     fields: &[
-        field(field::KIND, Ty::Text, Bound::Any),
-        field(field::WAVE, Ty::Function, Bound::Any),
-    ],
-};
-
-/// A `synth.osc.table`, as its constructor fills it.
-pub(super) const OSC_TABLE: Schema = Schema {
-    what: "osc.table",
-    fields: &[
-        field(field::KIND, Ty::Text, Bound::Any),
-        field(field::WAVES, Ty::Table, Bound::Any),
+        field(field::WAVEFORMS, Ty::Table, Bound::Any),
         field(field::SLOPES, Ty::Table, Bound::Any),
         field(field::POSITION, Ty::Number, Bound::Between(0.0, 1.0)),
         optional(field::POSITION_MOD, Ty::Lfo, Bound::Any),

@@ -131,7 +131,7 @@ pub enum Error {
         source: mlua::Error,
     },
 
-    #[error("osc.table waves[{index}] must return a number for every phase")]
+    #[error("osc waveforms[{index}] must return a number for every phase")]
     Wave {
         index: usize,
         #[source]
@@ -139,15 +139,15 @@ pub enum Error {
     },
 
     #[error(
-        "osc.table slopes[{index}] returned a function, not a number: a curve \
+        "osc slopes[{index}] returned a function, not a number: a curve \
          constructor needs its (), as in synth.slope.exponential(2)"
     )]
     SlopeUncalled { index: usize },
 
-    #[error("osc.table slopes[{index}] must return a number from 0 to 1, got {got}")]
+    #[error("osc slopes[{index}] must return a number from 0 to 1, got {got}")]
     SlopeType { index: usize, got: &'static str },
 
-    #[error("osc.table slopes[{index}] returned {value} at t = {t}; must be a number from 0 to 1")]
+    #[error("osc slopes[{index}] returned {value} at t = {t}; must be a number from 0 to 1")]
     SlopeNotFinite { index: usize, value: f64, t: f64 },
 
     #[error(

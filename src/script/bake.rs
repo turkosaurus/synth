@@ -21,19 +21,15 @@ const MAX_WAVES: usize = 256;
 // An instrument table as Rust reads it. The struct is the schema: serde
 // cannot be, since its data model has no function type.
 pub(super) struct InstrumentSpec {
-    waveform: WaveSpec,
+    oscillator: OscSpec,
     envelope: EnvelopeSpec,
     voice_count: usize,
 }
 
-/// An oscillator as Rust reads it: one waveform, or a table of them.
-pub(super) enum WaveSpec {
-    One(mlua::Function),
-    Table(WavetableSpec),
-}
-
-pub(super) struct WavetableSpec {
-    waves: Vec<mlua::Function>,
+/// An oscillator as Rust reads it: one waveform is a fixed cycle, and
+/// several are frames blended by `position`.
+pub(super) struct OscSpec {
+    waveforms: Vec<mlua::Function>,
     slopes: Vec<mlua::Function>,
     position: f64,
     position_mod: Option<LfoSpec>,
@@ -76,8 +72,8 @@ impl mlua::FromLua for InstrumentSpec {
             .check(&table, None)
             .map_err(mlua::Error::external)?;
         Ok(Self {
-            // no wrapping: WaveSpec names its own bad field
-            waveform: table.get(field::OSCILLATOR)?,
+            // no wrapping: OscSpec names its own bad field
+            oscillator: table.get(field::OSCILLATOR)?,
             // no wrapping: EnvelopeSpec names its own bad field
             envelope: table.get(field::ENVELOPE)?,
             voice_count: spec_entry(&table, "instrument", field::VOICE_COUNT, "count")?,
@@ -85,62 +81,31 @@ impl mlua::FromLua for InstrumentSpec {
     }
 }
 
-/// An oscillator as its `_kind` says: one waveform, or a table of them.
-/// The table names its own bad field, so it is read without wrapping.
-impl mlua::FromLua for WaveSpec {
-    fn from_lua(value: mlua::Value, lua: &mlua::Lua) -> mlua::Result<Self> {
-        let table = spec_table(value, "osc")?;
-        let kind: String = spec_entry(&table, "osc", field::KIND, "oscillator kind")?;
-        match kind.as_str() {
-            "periodic" => {
-                schema::OSC_PERIODIC
-                    .check(&table, None)
-                    .map_err(mlua::Error::external)?;
-                Ok(Self::One(spec_entry(
-                    &table,
-                    "osc.periodic",
-                    field::WAVE,
-                    "function",
-                )?))
-            }
-            "table" => Ok(Self::Table(WavetableSpec::from_lua(
-                mlua::Value::Table(table),
-                lua,
-            )?)),
-            other => Err(spec_error(
-                "table",
-                "osc",
-                format!("unknown oscillator kind `{other}`; expected periodic or table"),
-            )),
-        }
-    }
-}
-
-impl mlua::FromLua for WavetableSpec {
+impl mlua::FromLua for OscSpec {
     fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
-        let table = spec_table(value, "osc.table")?;
-        schema::OSC_TABLE
+        let table = spec_table(value, "osc")?;
+        schema::OSC
             .check(&table, None)
-            .map_err(|error| mlua::Error::RuntimeError(format!("{error:#}")))?;
-        let what = "osc.table";
-        let waves: Vec<mlua::Function> =
-            spec_entry(&table, what, field::WAVES, "list of waveforms")?;
-        if waves.is_empty() {
+            .map_err(mlua::Error::external)?;
+        let what = "osc";
+        let waveforms: Vec<mlua::Function> =
+            spec_entry(&table, what, field::WAVEFORMS, "list of waveforms")?;
+        if waveforms.is_empty() {
             return Err(spec_error(
                 "table",
                 what,
-                "`waves` is empty; give at least one waveform".into(),
+                "`waveforms` is empty; give at least one".into(),
             ));
         }
-        if waves.len() > MAX_WAVES {
+        if waveforms.len() > MAX_WAVES {
             return Err(spec_error(
                 "table",
                 what,
-                format!("`waves` holds {}; at most {MAX_WAVES}", waves.len()),
+                format!("`waveforms` holds {}; at most {MAX_WAVES}", waveforms.len()),
             ));
         }
         Ok(Self {
-            waves,
+            waveforms,
             slopes: spec_entry(&table, what, field::SLOPES, "list of curves")?,
             position: spec_entry(&table, what, field::POSITION, "number")?,
             // no wrapping: LfoSpec names its own bad field
@@ -232,15 +197,25 @@ pub(super) fn bake_instrument(
 ) -> Result<(Instrument, Report), Error> {
     let env = spec.envelope;
 
-    let tabled = matches!(spec.waveform, WaveSpec::Table(_));
-    let (waves, slopes, position, position_mod) = match spec.waveform {
-        WaveSpec::One(waveform) => (vec![waveform], Vec::new(), 0.0, None),
-        WaveSpec::Table(table) => (
-            table.waves,
-            table.slopes,
-            table.position,
-            table.position_mod,
-        ),
+    let osc = spec.oscillator;
+    let tabled = osc.waveforms.len() > 1;
+    // one waveform plays its single frame with no blend, so what would
+    // move a blend is set aside here and warned about below
+    let mut unused = Vec::new();
+    let (waves, slopes, position, position_mod) = match tabled {
+        true => (osc.waveforms, osc.slopes, osc.position, osc.position_mod),
+        false => {
+            if !osc.slopes.is_empty() {
+                unused.push(field::SLOPES);
+            }
+            if osc.position != 0.0 {
+                unused.push(field::POSITION);
+            }
+            if osc.position_mod.is_some() {
+                unused.push(field::POSITION_MOD);
+            }
+            (osc.waveforms, Vec::new(), 0.0, None)
+        }
     };
 
     let mut frames = Vec::with_capacity(waves.len() * TABLE_SIZE);
@@ -348,6 +323,12 @@ pub(super) fn bake_instrument(
             format!("lfo wave exceeded -1.0..1.0 at {count} points and was flattened"),
         ));
     }
+    for name in unused {
+        report.diagnostics.push(Diagnostic::new(
+            DiagnosticKind::Unused,
+            format!("osc has one waveform, so `{name}` does nothing"),
+        ));
+    }
     for (k, (_, count)) in slopes
         .iter()
         .enumerate()
@@ -356,7 +337,7 @@ pub(super) fn bake_instrument(
         report.diagnostics.push(Diagnostic::new(
             DiagnosticKind::Range,
             format!(
-                "osc.table slopes[{}] left 0..1 at {count} points and was clamped",
+                "osc slopes[{}] left 0..1 at {count} points and was clamped",
                 k + 1
             ),
         ));

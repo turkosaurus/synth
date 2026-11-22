@@ -10,7 +10,7 @@ local function sine(phase)
 end
 
 return synth.instrument({
-	oscillator = synth.osc.periodic({ wave = sine }), -- or synth.wave.triangle
+	oscillator = synth.osc({ waveforms = { sine } }), -- or synth.wave.triangle
 	envelope = synth.envelope({
 		attack = 5, -- ms
 		release = 200, -- ms
