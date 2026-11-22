@@ -2,6 +2,7 @@
 /// each kind is stays out of the checks, so a stricter policy later changes
 /// one place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DiagnosticKind {
     /// a baked shape that will sound wrong: flattened, buzzing, off-center,
     /// or clicking
