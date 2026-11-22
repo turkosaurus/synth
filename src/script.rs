@@ -2,7 +2,6 @@
 //! checks it, and bakes it into [`crate::spec`] data; Lua is dropped once
 //! the patch is returned.
 
-use anyhow::Context;
 use tracing::instrument;
 
 mod bake;
@@ -62,7 +61,7 @@ fn lua_register(
     lua: &mlua::Lua,
     roots: Vec<std::path::PathBuf>,
     patches: Option<std::path::PathBuf>,
-) -> anyhow::Result<()> {
+) -> Result<(), Error> {
     let package: mlua::Table = lua.globals().get(field::PACKAGE)?;
 
     let searcher = lua.create_function(move |lua, name: String| -> mlua::Result<mlua::Value> {
@@ -274,8 +273,11 @@ pub fn load(
     sample_rate: u32,
     patches: Option<&std::path::Path>,
 ) -> anyhow::Result<Patch> {
-    let source =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let source = std::fs::read_to_string(path).map_err(|source| Error::Io {
+        action: "reading",
+        path: path.to_path_buf(),
+        source: source.into(),
+    })?;
     load_in(
         &source,
         &path.display().to_string(),
@@ -329,7 +331,12 @@ fn load_in(
     let returned: mlua::Value = lua.load(source).set_name(name).eval()?;
     let table = match returned {
         mlua::Value::Table(table) => table,
-        other => anyhow::bail!("file must return a table, got {}", other.type_name()),
+        other => {
+            return Err(Error::ReturnNotATable {
+                got: other.type_name(),
+            }
+            .into())
+        }
     };
 
     // checked before anything is read, so a wrong value is named by its place
@@ -360,7 +367,9 @@ fn load_in(
             // a callable table: __call receives the module itself first
             let call: mlua::Function = keyboard
                 .metatable()
-                .context("synth.keyboard is not callable")?
+                .ok_or(Error::NotCallable {
+                    what: "synth.keyboard",
+                })?
                 .get(field::CALL)?;
             call.call((keyboard, mlua::Value::Nil))?
         }
@@ -381,7 +390,7 @@ fn load_in(
         }
         // a bare instrument file: one sustained note, so a two-event timeline
         _ => single(
-            lua.unpack(mlua::Value::Table(table))?,
+            lua.unpack(mlua::Value::Table(table)).map_err(Error::from)?,
             sample_rate,
             freqs,
             keys,
