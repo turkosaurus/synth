@@ -399,10 +399,10 @@ pub(super) fn rising_zero(cycle: &[f32]) -> Option<usize> {
     (0..n).find(|&i| cycle[(i + n - 1) % n] < 0.0 && cycle[i] >= 0.0)
 }
 
-// The one sampler behind every baked table, waveform or curve: `read` at
-// each point of `xs`, clamped into `range`. Returns the values and how many
-// left the range.
-fn sample(
+// The one sampler behind every baked table, waveform, curve, or tuning:
+// `read` at each point of `xs`, clamped into `range`. Returns the values
+// and how many left the range.
+pub(super) fn sample(
     xs: impl Iterator<Item = f64>,
     range: RangeInclusive<f64>,
     mut read: impl FnMut(f64) -> Result<f64, Error>,

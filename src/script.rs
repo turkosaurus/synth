@@ -424,8 +424,11 @@ fn load_in(
 /// reach the oscillator as a NaN or a frozen phase. One above Nyquist is
 /// only a warning, since it plays, folded back to a lower pitch.
 fn tune(to_hz: &mlua::Function, sample_rate: u32) -> Result<(Vec<f32>, Vec<Diagnostic>), Error> {
-    let mut freqs = Vec::with_capacity(128);
-    for note in 0..128u8 {
+    let notes = (0..128u8).map(f64::from);
+    // the check passes only values the f32 table holds, so none clamp
+    let (freqs, _) = bake::sample(notes, 0.0..=f64::from(f32::MAX), |x| {
+        // an integer, not 69.0, so `math.type` and `tostring` see a note
+        let note = x as u8;
         let hz: f64 = to_hz
             .call(note)
             .map_err(|source| Error::TuningCall { note, source })?;
@@ -434,8 +437,8 @@ fn tune(to_hz: &mlua::Function, sample_rate: u32) -> Result<(Vec<f32>, Vec<Diagn
         if !(narrowed.is_finite() && narrowed > 0.0) {
             return Err(Error::TuningHz { note, hz });
         }
-        freqs.push(narrowed);
-    }
+        Ok(hz)
+    })?;
 
     let nyquist = sample_rate as f32 / 2.0;
     let mut diagnostics = Vec::new();
