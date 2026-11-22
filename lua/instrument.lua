@@ -26,7 +26,7 @@ local instrument = setmetatable({}, {
 ---@field filter? synth.Filter
 
 defaults = {
-	oscillator = osc.periodic(),
+	oscillator = osc(),
 	-- copied for each instrument, so none shares another's envelope
 	envelope = envelope(),
 	-- notes this instrument can sound at once; 1 is mono

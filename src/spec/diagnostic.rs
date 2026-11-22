@@ -8,6 +8,8 @@ pub enum DiagnosticKind {
     Shape,
     /// a value outside the range the engine plays, used anyway or clamped
     Range,
+    /// a field set where it has no effect
+    Unused,
 }
 
 impl DiagnosticKind {
@@ -15,6 +17,7 @@ impl DiagnosticKind {
         match self {
             Self::Shape => "shape",
             Self::Range => "range",
+            Self::Unused => "unused",
         }
     }
 }

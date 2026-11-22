@@ -140,7 +140,7 @@ fn a_saw_bakes_starting_from_zero_rising() {
     let source = r#"
         local instrument = require("synth.instrument")
         return instrument({
-            oscillator = require("synth.osc").periodic({ wave = function(phase) return 2 * phase - 1 end }),
+            oscillator = require("synth.osc")({ waveforms = { function(phase) return 2 * phase - 1 end } }),
         })
     "#;
     let patch = load_source(source, "test", 48000).unwrap();
@@ -366,7 +366,7 @@ fn one_instrument(attack_ms: u32, rate: u32) -> Patch {
         local wave = require("synth.wave")
         local envelope = require("synth.envelope")
         return instrument({{
-            oscillator = require("synth.osc").periodic({{ wave = wave.triangle }}),
+            oscillator = require("synth.osc")({{ waveforms = {{ wave.triangle }} }}),
             envelope = envelope({{
                 attack = {attack_ms}, decay = 120,
                 sustain = 0.7, release = 250,
@@ -415,7 +415,7 @@ fn changing_offset_keeps_the_anchor_on_pitch() {
         local envelope = require("synth.envelope")
         local keyboard = require("synth.keyboard")
         return instrument({
-            oscillator = require("synth.osc").periodic({ wave = wave.triangle }),
+            oscillator = require("synth.osc")({ waveforms = { wave.triangle } }),
             envelope = envelope({}),
             keyboard = keyboard({ layout = keyboard.grid({ offset = 7 }) }),
         })
@@ -432,7 +432,7 @@ fn with_keyboard(keyboard: &str) -> anyhow::Result<Patch> {
         r#"
         local synth = require("synth")
         return synth.instrument({{
-            oscillator = synth.osc.periodic({{ wave = synth.wave.triangle }}),
+            oscillator = synth.osc({{ waveforms = {{ synth.wave.triangle }} }}),
             envelope = synth.envelope({{}}),
             keyboard = {keyboard},
         }})
@@ -534,7 +534,7 @@ fn a_keyboard_control_replaces_the_layouts() {
     let source = r#"
         local synth = require("synth")
         local patch = synth.instrument({
-            oscillator = synth.osc.periodic({ wave = synth.wave.triangle }),
+            oscillator = synth.osc({ waveforms = { synth.wave.triangle } }),
             envelope = synth.envelope({}),
             keyboard = synth.keyboard({ layout = synth.keyboard.qwerty, octave_up = { "]" } }),
         })
@@ -741,7 +741,7 @@ fn baked(ctor: &str, ms: u32) -> (Vec<f32>, Vec<f32>) {
         local wave = require("synth.wave")
         local envelope = require("synth.envelope")
         return instrument({{
-            oscillator = require("synth.osc").periodic({{ wave = wave.triangle }}),
+            oscillator = require("synth.osc")({{ waveforms = {{ wave.triangle }} }}),
             envelope = envelope({{
                 attack = {ms},
                 attack_curve = {ctor},
@@ -1115,7 +1115,7 @@ fn the_root_reexports_every_module() {
 fn structure_records_every_constructed_table_by_path() {
     let source = r#"
         local synth = require("synth")
-        local tri = synth.instrument({ oscillator = synth.osc.periodic({ wave = synth.wave.triangle }), envelope = synth.envelope({}) })
+        local tri = synth.instrument({ oscillator = synth.osc({ waveforms = { synth.wave.triangle } }), envelope = synth.envelope({}) })
         return synth.sequence({ instruments = { tri = tri }, instrument = "tri", steps = { { note = 60 } } })
     "#;
     let patch = load_source(source, "song.lua", 48000).unwrap();
@@ -1150,7 +1150,7 @@ fn diagnostics_name_the_line_that_built_the_value() {
         local synth = require("synth")
         local quiet = function(phase) return 0.2 * math.sin(phase * 2 * math.pi) end
         return synth.sequence({
-            instruments = { soft = synth.instrument({ oscillator = synth.osc.periodic({ wave = quiet }) }) },
+            instruments = { soft = synth.instrument({ oscillator = synth.osc({ waveforms = { quiet } }) }) },
             instrument = "soft",
             steps = { { note = 60 } },
             filter = synth.filter.lowpass({ cutoff = 5 }),
@@ -1574,8 +1574,8 @@ fn an_osc_table_bakes_one_frame_per_wave_each_rising_from_zero() {
         r#"
         local synth = require("synth")
         return synth.instrument({
-            oscillator = synth.osc.table({
-                waves = { synth.wave.sine, synth.wave.saw, synth.wave.square },
+            oscillator = synth.osc({
+                waveforms = { synth.wave.sine, synth.wave.saw, synth.wave.square },
                 slopes = { synth.slope.exponential(3) },
                 position = 0.25,
             }),
@@ -1646,5 +1646,41 @@ fn a_missing_patch_file_is_matched_by_variant() {
             Some(Error::Io { action: "reading", path: at, .. }) if *at == path
         ),
         "{error:#}"
+    );
+}
+
+#[test]
+fn one_waveform_warns_that_slopes_and_position_do_nothing() {
+    let patch = load_source(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({
+            oscillator = synth.osc({
+                waveforms = { synth.wave.saw },
+                slopes = { synth.slope.linear() },
+                position = 0.5,
+            }),
+        })
+        "#,
+        "patch.lua",
+        48000,
+    )
+    .unwrap();
+    let wave = &patch.timeline.instruments[0].wave;
+    assert_eq!(wave.frame_count(), 1);
+    assert_eq!(wave.blend(), (0, 0, 0.0));
+    let unused: Vec<&str> = patch.reports[0]
+        .1
+        .diagnostics
+        .iter()
+        .filter(|d| d.kind == crate::spec::DiagnosticKind::Unused)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(
+        unused,
+        [
+            "osc has one waveform, so `slopes` does nothing",
+            "osc has one waveform, so `position` does nothing",
+        ]
     );
 }

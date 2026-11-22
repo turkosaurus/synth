@@ -9,7 +9,7 @@ Lua defines not only configuration, but provides functions to the Rust audio eng
 | [`construct.lua`](./construct.lua) | shared `constructor` helper: fields, defaults, stamp (excluded from `require("synth")`) |
 | [`slope.lua`](./slope.lua) | envelope curves: shapes from 0 to 1, scaled per stage |
 | [`wave.lua`](./wave.lua) | waveform shapes |
-| [`osc.lua`](./osc.lua) | oscillators: `periodic` and `table` |
+| [`osc.lua`](./osc.lua) | the oscillator: one waveform, or several blended by position |
 | [`envelope.lua`](./envelope.lua) | envelope generator |
 | [`tuning.lua`](./tuning.lua) | tunings: MIDI note to Hz, equal temperament by default |
 | [`instrument.lua`](./instrument.lua) | default instrument |

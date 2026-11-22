@@ -183,8 +183,7 @@ mod field {
     pub(super) const REQUIRE: &str = "require";
 
     pub(super) const OSCILLATOR: &str = "oscillator";
-    pub(super) const WAVE: &str = "wave";
-    pub(super) const WAVES: &str = "waves";
+    pub(super) const WAVEFORMS: &str = "waveforms";
     pub(super) const SLOPES: &str = "slopes";
     pub(super) const POSITION: &str = "position";
     pub(super) const ENVELOPE: &str = "envelope";
