@@ -32,6 +32,20 @@ pub enum InstrumentError {
         value: f32,
     },
 
+    #[error("osc slopes[{}] is {value} at t = {t}; must be finite, 0 to 1", index + 1)]
+    Slope {
+        /// 0-based
+        index: usize,
+        t: f32,
+        value: f32,
+    },
+
+    #[error("osc position is {value}; must be finite, 0 to 1")]
+    Position { value: f32 },
+
+    #[error("lfo wave is {value} at phase {phase}; must be finite, -1 to 1")]
+    Lfo { phase: f32, value: f32 },
+
     #[error("envelope {stage} is {value} at t = {t}; must be finite, 0 to 1")]
     Envelope {
         stage: &'static str,
@@ -72,16 +86,37 @@ impl Instrument {
                 });
             }
         }
+        for (index, slope) in wave.slopes.iter().enumerate() {
+            if let Some((i, &value)) = outside(slope, 0.0..=1.0) {
+                return Err(InstrumentError::Slope {
+                    index,
+                    t: along(i, slope.len()),
+                    value,
+                });
+            }
+        }
+        if outside(&[wave.position], 0.0..=1.0).is_some() {
+            return Err(InstrumentError::Position {
+                value: wave.position,
+            });
+        }
+        if let Some(lfo) = &wave.position_mod {
+            if let Some((i, &value)) = outside(&lfo.cycle, -1.0..=1.0) {
+                return Err(InstrumentError::Lfo {
+                    phase: i as f32 / lfo.cycle.len() as f32,
+                    value,
+                });
+            }
+        }
         for (stage, segment) in [
             ("attack", &attack),
             ("decay", &decay),
             ("release", &release),
         ] {
             if let Some((i, &value)) = outside(&segment.curve, 0.0..=1.0) {
-                let last = segment.curve.len().saturating_sub(1).max(1);
                 return Err(InstrumentError::Envelope {
                     stage,
-                    t: i as f32 / last as f32,
+                    t: along(i, segment.curve.len()),
                     value,
                 });
             }
@@ -145,6 +180,12 @@ impl Instrument {
     pub(crate) fn rotate_frame(&mut self, k: usize, by: usize) {
         self.wave.frame_mut(k).rotate_left(by);
     }
+}
+
+/// Where point `i` of a curve `len` long sits, 0 at the first and 1 at the
+/// last.
+fn along(i: usize, len: usize) -> f32 {
+    i as f32 / len.saturating_sub(1).max(1) as f32
 }
 
 /// The first point that is not finite or falls outside `range`.
@@ -369,6 +410,48 @@ mod tests {
                 panic!("{err:?}");
             };
             assert_eq!((frame, phase), (1, 0.5), "for {bad}");
+        }
+    }
+
+    fn swept(slopes: Vec<Vec<f32>>, position: f32, cycle: Vec<f32>) -> Wavetable {
+        Wavetable {
+            slopes,
+            position,
+            position_mod: Some(Lfo {
+                cycle,
+                rate: 1.0,
+                depth: 0.5,
+            }),
+            ..table(vec![0.0, 1.0, 0.0, -1.0], 2)
+        }
+    }
+
+    #[test]
+    fn slopes_position_and_lfo_are_checked() {
+        let ok = || swept(vec![vec![0.0, 1.0]], 0.5, vec![0.0, 1.0]);
+        assert!(build(ok(), vec![0.0, 1.0]).is_ok());
+        for bad in [f32::NAN, f32::INFINITY, 1.5, -0.5] {
+            let err = build(
+                swept(vec![vec![0.0, 1.0], vec![0.0, bad, 1.0]], 0.5, vec![0.0]),
+                vec![0.0, 1.0],
+            )
+            .err();
+            assert!(
+                matches!(err, Some(InstrumentError::Slope { index: 1, t, .. }) if t == 0.5),
+                "{err:?}"
+            );
+            let err = build(swept(vec![], bad, vec![0.0]), vec![0.0, 1.0]).err();
+            assert!(
+                matches!(err, Some(InstrumentError::Position { .. })),
+                "{err:?}"
+            );
+        }
+        for bad in [f32::NAN, f32::NEG_INFINITY, 1.5] {
+            let err = build(swept(vec![], 0.5, vec![0.0, bad]), vec![0.0, 1.0]).err();
+            assert!(
+                matches!(err, Some(InstrumentError::Lfo { phase, .. }) if phase == 0.5),
+                "{err:?}"
+            );
         }
     }
 
