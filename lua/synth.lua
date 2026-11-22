@@ -5,6 +5,7 @@ local synth = {
 	filter = require("synth.filter"),
 	instrument = require("synth.instrument"),
 	keyboard = require("synth.keyboard"),
+	lfo = require("synth.lfo"),
 	osc = require("synth.osc"),
 	sequence = require("synth.sequence"),
 	slope = require("synth.slope"),

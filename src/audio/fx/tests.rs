@@ -212,3 +212,61 @@ fn tiny_sample_rate_takes_the_ceiling() {
     let svf = Svf::new(lowpass(1000.0, SQRT_2), 4.0);
     assert_eq!(svf.cutoff(), 0.49 * 4.0);
 }
+
+use super::lfo::Lfo;
+
+#[test]
+fn an_lfo_reads_between_the_entries_of_its_cycle() {
+    let cycle = [0.0, 1.0, 0.0, -1.0];
+    // 1 Hz at 8 Hz: two samples per entry, so every other read is halfway
+    let mut lfo = Lfo::new(1.0, 8.0);
+    let got: Vec<f32> = (0..8).map(|_| lfo.next(&cycle)).collect();
+    assert_eq!(got, [0.0, 0.5, 1.0, 0.5, 0.0, -0.5, -1.0, -0.5]);
+}
+
+#[test]
+fn an_lfo_repeats_every_period() {
+    let cycle = [0.0, 1.0, 0.0, -1.0];
+    let mut lfo = Lfo::new(1.0, 100.0);
+    let first: Vec<f32> = (0..100).map(|_| lfo.next(&cycle)).collect();
+    let second: Vec<f32> = (0..100).map(|_| lfo.next(&cycle)).collect();
+    for (a, b) in first.iter().zip(&second) {
+        assert!((a - b).abs() < 1e-4, "{a} then {b}");
+    }
+}
+
+#[test]
+fn an_lfo_plays_a_lua_waveform_baked_like_an_oscillators() {
+    let patch = crate::script::load_source(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({ oscillator = synth.osc({ waveforms = { synth.wave.triangle } }) })
+        "#,
+        "patch.lua",
+        48000,
+    )
+    .unwrap();
+    let cycle = patch.timeline.instruments[0].wave.frame(0);
+    // one entry per sample, so a quarter cycle in is the triangle's peak
+    let mut lfo = Lfo::new(1.0, cycle.len() as f32);
+    let got: Vec<f32> = (0..cycle.len()).map(|_| lfo.next(cycle)).collect();
+    assert_eq!(got[0], cycle[0]);
+    assert!(
+        (got[cycle.len() / 4] - 1.0).abs() < 1e-3,
+        "{}",
+        got[cycle.len() / 4]
+    );
+}
+
+#[test]
+fn an_lfo_with_a_rate_that_is_not_finite_holds_still() {
+    let cycle = [0.25, 1.0];
+    let mut lfo = Lfo::new(f32::NAN, 100.0);
+    assert!((0..10).all(|_| lfo.next(&cycle) == 0.25));
+}
+
+#[test]
+fn an_lfo_with_no_cycle_is_silent() {
+    let mut lfo = Lfo::new(1.0, 100.0);
+    assert_eq!(lfo.next(&[]), 0.0);
+}

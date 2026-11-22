@@ -5,8 +5,10 @@
 //! `no_std` core from #33 unchanged. `mise run test:core` checks that.
 
 mod approx;
+mod lfo;
 mod svf;
 
+pub(crate) use lfo::Lfo;
 pub(crate) use svf::Svf;
 
 #[cfg(test)]

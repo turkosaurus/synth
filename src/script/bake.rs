@@ -2,7 +2,7 @@ use std::ops::RangeInclusive;
 
 use tracing::{debug_span, instrument};
 
-use crate::spec::{Diagnostic, DiagnosticKind, Instrument, Report, Segment, Wavetable};
+use crate::spec::{Diagnostic, DiagnosticKind, Instrument, Lfo, Report, Segment, Wavetable};
 
 use super::{field, schema, Error};
 
@@ -32,6 +32,27 @@ pub(super) struct OscSpec {
     waveforms: Vec<mlua::Function>,
     slopes: Vec<mlua::Function>,
     position: f64,
+    position_mod: Option<LfoSpec>,
+}
+
+struct LfoSpec {
+    wave: mlua::Function,
+    rate: f64,
+    depth: f64,
+}
+
+impl mlua::FromLua for LfoSpec {
+    fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
+        let table = spec_table(value, "lfo")?;
+        schema::LFO
+            .check(&table, None)
+            .map_err(mlua::Error::external)?;
+        Ok(Self {
+            wave: spec_entry(&table, "lfo", field::WAVE, "function")?,
+            rate: spec_entry(&table, "lfo", field::RATE, "number")?,
+            depth: spec_entry(&table, "lfo", field::DEPTH, "number")?,
+        })
+    }
 }
 
 pub(super) struct EnvelopeSpec {
@@ -87,6 +108,8 @@ impl mlua::FromLua for OscSpec {
             waveforms,
             slopes: spec_entry(&table, what, field::SLOPES, "list of curves")?,
             position: spec_entry(&table, what, field::POSITION, "number")?,
+            // no wrapping: LfoSpec names its own bad field
+            position_mod: table.get(field::POSITION_MOD)?,
         })
     }
 }
@@ -179,8 +202,8 @@ pub(super) fn bake_instrument(
     // one waveform plays its single frame with no blend, so what would
     // move a blend is set aside here and warned about below
     let mut unused = Vec::new();
-    let (waves, slopes, position) = match tabled {
-        true => (osc.waveforms, osc.slopes, osc.position),
+    let (waves, slopes, position, position_mod) = match tabled {
+        true => (osc.waveforms, osc.slopes, osc.position, osc.position_mod),
         false => {
             if !osc.slopes.is_empty() {
                 unused.push(field::SLOPES);
@@ -188,30 +211,45 @@ pub(super) fn bake_instrument(
             if osc.position != 0.0 {
                 unused.push(field::POSITION);
             }
-            (osc.waveforms, Vec::new(), 0.0)
+            if osc.position_mod.is_some() {
+                unused.push(field::POSITION_MOD);
+            }
+            (osc.waveforms, Vec::new(), 0.0, None)
         }
     };
 
-    // phase 1 is phase 0 again, so a cycle stops one point short of it
     let mut frames = Vec::with_capacity(waves.len() * TABLE_SIZE);
     let mut clamped = Vec::with_capacity(waves.len());
     {
         let _span = debug_span!("bake_wave", points = TABLE_SIZE, waves = waves.len()).entered();
         for (k, waveform) in waves.iter().enumerate() {
-            let phases = (0..TABLE_SIZE).map(|i| i as f64 / TABLE_SIZE as f64);
-            let (cycle, count) = sample(phases, -1.0..=1.0, |phase| {
-                waveform.call(phase).map_err(|source| match tabled {
-                    true => Error::Wave {
-                        index: k + 1,
-                        source,
-                    },
-                    false => Error::Waveform { source },
-                })
+            let (cycle, count) = bake_cycle(waveform, |source| match tabled {
+                true => Error::Wave {
+                    index: k + 1,
+                    source,
+                },
+                false => Error::Waveform { source },
             })?;
             frames.extend(cycle);
             clamped.push(count);
         }
     }
+    // the same cycle bake an oscillator gets, rotated to start from rest
+    let position_mod = match position_mod {
+        Some(lfo) => {
+            let (mut cycle, count) = bake_cycle(&lfo.wave, |source| Error::LfoWave { source })?;
+            if let Some(start) = rising_zero(&cycle) {
+                cycle.rotate_left(start);
+            }
+            let lfo = Lfo {
+                cycle,
+                rate: lfo.rate as f32,
+                depth: lfo.depth as f32,
+            };
+            Some((lfo, count))
+        }
+        None => None,
+    };
     let slopes = slopes
         .iter()
         .enumerate()
@@ -264,6 +302,7 @@ pub(super) fn bake_instrument(
             points: TABLE_SIZE,
             slopes: slopes.iter().map(|(curve, _)| curve.clone()).collect(),
             position: position as f32,
+            position_mod: position_mod.as_ref().map(|(lfo, _)| lfo.clone()),
         },
         attack,
         decay,
@@ -278,6 +317,12 @@ pub(super) fn bake_instrument(
     ];
     // inspect first, so its warnings describe the cycle as written
     let mut report = inspect(&instrument, sample_rate, &clamped, &curves);
+    if let Some((_, count)) = position_mod.filter(|(_, count)| *count > 0) {
+        report.diagnostics.push(Diagnostic::new(
+            DiagnosticKind::Range,
+            format!("lfo wave exceeded -1.0..1.0 at {count} points and was flattened"),
+        ));
+    }
     for name in unused {
         report.diagnostics.push(Diagnostic::new(
             DiagnosticKind::Unused,
@@ -305,6 +350,18 @@ pub(super) fn bake_instrument(
         }
     }
     Ok((instrument, report))
+}
+
+// One waveform cycle, TABLE_SIZE points from phase 0; phase 1 is phase 0
+// again, so it stops one point short. `error` names which waveform failed.
+fn bake_cycle(
+    waveform: &mlua::Function,
+    error: impl Fn(mlua::Error) -> Error,
+) -> Result<(Vec<f32>, usize), Error> {
+    let phases = (0..TABLE_SIZE).map(|i| i as f64 / TABLE_SIZE as f64);
+    sample(phases, -1.0..=1.0, |phase| {
+        waveform.call(phase).map_err(&error)
+    })
 }
 
 // A transition's slope, sampled like an envelope curve: the same points

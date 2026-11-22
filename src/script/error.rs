@@ -119,6 +119,12 @@ pub enum Error {
     #[error("tuning returned {} Hz for note {note}; must be positive and finite", hz_shown(*hz))]
     TuningHz { note: u8, hz: f64 },
 
+    #[error("lfo wave must return a number for every phase")]
+    LfoWave {
+        #[source]
+        source: mlua::Error,
+    },
+
     #[error("waveform must return a number for every phase")]
     Waveform {
         #[source]

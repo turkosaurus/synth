@@ -18,6 +18,8 @@ enum Ty {
     Flag,
     /// a `synth.osc`, whose stamp the structure walk checks
     Osc,
+    /// a `synth.lfo`, whose stamp the structure walk checks
+    Lfo,
 }
 
 impl Ty {
@@ -30,6 +32,7 @@ impl Ty {
             Self::Text => "a string",
             Self::Flag => "true or false",
             Self::Osc => "a synth.osc({…})",
+            Self::Lfo => "a synth.lfo({…})",
         }
     }
 }
@@ -195,6 +198,17 @@ pub(super) const SEQUENCE: Schema = Schema {
     ],
 };
 
+/// A `synth.lfo`, as its constructor fills it. `depth` is in the units of
+/// the parameter it moves; `position` is the only one, so 0 to 1.
+pub(super) const LFO: Schema = Schema {
+    what: "lfo",
+    fields: &[
+        field(field::WAVE, Ty::Function, Bound::Any),
+        field(field::RATE, Ty::Number, Bound::AtLeast(0.0)),
+        field(field::DEPTH, Ty::Number, Bound::Between(0.0, 1.0)),
+    ],
+};
+
 /// A `synth.osc`, as its constructor fills it.
 pub(super) const OSC: Schema = Schema {
     what: "osc",
@@ -202,6 +216,7 @@ pub(super) const OSC: Schema = Schema {
         field(field::WAVEFORMS, Ty::Table, Bound::Any),
         field(field::SLOPES, Ty::Table, Bound::Any),
         field(field::POSITION, Ty::Number, Bound::Between(0.0, 1.0)),
+        optional(field::POSITION_MOD, Ty::Lfo, Bound::Any),
     ],
 };
 
@@ -262,7 +277,7 @@ impl Schema {
                 | (mlua::Value::Table(_), Ty::Table)
                 | (mlua::Value::String(_), Ty::Text)
                 | (mlua::Value::Boolean(_), Ty::Flag)
-                | (mlua::Value::Table(_), Ty::Osc) => None,
+                | (mlua::Value::Table(_), Ty::Osc | Ty::Lfo) => None,
                 (_, ty) => {
                     return Err(Error::WrongType {
                         what,
