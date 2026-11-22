@@ -83,6 +83,7 @@ impl Stats {
 /// One reading of [`Stats`]. Plain data, so a view can render it and a log
 /// can carry it as fields without either touching an atomic.
 #[derive(Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Snapshot {
     pub frames: u64,
     pub clips: u64,
