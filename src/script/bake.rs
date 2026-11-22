@@ -2,7 +2,7 @@ use std::ops::RangeInclusive;
 
 use tracing::{debug_span, instrument};
 
-use crate::spec::{Diagnostic, DiagnosticKind, Instrument, Report, Segment};
+use crate::spec::{Diagnostic, DiagnosticKind, Instrument, Report, Segment, Wavetable};
 
 use super::{field, schema, Error};
 
@@ -15,12 +15,27 @@ const TABLE_SIZE: usize = 2048;
 // length; render reads between them
 const CURVE_POINTS: usize = 1024;
 
+// waves one table may hold: TABLE_SIZE f32 each, so 256 is 2 MB
+const MAX_WAVES: usize = 256;
+
 // An instrument table as Rust reads it. The struct is the schema: serde
 // cannot be, since its data model has no function type.
 pub(super) struct InstrumentSpec {
-    waveform: mlua::Function,
+    waveform: WaveSpec,
     envelope: EnvelopeSpec,
     voice_count: usize,
+}
+
+/// A waveform field as Rust reads it: one waveform, or a `wave.table`.
+pub(super) enum WaveSpec {
+    One(mlua::Function),
+    Table(WavetableSpec),
+}
+
+pub(super) struct WavetableSpec {
+    waves: Vec<mlua::Function>,
+    slopes: Vec<mlua::Function>,
+    position: f64,
 }
 
 pub(super) struct EnvelopeSpec {
@@ -40,10 +55,51 @@ impl mlua::FromLua for InstrumentSpec {
             .check(&table, None)
             .map_err(|error| mlua::Error::RuntimeError(format!("{error:#}")))?;
         Ok(Self {
-            waveform: spec_entry(&table, "instrument", field::WAVEFORM, "function")?,
+            // no wrapping: WavetableSpec names its own bad field
+            waveform: table.get(field::WAVEFORM)?,
             // no wrapping: EnvelopeSpec names its own bad field
             envelope: table.get(field::ENVELOPE)?,
             voice_count: spec_entry(&table, "instrument", field::VOICE_COUNT, "count")?,
+        })
+    }
+}
+
+impl mlua::FromLua for WaveSpec {
+    fn from_lua(value: mlua::Value, lua: &mlua::Lua) -> mlua::Result<Self> {
+        match value {
+            mlua::Value::Function(function) => Ok(Self::One(function)),
+            other => Ok(Self::Table(WavetableSpec::from_lua(other, lua)?)),
+        }
+    }
+}
+
+impl mlua::FromLua for WavetableSpec {
+    fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
+        let table = spec_table(value, "wave.table")?;
+        schema::WAVETABLE
+            .check(&table, None)
+            .map_err(|error| mlua::Error::RuntimeError(format!("{error:#}")))?;
+        let what = "wave.table";
+        let waves: Vec<mlua::Function> =
+            spec_entry(&table, what, field::WAVES, "list of waveforms")?;
+        if waves.is_empty() {
+            return Err(spec_error(
+                "table",
+                what,
+                "`waves` is empty; give at least one waveform".into(),
+            ));
+        }
+        if waves.len() > MAX_WAVES {
+            return Err(spec_error(
+                "table",
+                what,
+                format!("`waves` holds {}; at most {MAX_WAVES}", waves.len()),
+            ));
+        }
+        Ok(Self {
+            waves,
+            slopes: spec_entry(&table, what, field::SLOPES, "list of curves")?,
+            position: spec_entry(&table, what, field::POSITION, "number")?,
         })
     }
 }
@@ -131,16 +187,37 @@ pub(super) fn bake_instrument(
 ) -> Result<(Instrument, Report), Error> {
     let env = spec.envelope;
 
-    // phase 1 is phase 0 again, so a cycle stops one point short of it
-    let (cycle, clamped) = {
-        let _span = debug_span!("bake_wave", points = TABLE_SIZE).entered();
-        let phases = (0..TABLE_SIZE).map(|i| i as f64 / TABLE_SIZE as f64);
-        sample(phases, -1.0..=1.0, |phase| {
-            spec.waveform
-                .call(phase)
-                .map_err(|source| Error::Waveform { source })
-        })?
+    let tabled = matches!(spec.waveform, WaveSpec::Table(_));
+    let (waves, slopes, position) = match spec.waveform {
+        WaveSpec::One(waveform) => (vec![waveform], Vec::new(), 0.0),
+        WaveSpec::Table(table) => (table.waves, table.slopes, table.position),
     };
+
+    // phase 1 is phase 0 again, so a cycle stops one point short of it
+    let mut frames = Vec::with_capacity(waves.len() * TABLE_SIZE);
+    let mut clamped = Vec::with_capacity(waves.len());
+    {
+        let _span = debug_span!("bake_wave", points = TABLE_SIZE, waves = waves.len()).entered();
+        for (k, waveform) in waves.iter().enumerate() {
+            let phases = (0..TABLE_SIZE).map(|i| i as f64 / TABLE_SIZE as f64);
+            let (cycle, count) = sample(phases, -1.0..=1.0, |phase| {
+                waveform.call(phase).map_err(|source| match tabled {
+                    true => Error::Wave {
+                        index: k + 1,
+                        source,
+                    },
+                    false => Error::Waveform { source },
+                })
+            })?;
+            frames.extend(cycle);
+            clamped.push(count);
+        }
+    }
+    let slopes = slopes
+        .iter()
+        .enumerate()
+        .map(|(k, shape)| bake_slope(shape, k + 1))
+        .collect::<Result<Vec<_>, _>>()?;
 
     // each curve is sampled at the same points whatever its stage's
     // length; render stretches it over the stage and scales it from the
@@ -183,7 +260,12 @@ pub(super) fn bake_instrument(
     };
 
     let mut instrument = Instrument {
-        wave: cycle.into(),
+        wave: Wavetable {
+            frames,
+            points: TABLE_SIZE,
+            slopes: slopes.iter().map(|(curve, _)| curve.clone()).collect(),
+            position: position as f32,
+        },
         attack,
         decay,
         sustain_level: env.sustain_level as f32,
@@ -196,11 +278,55 @@ pub(super) fn bake_instrument(
         (field::RELEASE_CURVE, release_clamped),
     ];
     // inspect first, so its warnings describe the cycle as written
-    let report = inspect(&instrument, sample_rate, clamped, &curves);
-    if let Some(start) = rising_zero(instrument.wave.frame(0)) {
-        instrument.wave.frames.rotate_left(start);
+    let mut report = inspect(&instrument, sample_rate, &clamped, &curves);
+    for (k, (_, count)) in slopes
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, count))| *count > 0)
+    {
+        report.diagnostics.push(Diagnostic::new(
+            DiagnosticKind::Range,
+            format!(
+                "wave.table slopes[{}] left 0..1 at {count} points and was clamped",
+                k + 1
+            ),
+        ));
+    }
+    // each frame on its own, so every wave starts from rest and rising
+    for k in 0..instrument.wave.frame_count() {
+        let frame = instrument.wave.frame_mut(k);
+        if let Some(start) = rising_zero(frame) {
+            frame.rotate_left(start);
+        }
     }
     Ok((instrument, report))
+}
+
+// A transition's slope, sampled like an envelope curve: the same points
+// whatever the table, read between them at playback.
+fn bake_slope(shape: &mlua::Function, index: usize) -> Result<(Vec<f32>, usize), Error> {
+    let ts = (0..=CURVE_POINTS).map(|i| i as f64 / CURVE_POINTS as f64);
+    sample(ts, 0.0..=1.0, |t| {
+        let along = match shape.call::<mlua::Value>(t)? {
+            mlua::Value::Number(n) => n,
+            mlua::Value::Integer(n) => n as f64,
+            mlua::Value::Function(_) => return Err(Error::SlopeUncalled { index }),
+            other => {
+                return Err(Error::SlopeType {
+                    index,
+                    got: other.type_name(),
+                })
+            }
+        };
+        if !along.is_finite() {
+            return Err(Error::SlopeNotFinite {
+                index,
+                value: along,
+                t,
+            });
+        }
+        Ok(along)
+    })
 }
 
 // Where a cycle first rises through 0: the first point at or above 0 whose
@@ -233,49 +359,62 @@ fn sample(
 
 // each warning corresponds to something audible: flattened peaks, a click
 // once per cycle, a speaker cone resting off-center, or a note cut mid-wave
-/// `curves` names each envelope curve and how many of its points left
-/// 0..1 and were clamped.
+/// `clamped` is how many points of each frame left -1..1, and `curves`
+/// names each envelope curve and how many of its points left 0..1.
 pub(super) fn inspect(
     instrument: &Instrument,
     sample_rate: u32,
-    clamped: usize,
+    clamped: &[usize],
     curves: &[(&str, usize)],
 ) -> Report {
     let rate = f64::from(sample_rate);
-    let wave = instrument.wave.frame(0);
-    let peak = wave.iter().fold(0.0f32, |acc, v| acc.max(v.abs()));
-    let dc = wave.iter().sum::<f32>() / wave.len() as f32;
-    let seam = (wave[wave.len() - 1] - wave[0]).abs();
-    let expected_step = 2.0 / wave.len() as f32;
-    // a square or saw jumps by design; only a wrap rougher than the
-    // shape's own steepest step is a mistake
-    let steepest = wave
-        .windows(2)
-        .map(|pair| (pair[1] - pair[0]).abs())
-        .fold(0.0f32, f32::max);
-
+    let count = instrument.wave.frame_count();
     let shape = |message: String| Diagnostic::new(DiagnosticKind::Shape, message);
     let mut diagnostics = Vec::new();
-    if clamped > 0 {
-        diagnostics.push(shape(format!(
-            "waveform exceeded -1.0..1.0 at {clamped} points and was flattened"
-        )));
-    }
-    if seam > expected_step * 4.0 && seam > steepest {
-        diagnostics.push(shape(format!(
-            "waveform does not wrap smoothly (seam {seam:.4}); expect a buzz"
-        )));
-    }
-    if dc.abs() > 0.01 {
-        diagnostics.push(shape(format!("waveform has a DC offset of {dc:.4}")));
-    }
-    if rising_zero(wave).is_none() {
-        diagnostics.push(shape(
-            "waveform never rises through 0, so notes start at phase 0 as written".to_string(),
-        ));
-    }
-    if peak < 0.5 {
-        diagnostics.push(shape(format!("waveform peaks at only {peak:.3}")));
+    // the report's numbers describe the first wave; warnings cover every one
+    let mut first = (0.0, 0.0, 0.0);
+    for k in 0..count {
+        let wave = instrument.wave.frame(k);
+        let peak = wave.iter().fold(0.0f32, |acc, v| acc.max(v.abs()));
+        let dc = wave.iter().sum::<f32>() / wave.len() as f32;
+        let seam = (wave[wave.len() - 1] - wave[0]).abs();
+        let expected_step = 2.0 / wave.len() as f32;
+        // a square or saw jumps by design; only a wrap rougher than the
+        // shape's own steepest step is a mistake
+        let steepest = wave
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .fold(0.0f32, f32::max);
+        if k == 0 {
+            first = (peak, dc, seam);
+        }
+        let named = |message: String| match count {
+            1 => shape(message),
+            _ => shape(format!("waves[{}]: {message}", k + 1)),
+        };
+        let clamped = clamped.get(k).copied().unwrap_or(0);
+
+        if clamped > 0 {
+            diagnostics.push(named(format!(
+                "waveform exceeded -1.0..1.0 at {clamped} points and was flattened"
+            )));
+        }
+        if seam > expected_step * 4.0 && seam > steepest {
+            diagnostics.push(named(format!(
+                "waveform does not wrap smoothly (seam {seam:.4}); expect a buzz"
+            )));
+        }
+        if dc.abs() > 0.01 {
+            diagnostics.push(named(format!("waveform has a DC offset of {dc:.4}")));
+        }
+        if rising_zero(wave).is_none() {
+            diagnostics.push(named(
+                "waveform never rises through 0, so notes start at phase 0 as written".to_string(),
+            ));
+        }
+        if peak < 0.5 {
+            diagnostics.push(named(format!("waveform peaks at only {peak:.3}")));
+        }
     }
     for (name, count) in curves.iter().filter(|(_, count)| *count > 0) {
         diagnostics.push(Diagnostic::new(
@@ -289,11 +428,13 @@ pub(super) fn inspect(
         ));
     }
 
+    let (peak, dc, seam) = first;
     Report {
+        frames: count,
         peak,
         dc,
         seam,
-        clamped,
+        clamped: clamped.iter().sum(),
         attack: instrument.attack.samples(rate),
         decay: instrument.decay.samples(rate),
         release: instrument.release.samples(rate),

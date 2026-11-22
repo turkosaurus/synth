@@ -16,6 +16,8 @@ enum Ty {
     Table,
     Text,
     Flag,
+    /// a waveform function, or a `wave.table`
+    Wave,
 }
 
 impl Ty {
@@ -27,6 +29,7 @@ impl Ty {
             Self::Table => "a table",
             Self::Text => "a string",
             Self::Flag => "true or false",
+            Self::Wave => "a waveform or a wave.table",
         }
     }
 }
@@ -110,7 +113,7 @@ pub(super) const ENVELOPE: Schema = Schema {
 pub(super) const INSTRUMENT: Schema = Schema {
     what: "instrument",
     fields: &[
-        field(field::WAVEFORM, Ty::Function, Bound::Any),
+        field(field::WAVEFORM, Ty::Wave, Bound::Any),
         field(field::ENVELOPE, Ty::Table, Bound::Any),
         // a pool of zero voices could never sound
         field(field::VOICE_COUNT, Ty::Integer, Bound::AtLeast(1.0)),
@@ -192,6 +195,16 @@ pub(super) const SEQUENCE: Schema = Schema {
     ],
 };
 
+/// A `wave.table`, as its constructor fills it.
+pub(super) const WAVETABLE: Schema = Schema {
+    what: "wave.table",
+    fields: &[
+        field(field::WAVES, Ty::Table, Bound::Any),
+        field(field::SLOPES, Ty::Table, Bound::Any),
+        field(field::POSITION, Ty::Number, Bound::Between(0.0, 1.0)),
+    ],
+};
+
 /// One step as `synth.sequence` resolves it.
 pub(super) const STEP: Schema = Schema {
     what: "step",
@@ -248,7 +261,8 @@ impl Schema {
                 (mlua::Value::Function(_), Ty::Function)
                 | (mlua::Value::Table(_), Ty::Table)
                 | (mlua::Value::String(_), Ty::Text)
-                | (mlua::Value::Boolean(_), Ty::Flag) => None,
+                | (mlua::Value::Boolean(_), Ty::Flag)
+                | (mlua::Value::Function(_) | mlua::Value::Table(_), Ty::Wave) => None,
                 (_, ty) => {
                     return Err(Error::WrongType {
                         what,

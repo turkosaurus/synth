@@ -18,7 +18,7 @@ local instrument = setmetatable({}, {
 -- `keyboard`, `tuning`, and `filter` apply when the instrument is the
 -- patch's root, and are rejected on an instrument inside a sequence.
 ---@class synth.Instrument
----@field waveform? synth.Waveform
+---@field waveform? synth.Waveform|synth.Wavetable
 ---@field envelope? synth.Envelope
 ---@field voice_count? integer notes it can sound at once; 1 is mono
 ---@field keyboard? synth.Keyboard

@@ -42,6 +42,7 @@ enum Expect {
 fn expected(parent: &str, key: &str) -> Option<Expect> {
     Some(match (parent, key) {
         ("instrument", "envelope") => Expect::One("envelope"),
+        ("instrument", "waveform") => Expect::One("wave.table"),
         ("instrument" | "sequence", "keyboard") => Expect::One("keyboard"),
         ("instrument" | "sequence", "filter") => Expect::One("filter"),
         ("sequence", "instruments") => Expect::MapOf("instrument"),

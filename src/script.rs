@@ -181,6 +181,9 @@ mod field {
     pub(super) const REQUIRE: &str = "require";
 
     pub(super) const WAVEFORM: &str = "waveform";
+    pub(super) const WAVES: &str = "waves";
+    pub(super) const SLOPES: &str = "slopes";
+    pub(super) const POSITION: &str = "position";
     pub(super) const ENVELOPE: &str = "envelope";
     pub(super) const KEYBOARD: &str = "keyboard";
     pub(super) const VOICE_COUNT: &str = "voice_count";

@@ -155,6 +155,7 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
         table::pairs(
             &format!("instrument {name}  (rate {sample_rate})"),
             &[
+                ("frames", table::commas(report.frames)),
                 ("peak", format!("{:.3}", report.peak)),
                 ("dc", format!("{:+.4}", report.dc)),
                 ("seam", format!("{:.4}", report.seam)),

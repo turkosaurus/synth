@@ -125,6 +125,27 @@ pub enum Error {
         source: mlua::Error,
     },
 
+    #[error("wave.table waves[{index}] must return a number for every phase")]
+    Wave {
+        index: usize,
+        #[source]
+        source: mlua::Error,
+    },
+
+    #[error(
+        "wave.table slopes[{index}] returned a function, not a number: a curve \
+         constructor needs its (), as in synth.slope.exponential(2)"
+    )]
+    SlopeUncalled { index: usize },
+
+    #[error("wave.table slopes[{index}] must return a number from 0 to 1, got {got}")]
+    SlopeType { index: usize, got: &'static str },
+
+    #[error(
+        "wave.table slopes[{index}] returned {value} at t = {t}; must be a number from 0 to 1"
+    )]
+    SlopeNotFinite { index: usize, value: f64, t: f64 },
+
     #[error(
         "envelope.{field} returned a function, not a number: a curve \
          constructor needs its (), as in synth.slope.exponential(2)"
