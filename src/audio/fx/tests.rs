@@ -213,71 +213,71 @@ fn tiny_sample_rate_takes_the_ceiling() {
     assert_eq!(svf.cutoff(), 0.49 * 4.0);
 }
 
-#[test]
-fn sin_turn_tracks_std() {
-    for i in 0..1000 {
-        let turn = i as f32 / 1000.0;
-        let want = (2.0 * PI * turn).sin();
-        let got = approx::sin_turn(turn);
-        assert!(
-            (got - want).abs() <= 2e-3,
-            "sin_turn({turn}) = {got}, want {want}"
-        );
-    }
-}
-
-use super::lfo::{Lfo, Shape};
-
-const SHAPES: [Shape; 4] = [Shape::Sine, Shape::Triangle, Shape::Saw, Shape::Square];
-
-/// One cycle at 1 Hz over a 100 Hz rate: 100 samples.
-fn cycle(shape: Shape) -> Vec<f32> {
-    let mut lfo = Lfo::new(shape, 1.0, 100.0);
-    (0..100).map(|_| lfo.next()).collect()
-}
+use super::lfo::Lfo;
 
 #[test]
-fn every_lfo_shape_stays_within_full_scale() {
-    for shape in SHAPES {
-        assert!(
-            cycle(shape).iter().all(|v| (-1.0..=1.0).contains(v)),
-            "{shape:?}"
-        );
-    }
-}
-
-#[test]
-fn an_lfo_peaks_where_its_shape_does() {
-    let sine = cycle(Shape::Sine);
-    assert!((sine[25] - 1.0).abs() < 2e-3 && (sine[75] + 1.0).abs() < 2e-3);
-    // steps of 0.01 add up only close to 0.25, so read near the edges
-    assert!((cycle(Shape::Triangle)[25] - 1.0).abs() < 1e-4);
-    let square = cycle(Shape::Square);
-    assert_eq!((square[40], square[60]), (1.0, -1.0));
+fn an_lfo_reads_between_the_entries_of_its_cycle() {
+    let cycle = [0.0, 1.0, 0.0, -1.0];
+    // 1 Hz at 8 Hz: two samples per entry, so every other read is halfway
+    let mut lfo = Lfo::new(1.0, 8.0);
+    let got: Vec<f32> = (0..8).map(|_| lfo.next(&cycle)).collect();
+    assert_eq!(got, [0.0, 0.5, 1.0, 0.5, 0.0, -0.5, -1.0, -0.5]);
 }
 
 #[test]
 fn an_lfo_repeats_every_period() {
-    let mut lfo = Lfo::new(Shape::Triangle, 1.0, 100.0);
-    let first: Vec<f32> = (0..100).map(|_| lfo.next()).collect();
-    let second: Vec<f32> = (0..100).map(|_| lfo.next()).collect();
+    let cycle = [0.0, 1.0, 0.0, -1.0];
+    let mut lfo = Lfo::new(1.0, 100.0);
+    let first: Vec<f32> = (0..100).map(|_| lfo.next(&cycle)).collect();
+    let second: Vec<f32> = (0..100).map(|_| lfo.next(&cycle)).collect();
     for (a, b) in first.iter().zip(&second) {
         assert!((a - b).abs() < 1e-4, "{a} then {b}");
     }
 }
 
 #[test]
+fn an_lfo_plays_a_lua_waveform_baked_like_an_oscillators() {
+    let patch = crate::script::load_source(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({ waveform = synth.wave.triangle })
+        "#,
+        "patch.lua",
+        48000,
+    )
+    .unwrap();
+    let cycle = patch.timeline.instruments[0].wave.frame(0);
+    // one entry per sample, so a quarter cycle in is the triangle's peak
+    let mut lfo = Lfo::new(1.0, cycle.len() as f32);
+    let got: Vec<f32> = (0..cycle.len()).map(|_| lfo.next(cycle)).collect();
+    assert_eq!(got[0], cycle[0]);
+    assert!(
+        (got[cycle.len() / 4] - 1.0).abs() < 1e-3,
+        "{}",
+        got[cycle.len() / 4]
+    );
+}
+
+#[test]
 fn an_lfo_with_a_rate_that_is_not_finite_holds_still() {
-    let mut lfo = Lfo::new(Shape::Saw, f32::NAN, 100.0);
-    assert!((0..10).all(|_| lfo.next() == 0.0));
+    let cycle = [0.25, 1.0];
+    let mut lfo = Lfo::new(f32::NAN, 100.0);
+    assert!((0..10).all(|_| lfo.next(&cycle) == 0.25));
+}
+
+#[test]
+fn an_lfo_with_no_cycle_is_silent() {
+    let mut lfo = Lfo::new(1.0, 100.0);
+    assert_eq!(lfo.next(&[]), 0.0);
 }
 
 #[test]
 fn reset_returns_an_lfo_to_its_start() {
-    let mut lfo = Lfo::new(Shape::Sine, 5.0, 100.0);
+    let cycle = [0.0, 1.0, 0.0, -1.0];
+    let mut lfo = Lfo::new(5.0, 100.0);
     (0..7).for_each(|_| {
-        lfo.next();
+        lfo.next(&cycle);
     });
     lfo.reset();
-    assert_eq!(lfo.next(), 0.0);
+    assert_eq!(lfo.next(&cycle), 0.0);
 }
