@@ -40,7 +40,7 @@ flowchart LR
     subgraph rust
         script -->|validate| spec
         spec -->|keymap| input
-        spec --> |defaults| session
+        spec --> |config| session
         input -->|event| session
         view -->|msg| session
         view -->|read| session
