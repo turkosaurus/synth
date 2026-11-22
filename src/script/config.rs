@@ -14,16 +14,19 @@ use crate::spec::{Config, TuiConfig};
 const FILE: [&str; 2] = ["synth", "config.lua"];
 /// The patches folder under the data directory.
 const PATCHES: [&str; 2] = ["synth", "patches"];
+/// The debug log under the state directory.
+const LOG: [&str; 2] = ["synth", "synth.log"];
 
-/// Where the config and data directories are, from the environment. The XDG
+/// Where the config, data, and state directories are, from the environment. The XDG
 /// variables win wherever they are set; otherwise Unix uses the XDG spec's
 /// defaults under `HOME`, and Windows, which sets neither, uses `APPDATA`.
 /// Values are taken as given so the rules can be tested on any platform.
 struct Dirs {
     xdg_config: Option<OsString>,
     xdg_data: Option<OsString>,
+    xdg_state: Option<OsString>,
     home: Option<OsString>,
-    /// Windows' roaming application data, for both config and patches
+    /// Windows' roaming application data, for config, patches, and the log
     appdata: Option<OsString>,
     /// Windows' home, for `~/` when `HOME` is not set
     userprofile: Option<OsString>,
@@ -44,6 +47,7 @@ impl Dirs {
         Self {
             xdg_config: env::var_os("XDG_CONFIG_HOME"),
             xdg_data: env::var_os("XDG_DATA_HOME"),
+            xdg_state: env::var_os("XDG_STATE_HOME"),
             home: env::var_os("HOME"),
             appdata: env::var_os("APPDATA"),
             userprofile: env::var_os("USERPROFILE"),
@@ -69,6 +73,14 @@ impl Dirs {
         absolute(&self.xdg_data).or_else(|| match self.windows {
             true => absolute(&self.appdata),
             false => Some(absolute(&self.home)?.join(".local").join("share")),
+        })
+    }
+
+    /// `$XDG_STATE_HOME`, else `~/.local/state`, or `%APPDATA%` on Windows.
+    fn state(&self) -> Option<PathBuf> {
+        absolute(&self.xdg_state).or_else(|| match self.windows {
+            true => absolute(&self.appdata),
+            false => Some(absolute(&self.home)?.join(".local").join("state")),
         })
     }
 }
@@ -121,6 +133,12 @@ pub fn config() -> anyhow::Result<Config> {
 /// under the config directory. `None` when the environment names none.
 pub fn config_path() -> Option<PathBuf> {
     Dirs::current().config().map(|dir| under(dir, &FILE))
+}
+
+/// Where the debug log goes: `synth/synth.log` under the state directory.
+/// `None` when the environment names none.
+pub fn log_path() -> Option<PathBuf> {
+    Dirs::current().state().map(|dir| under(dir, &LOG))
 }
 
 /// The file's source, or `None` when there is no file.
@@ -251,6 +269,7 @@ mod tests {
         Dirs {
             xdg_config: xdg.map(var),
             xdg_data: xdg.map(var),
+            xdg_state: xdg.map(var),
             home: home.map(var),
             appdata: None,
             userprofile: None,
@@ -263,6 +282,7 @@ mod tests {
         Dirs {
             xdg_config: None,
             xdg_data: None,
+            xdg_state: None,
             home: None,
             appdata: appdata.map(var),
             userprofile: userprofile.map(var),
@@ -291,6 +311,17 @@ mod tests {
         );
         assert_eq!(at(None, Some("h")), None);
         assert_eq!(at(None, None), None);
+    }
+
+    #[test]
+    fn the_log_prefers_xdg_state() {
+        let log = |xdg, home| unix(xdg, home).state().map(|dir| under(dir, &LOG));
+        assert_eq!(log(Some("/x"), Some("/h")), Some(abs("/x/synth/synth.log")));
+        assert_eq!(
+            log(None, Some("/h")),
+            Some(abs("/h/.local/state/synth/synth.log"))
+        );
+        assert_eq!(log(Some("x"), None), None);
     }
 
     fn user(source: &str) -> anyhow::Result<Config> {
