@@ -46,18 +46,18 @@ flowchart LR
         view -->|read| session
         session -->|play| events
         spec -->|sequence| events
-        subgraph audio
+        subgraph audio-thread
             events --> render
         end
     end
     subgraph hardware
         controller["controller (keyboard, MIDI)"]
-        speakers
+        output
         display
     end
     controller --> input
     view -->|draw| display
-    render --> speakers
+    render --> output
 ```
 
 details: [`lua`](./lua), [`script`](./src/script), [`spec`](./src/spec), [`input`](./src/input), [`session`](./src/session.rs), [`audio`](./src/audio), [`view`](./src/view), or [`src`](./src)
