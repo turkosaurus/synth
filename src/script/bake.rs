@@ -26,7 +26,7 @@ pub(super) struct InstrumentSpec {
     voice_count: usize,
 }
 
-/// A waveform field as Rust reads it: one waveform, or a `wave.table`.
+/// An oscillator as Rust reads it: one waveform, or a table of them.
 pub(super) enum WaveSpec {
     One(mlua::Function),
     Table(WavetableSpec),
@@ -40,9 +40,23 @@ pub(super) struct WavetableSpec {
 }
 
 struct LfoSpec {
-    wave: PeriodicSpec,
+    wave: mlua::Function,
     rate: f64,
     depth: f64,
+}
+
+impl mlua::FromLua for LfoSpec {
+    fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
+        let table = spec_table(value, "lfo")?;
+        schema::LFO
+            .check(&table, None)
+            .map_err(mlua::Error::external)?;
+        Ok(Self {
+            wave: spec_entry(&table, "lfo", field::WAVE, "function")?,
+            rate: spec_entry(&table, "lfo", field::RATE, "number")?,
+            depth: spec_entry(&table, "lfo", field::DEPTH, "number")?,
+        })
+    }
 }
 
 pub(super) struct EnvelopeSpec {
@@ -62,7 +76,8 @@ impl mlua::FromLua for InstrumentSpec {
             .check(&table, None)
             .map_err(mlua::Error::external)?;
         Ok(Self {
-            waveform: wave(&table)?,
+            // no wrapping: WaveSpec names its own bad field
+            waveform: table.get(field::OSCILLATOR)?,
             // no wrapping: EnvelopeSpec names its own bad field
             envelope: table.get(field::ENVELOPE)?,
             voice_count: spec_entry(&table, "instrument", field::VOICE_COUNT, "count")?,
@@ -70,64 +85,44 @@ impl mlua::FromLua for InstrumentSpec {
     }
 }
 
-impl mlua::FromLua for LfoSpec {
-    fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
-        let table = spec_table(value, "lfo")?;
-        schema::LFO
-            .check(&table, None)
-            .map_err(mlua::Error::external)?;
-        Ok(Self {
-            wave: table.get(field::WAVE)?,
-            rate: spec_entry(&table, "lfo", field::RATE, "number")?,
-            depth: spec_entry(&table, "lfo", field::DEPTH, "number")?,
-        })
-    }
-}
-
-/// A `wave.periodic`'s one waveform.
-struct PeriodicSpec(mlua::Function);
-
-impl mlua::FromLua for PeriodicSpec {
-    fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
-        let table = spec_table(value, "wave.periodic")?;
-        schema::PERIODIC
-            .check(&table, None)
-            .map_err(mlua::Error::external)?;
-        Ok(Self(spec_entry(
-            &table,
-            "wave.periodic",
-            field::SHAPE,
-            "function",
-        )?))
-    }
-}
-
-/// The instrument's one wave: its `waveform` or its `wavetable`. The specs
-/// name their own bad fields, so they are read without wrapping.
-fn wave(table: &mlua::Table) -> mlua::Result<WaveSpec> {
-    let periodic: Option<PeriodicSpec> = table.get(field::WAVEFORM)?;
-    let wavetable: Option<WavetableSpec> = table.get(field::WAVETABLE)?;
-    let what = || -> mlua::Result<String> {
-        Ok(match super::structure::made_at(table)? {
-            Some(at) => format!("instrument made at {at}"),
-            None => "instrument".to_string(),
-        })
-    };
-    match (periodic, wavetable) {
-        (Some(PeriodicSpec(shape)), None) => Ok(WaveSpec::One(shape)),
-        (None, Some(wavetable)) => Ok(WaveSpec::Table(wavetable)),
-        (Some(_), Some(_)) => Err(mlua::Error::external(Error::BothWaves { what: what()? })),
-        (None, None) => Err(mlua::Error::external(Error::NoWave { what: what()? })),
+/// An oscillator as its `_kind` says: one waveform, or a table of them.
+/// The table names its own bad field, so it is read without wrapping.
+impl mlua::FromLua for WaveSpec {
+    fn from_lua(value: mlua::Value, lua: &mlua::Lua) -> mlua::Result<Self> {
+        let table = spec_table(value, "osc")?;
+        let kind: String = spec_entry(&table, "osc", field::KIND, "oscillator kind")?;
+        match kind.as_str() {
+            "periodic" => {
+                schema::OSC_PERIODIC
+                    .check(&table, None)
+                    .map_err(mlua::Error::external)?;
+                Ok(Self::One(spec_entry(
+                    &table,
+                    "osc.periodic",
+                    field::WAVE,
+                    "function",
+                )?))
+            }
+            "table" => Ok(Self::Table(WavetableSpec::from_lua(
+                mlua::Value::Table(table),
+                lua,
+            )?)),
+            other => Err(spec_error(
+                "table",
+                "osc",
+                format!("unknown oscillator kind `{other}`; expected periodic or table"),
+            )),
+        }
     }
 }
 
 impl mlua::FromLua for WavetableSpec {
     fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
-        let table = spec_table(value, "wave.table")?;
-        schema::WAVETABLE
+        let table = spec_table(value, "osc.table")?;
+        schema::OSC_TABLE
             .check(&table, None)
             .map_err(|error| mlua::Error::RuntimeError(format!("{error:#}")))?;
-        let what = "wave.table";
+        let what = "osc.table";
         let waves: Vec<mlua::Function> =
             spec_entry(&table, what, field::WAVES, "list of waveforms")?;
         if waves.is_empty() {
@@ -267,7 +262,7 @@ pub(super) fn bake_instrument(
     // the same cycle bake an oscillator gets, rotated to start from rest
     let position_mod = match position_mod {
         Some(lfo) => {
-            let (mut cycle, count) = bake_cycle(&lfo.wave.0, |source| Error::LfoWave { source })?;
+            let (mut cycle, count) = bake_cycle(&lfo.wave, |source| Error::LfoWave { source })?;
             if let Some(start) = rising_zero(&cycle) {
                 cycle.rotate_left(start);
             }
@@ -361,7 +356,7 @@ pub(super) fn bake_instrument(
         report.diagnostics.push(Diagnostic::new(
             DiagnosticKind::Range,
             format!(
-                "wave.table slopes[{}] left 0..1 at {count} points and was clamped",
+                "osc.table slopes[{}] left 0..1 at {count} points and was clamped",
                 k + 1
             ),
         ));

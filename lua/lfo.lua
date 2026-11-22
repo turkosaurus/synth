@@ -18,12 +18,12 @@ local lfo = setmetatable({}, {
 })
 
 ---@class synth.Lfo
----@field wave? synth.Periodic its shape, one cycle per period
+---@field wave? synth.Waveform its shape, one cycle per period
 ---@field rate? number cycles per second
 ---@field depth? number how far either side of the parameter's own value it moves, in that parameter's units
 
 defaults = {
-	wave = wave.periodic(wave.sine),
+	wave = wave.sine,
 	rate = 1, -- Hz
 	depth = 0.25,
 }

@@ -2,11 +2,11 @@
 local synth = require("synth")
 
 return synth.instrument({
-	wavetable = synth.wave.table({
+	oscillator = synth.osc.table({
 		waves = { synth.wave.sine, synth.wave.saw, synth.wave.square },
 		position = 0.5,
 		position_mod = synth.lfo({
-			wave = synth.wave.periodic(synth.wave.triangle),
+			wave = synth.wave.triangle,
 			rate = 0.5, -- Hz
 			depth = 0.5,
 		}),
