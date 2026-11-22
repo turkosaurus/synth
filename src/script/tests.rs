@@ -1561,3 +1561,25 @@ fn a_step_naming_an_undefined_instrument_is_matched_by_variant() {
         "{error:#}"
     );
 }
+
+#[test]
+fn an_envelope_out_of_range_keeps_its_variant_through_lua() {
+    let error = rejected(
+        r#"
+        local synth = require("synth")
+        local swell = synth.envelope({ sustain = 2 })
+        return synth.sequence({
+            instruments = { a = synth.instrument({ envelope = swell }) },
+            instrument = "a",
+            steps = { { note = 60 } },
+        })
+        "#,
+    );
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::OutOfRange { field: "sustain", value, .. }) if *value == 2.0
+        ),
+        "{error:#}"
+    );
+}
