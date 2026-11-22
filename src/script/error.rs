@@ -109,6 +109,16 @@ pub enum Error {
     #[error("keyboard.layout.notes['{key}'] is {value}; must be a whole number 0 to 127")]
     NoteRange { key: String, value: f64 },
 
+    #[error("tuning must return Hz for note {note}")]
+    TuningCall {
+        note: u8,
+        #[source]
+        source: mlua::Error,
+    },
+
+    #[error("tuning returned {} Hz for note {note}; must be positive and finite", hz_shown(*hz))]
+    TuningHz { note: u8, hz: f64 },
+
     /// Lua's own message already says what failed, so it is shown as is.
     #[error(transparent)]
     Lua(#[from] mlua::Error),
@@ -128,5 +138,14 @@ fn constructor(kind: &str) -> String {
         // filters have one constructor per type
         "filter" => "synth.filter.lowpass({…}) or another synth.filter constructor".to_string(),
         other => format!("synth.{other}({{…}})"),
+    }
+}
+
+/// Exponent form only where plain digits would run on.
+fn hz_shown(hz: f64) -> String {
+    if hz.abs() >= 1e9 {
+        format!("{hz:e}")
+    } else {
+        format!("{hz}")
     }
 }

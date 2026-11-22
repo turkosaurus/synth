@@ -1466,3 +1466,34 @@ fn a_note_outside_midi_is_matched_by_variant() {
         "{error:#}"
     );
 }
+
+#[test]
+fn a_tuning_that_is_not_a_positive_hz_is_matched_by_variant() {
+    let error = with_tuning(
+        "function(note) if note == 69 then return -440 end return 440 end",
+        48000,
+    )
+    .err()
+    .expect("the patch should not load");
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::TuningHz { note: 69, hz }) if *hz == -440.0
+        ),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn a_tuning_that_returns_no_number_is_matched_by_variant() {
+    let error = with_tuning("function(note) return 'a' end", 48000)
+        .err()
+        .expect("the patch should not load");
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::TuningCall { note: 0, .. })
+        ),
+        "{error:#}"
+    );
+}

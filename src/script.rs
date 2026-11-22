@@ -403,24 +403,16 @@ fn load_in(
 /// A frequency that is not positive and finite stops the load: it would
 /// reach the oscillator as a NaN or a frozen phase. One above Nyquist is
 /// only a warning, since it plays, folded back to a lower pitch.
-fn tune(to_hz: &mlua::Function, sample_rate: u32) -> anyhow::Result<(Vec<f32>, Vec<Diagnostic>)> {
+fn tune(to_hz: &mlua::Function, sample_rate: u32) -> Result<(Vec<f32>, Vec<Diagnostic>), Error> {
     let mut freqs = Vec::with_capacity(128);
     for note in 0..128u8 {
         let hz: f64 = to_hz
             .call(note)
-            .with_context(|| format!("tuning must return Hz for note {note}"))?;
+            .map_err(|source| Error::TuningCall { note, source })?;
         // checked after narrowing, so a value too large for f32 is caught
         let narrowed = hz as f32;
         if !(narrowed.is_finite() && narrowed > 0.0) {
-            // exponent form only where plain digits would run on
-            let shown = if hz.abs() >= 1e9 {
-                format!("{hz:e}")
-            } else {
-                format!("{hz}")
-            };
-            anyhow::bail!(
-                "tuning returned {shown} Hz for note {note}; must be positive and finite"
-            );
+            return Err(Error::TuningHz { note, hz });
         }
         freqs.push(narrowed);
     }
