@@ -6,6 +6,7 @@ use std::time::Duration;
 /// set: the embedded `lua/config.lua` supplies whatever a user's file leaves
 /// out.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Config {
     /// Frames per device callback. `None` leaves it to the platform.
     pub buffer_frames: Option<u32>,
@@ -19,6 +20,7 @@ pub struct Config {
 
 /// How the terminal view runs and draws.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct TuiConfig {
     /// Time between redraws, and the longest a key read waits.
     pub poll: Duration,

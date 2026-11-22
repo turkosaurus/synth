@@ -283,6 +283,7 @@ impl Segment {
 /// That keeps a MIDI input close to a passthrough, puts tuning in one place
 /// (the audio side), and lets a release find the voice pool it belongs to.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum Event {
     NoteOn {
         instrument: usize,
