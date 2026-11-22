@@ -150,6 +150,21 @@ pub enum Error {
     #[error("step {step} names instrument `{name}`, which is not defined")]
     UndefinedInstrument { step: usize, name: String },
 
+    /// The source is shared so `Error` stays `Clone`.
+    #[error("{action} {}", path.display())]
+    Io {
+        action: &'static str,
+        path: std::path::PathBuf,
+        #[source]
+        source: std::sync::Arc<std::io::Error>,
+    },
+
+    #[error("file must return a table, got {got}")]
+    ReturnNotATable { got: &'static str },
+
+    #[error("{what} is not callable")]
+    NotCallable { what: &'static str },
+
     /// Lua's own message already says what failed, so it is shown as is.
     #[error(transparent)]
     Lua(mlua::Error),
