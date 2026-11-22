@@ -8,13 +8,13 @@ mod fx;
 mod render;
 
 pub use device::{open, stream, Output, Snapshot, Stats, Stream};
-pub use render::Player;
+pub use render::{Feed, Player};
 
 /// The callback's render step, for `benches/` only: a bench links the
 /// crate from outside, so it sees only what is public.
 #[doc(hidden)]
 pub mod bench {
-    use super::render::{fill as render_fill, Player};
+    use super::render::{fill as render_fill, Feed, Player};
     use crate::spec::{Event, Freqs, Instrument};
 
     /// Fills `out` as the audio callback does, returning the frames written.
@@ -29,6 +29,13 @@ pub mod bench {
         events: rtrb::Consumer<Event>,
         sample_rate: f32,
     ) -> Player {
-        Player::live(instruments, freqs, events, sample_rate)
+        Player::new(
+            Feed::Live {
+                instruments,
+                events,
+            },
+            freqs,
+            sample_rate,
+        )
     }
 }
