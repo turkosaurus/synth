@@ -1,6 +1,6 @@
 /// Why a patch failed to load. Each variant names where in the patch it
 /// failed, so a caller can match on the reason and still print the place.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
     #[error("{what}: unknown field `{field}`; expected one of {}", .expected.join(", "))]
@@ -152,7 +152,21 @@ pub enum Error {
 
     /// Lua's own message already says what failed, so it is shown as is.
     #[error(transparent)]
-    Lua(#[from] mlua::Error),
+    Lua(mlua::Error),
+}
+
+impl From<mlua::Error> for Error {
+    /// `FromLua` can only fail with an `mlua::Error`, so a check there
+    /// crosses as an external error. Only a bare wrapper is unwrapped:
+    /// a callback's traceback is part of its message.
+    fn from(error: mlua::Error) -> Self {
+        if let mlua::Error::ExternalError(external) = &error {
+            if let Some(inner) = external.downcast_ref::<Error>() {
+                return inner.clone();
+            }
+        }
+        Error::Lua(error)
+    }
 }
 
 /// `an envelope`, `a keyboard`.
