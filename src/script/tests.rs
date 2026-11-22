@@ -1389,3 +1389,40 @@ fn a_keyboard_out_of_range_is_matched_by_variant() {
         "{error:#}"
     );
 }
+
+#[test]
+fn a_cycle_is_matched_by_variant() {
+    let error = rejected(
+        r#"
+        local synth = require("synth")
+        local loop = {}
+        loop.self = loop
+        return synth.instrument({ extra = loop })
+        "#,
+    );
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::Cycle { what }) if what == "extra.self"
+        ),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn a_field_of_the_wrong_kind_is_matched_by_variant() {
+    let error = rejected(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({ envelope = synth.keyboard({}) })
+        "#,
+    );
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::WrongKind { what, expected: "envelope", got, .. })
+                if what == "envelope" && got == "keyboard"
+        ),
+        "{error:#}"
+    );
+}

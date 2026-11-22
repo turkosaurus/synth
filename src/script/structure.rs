@@ -6,7 +6,7 @@
 //! holds the kind it should, rejects cycles, and records every stamped table
 //! by its path.
 
-use super::field;
+use super::{field, Error};
 use crate::spec::Node;
 
 /// What a constructor wrote on a table's metatable.
@@ -49,23 +49,6 @@ fn expected(parent: &str, key: &str) -> Option<Expect> {
     })
 }
 
-/// How to build a value of `kind`, for an error about an untagged table.
-fn constructor(kind: &str) -> String {
-    match kind {
-        // filters have one constructor per type
-        "filter" => "synth.filter.lowpass({…}) or another synth.filter constructor".to_string(),
-        other => format!("synth.{other}({{…}})"),
-    }
-}
-
-/// `an envelope`, `a keyboard`.
-fn article(kind: &str) -> String {
-    match kind.chars().next() {
-        Some('a' | 'e' | 'i' | 'o' | 'u') => format!("an {kind}"),
-        _ => format!("a {kind}"),
-    }
-}
-
 /// `instruments.tri.envelope`, or `the patch` for the root.
 fn name(path: &str) -> &str {
     if path.is_empty() {
@@ -75,22 +58,19 @@ fn name(path: &str) -> &str {
     }
 }
 
-fn check(table: &mlua::Table, kind: &str, path: &str) -> anyhow::Result<()> {
+fn check(table: &mlua::Table, kind: &'static str, path: &str) -> Result<(), Error> {
     match stamp(table)? {
         Some(found) if found.kind == kind => Ok(()),
-        Some(found) => anyhow::bail!(
-            "{}: expected {}, got {} made at {}",
-            name(path),
-            article(kind),
-            article(&found.kind),
-            found.at
-        ),
-        None => anyhow::bail!(
-            "{}: expected {}, got a plain table; build it with {}",
-            name(path),
-            article(kind),
-            constructor(kind)
-        ),
+        Some(found) => Err(Error::WrongKind {
+            what: name(path).to_string(),
+            expected: kind,
+            got: found.kind,
+            at: found.at,
+        }),
+        None => Err(Error::PlainTable {
+            what: name(path).to_string(),
+            expected: kind,
+        }),
     }
 }
 
@@ -98,13 +78,14 @@ fn check(table: &mlua::Table, kind: &str, path: &str) -> anyhow::Result<()> {
 /// Anywhere else they would load and be ignored.
 const ROOT_ONLY: [&str; 3] = [field::KEYBOARD, field::TUNING, field::FILTER];
 
-fn root_only(table: &mlua::Table, path: &str, at: &str) -> anyhow::Result<()> {
+fn root_only(table: &mlua::Table, path: &str, at: &str) -> Result<(), Error> {
     for key in ROOT_ONLY {
         if !table.raw_get::<mlua::Value>(key)?.is_nil() {
-            anyhow::bail!(
-                "{path}: `{key}` applies only to the patch's root; \
-                 set it on the sequence (instrument made at {at})"
-            );
+            return Err(Error::RootOnly {
+                what: path.to_string(),
+                field: key,
+                at: at.to_string(),
+            });
         }
     }
     Ok(())
@@ -113,17 +94,16 @@ fn root_only(table: &mlua::Table, path: &str, at: &str) -> anyhow::Result<()> {
 /// Walks the patch from its root and returns every stamped table, sorted by
 /// path. Fails on a root that is not an instrument or a sequence, on a field
 /// holding the wrong kind, and on a cycle.
-pub(super) fn walk(root: &mlua::Table, source: &str) -> anyhow::Result<Vec<Node>> {
+pub(super) fn walk(root: &mlua::Table, source: &str) -> Result<Vec<Node>, Error> {
     match stamp(root)? {
         Some(found) if matches!(found.kind.as_str(), "instrument" | "sequence") => {}
-        Some(found) => anyhow::bail!(
-            "a patch must return an instrument or a sequence, got {} made at {}",
-            article(&found.kind),
-            found.at
-        ),
-        None => anyhow::bail!(
-            "a patch must return synth.instrument({{…}}) or synth.sequence({{…}}), got a plain table"
-        ),
+        Some(found) => {
+            return Err(Error::RootKind {
+                got: found.kind,
+                at: found.at,
+            })
+        }
+        None => return Err(Error::RootPlainTable),
     }
     let mut nodes = Vec::new();
     visit(root, String::new(), &mut Vec::new(), &mut nodes)?;
@@ -143,15 +123,14 @@ fn visit(
     path: String,
     ancestors: &mut Vec<*const std::ffi::c_void>,
     nodes: &mut Vec<Node>,
-) -> anyhow::Result<()> {
+) -> Result<(), Error> {
     // only ancestors count: a table shared by two fields is fine, one that
     // contains itself is not
     let here = table.to_pointer();
     if ancestors.contains(&here) {
-        anyhow::bail!(
-            "{} contains itself; a patch cannot hold a cycle",
-            name(&path)
-        );
+        return Err(Error::Cycle {
+            what: name(&path).to_string(),
+        });
     }
 
     let found = stamp(table)?;
@@ -194,11 +173,13 @@ fn visit(
                         };
                         match value {
                             mlua::Value::Table(entry) => check(&entry, kind, &entry_path)?,
-                            other => anyhow::bail!(
-                                "{entry_path}: expected {}, got a {}",
-                                article(kind),
-                                other.type_name()
-                            ),
+                            other => {
+                                return Err(Error::NotATable {
+                                    what: entry_path,
+                                    expected: kind,
+                                    got: other.type_name(),
+                                })
+                            }
                         }
                     }
                 }
