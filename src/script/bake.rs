@@ -296,20 +296,21 @@ pub(super) fn bake_instrument(
         )
     };
 
-    let mut instrument = Instrument {
-        wave: Wavetable {
-            frames,
-            points: TABLE_SIZE,
-            slopes: slopes.iter().map(|(curve, _)| curve.clone()).collect(),
-            position: position as f32,
-            position_mod: position_mod.as_ref().map(|(lfo, _)| lfo.clone()),
-        },
+    let wave = Wavetable {
+        frames,
+        points: TABLE_SIZE,
+        slopes: slopes.iter().map(|(curve, _)| curve.clone()).collect(),
+        position: position as f32,
+        position_mod: position_mod.as_ref().map(|(lfo, _)| lfo.clone()),
+    };
+    let mut instrument = Instrument::new(
+        wave,
         attack,
         decay,
-        sustain_level: env.sustain_level as f32,
+        env.sustain_level as f32,
         release,
-        voice_count: spec.voice_count,
-    };
+        spec.voice_count,
+    )?;
     let curves = [
         (field::ATTACK_CURVE, attack_clamped),
         (field::DECAY_CURVE, decay_clamped),
@@ -343,10 +344,9 @@ pub(super) fn bake_instrument(
         ));
     }
     // each frame on its own, so every wave starts from rest and rising
-    for k in 0..instrument.wave.frame_count() {
-        let frame = instrument.wave.frame_mut(k);
-        if let Some(start) = rising_zero(frame) {
-            frame.rotate_left(start);
+    for k in 0..instrument.wave().frame_count() {
+        if let Some(start) = rising_zero(instrument.wave().frame(k)) {
+            instrument.rotate_frame(k, start);
         }
     }
     Ok((instrument, report))
@@ -430,13 +430,13 @@ pub(super) fn inspect(
     curves: &[(&str, usize)],
 ) -> Report {
     let rate = f64::from(sample_rate);
-    let count = instrument.wave.frame_count();
+    let count = instrument.wave().frame_count();
     let shape = |message: String| Diagnostic::new(DiagnosticKind::Shape, message);
     let mut diagnostics = Vec::new();
     // the report's numbers describe the first wave; warnings cover every one
     let mut first = (0.0, 0.0, 0.0);
     for k in 0..count {
-        let wave = instrument.wave.frame(k);
+        let wave = instrument.wave().frame(k);
         let peak = wave.iter().fold(0.0f32, |acc, v| acc.max(v.abs()));
         let dc = wave.iter().sum::<f32>() / wave.len() as f32;
         let seam = (wave[wave.len() - 1] - wave[0]).abs();
@@ -484,7 +484,7 @@ pub(super) fn inspect(
             format!("envelope.{name} left 0..1 at {count} points and was clamped"),
         ));
     }
-    if instrument.release.samples(rate) == 0 {
+    if instrument.release().samples(rate) == 0 {
         diagnostics.push(shape(
             "release = 0 cuts the note mid-cycle and will click".to_string(),
         ));
@@ -497,10 +497,10 @@ pub(super) fn inspect(
         dc,
         seam,
         clamped: clamped.iter().sum(),
-        attack: instrument.attack.samples(rate),
-        decay: instrument.decay.samples(rate),
-        release: instrument.release.samples(rate),
-        sustain_level: instrument.sustain_level,
+        attack: instrument.attack().samples(rate),
+        decay: instrument.decay().samples(rate),
+        release: instrument.release().samples(rate),
+        sustain_level: instrument.sustain_level(),
         diagnostics,
     }
 }

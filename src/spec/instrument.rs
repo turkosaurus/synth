@@ -1,16 +1,156 @@
 /// timbre and envelope
+///
+/// Built only through [`Instrument::new`], so holding one proves its wave
+/// and envelope are safe to play.
 pub struct Instrument {
-    pub wave: Wavetable,
+    wave: Wavetable,
     /// 0.0 to 1.0
-    pub(crate) attack: Segment,
+    attack: Segment,
     /// 1.0 to sustain_level
-    pub(crate) decay: Segment,
+    decay: Segment,
     /// 0.0..1.0
-    pub(crate) sustain_level: f32,
+    sustain_level: f32,
     /// sustain_level to 0.0
-    pub(crate) release: Segment,
+    release: Segment,
     /// notes sounding at once; 1 is mono
-    pub(crate) voice_count: usize,
+    voice_count: usize,
+}
+
+/// Why an instrument is not safe to play.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InstrumentError {
+    #[error("the oscillator has no waveform to play")]
+    NoFrames,
+
+    #[error("{} is {value} at phase {phase}; must be finite, -1 to 1", wave_name(*frame, *frames))]
+    Wave {
+        /// 0-based
+        frame: usize,
+        frames: usize,
+        phase: f32,
+        value: f32,
+    },
+
+    #[error("envelope {stage} is {value} at t = {t}; must be finite, 0 to 1")]
+    Envelope {
+        stage: &'static str,
+        t: f32,
+        value: f32,
+    },
+}
+
+/// A lone waveform, or `waves[k]` of a table, counted from 1.
+fn wave_name(frame: usize, frames: usize) -> String {
+    match frames {
+        1 => "waveform".to_string(),
+        _ => format!("waves[{}]", frame + 1),
+    }
+}
+
+impl Instrument {
+    pub fn new(
+        wave: Wavetable,
+        attack: Segment,
+        decay: Segment,
+        sustain_level: f32,
+        release: Segment,
+        voice_count: usize,
+    ) -> Result<Self, InstrumentError> {
+        let frames = wave.frame_count();
+        if frames == 0 {
+            return Err(InstrumentError::NoFrames);
+        }
+        for frame in 0..frames {
+            let cycle = wave.frame(frame);
+            if let Some((i, &value)) = outside(cycle, -1.0..=1.0) {
+                return Err(InstrumentError::Wave {
+                    frame,
+                    frames,
+                    phase: i as f32 / cycle.len() as f32,
+                    value,
+                });
+            }
+        }
+        for (stage, segment) in [
+            ("attack", &attack),
+            ("decay", &decay),
+            ("release", &release),
+        ] {
+            if let Some((i, &value)) = outside(&segment.curve, 0.0..=1.0) {
+                let last = segment.curve.len().saturating_sub(1).max(1);
+                return Err(InstrumentError::Envelope {
+                    stage,
+                    t: i as f32 / last as f32,
+                    value,
+                });
+            }
+        }
+        Ok(Self {
+            wave,
+            attack,
+            decay,
+            sustain_level,
+            release,
+            voice_count,
+        })
+    }
+
+    /// Skips every check, so tests can play what `new` refuses.
+    #[cfg(test)]
+    pub(crate) fn unchecked(
+        wave: Wavetable,
+        attack: Segment,
+        decay: Segment,
+        sustain_level: f32,
+        release: Segment,
+        voice_count: usize,
+    ) -> Self {
+        Self {
+            wave,
+            attack,
+            decay,
+            sustain_level,
+            release,
+            voice_count,
+        }
+    }
+
+    pub fn wave(&self) -> &Wavetable {
+        &self.wave
+    }
+
+    pub(crate) fn attack(&self) -> &Segment {
+        &self.attack
+    }
+
+    pub(crate) fn decay(&self) -> &Segment {
+        &self.decay
+    }
+
+    pub(crate) fn sustain_level(&self) -> f32 {
+        self.sustain_level
+    }
+
+    pub(crate) fn release(&self) -> &Segment {
+        &self.release
+    }
+
+    pub(crate) fn voice_count(&self) -> usize {
+        self.voice_count
+    }
+
+    /// Rotates frame `k` left by `by` points. A rotation keeps every point,
+    /// so the checks `new` made still hold.
+    pub(crate) fn rotate_frame(&mut self, k: usize, by: usize) {
+        self.wave.frame_mut(k).rotate_left(by);
+    }
+}
+
+/// The first point that is not finite or falls outside `range`.
+/// NaN fails `contains`, and so do both infinities at these bounds.
+fn outside(points: &[f32], range: std::ops::RangeInclusive<f32>) -> Option<(usize, &f32)> {
+    points.iter().enumerate().find(|(_, v)| !range.contains(v))
 }
 
 /// Waveform cycles of equal length, one after another in one Vec, so a read
@@ -49,7 +189,7 @@ impl Wavetable {
         &self.frames[k * self.points..(k + 1) * self.points]
     }
 
-    pub(crate) fn frame_mut(&mut self, k: usize) -> &mut [f32] {
+    fn frame_mut(&mut self, k: usize) -> &mut [f32] {
         &mut self.frames[k * self.points..(k + 1) * self.points]
     }
 
@@ -176,3 +316,69 @@ pub struct Timeline {
 /// Hz per MIDI note, baked from Lua so temperament lives there and every
 /// input resolves pitch the same way.
 pub type Freqs = Vec<f32>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stage(curve: Vec<f32>) -> Segment {
+        Segment { curve, ms: 1.0 }
+    }
+
+    fn build(wave: Wavetable, attack: Vec<f32>) -> Result<Instrument, InstrumentError> {
+        Instrument::new(
+            wave,
+            stage(attack),
+            stage(vec![0.0, 1.0]),
+            0.5,
+            stage(vec![0.0, 1.0]),
+            1,
+        )
+    }
+
+    fn table(frames: Vec<f32>, points: usize) -> Wavetable {
+        Wavetable {
+            frames,
+            points,
+            slopes: Vec::new(),
+            position: 0.0,
+            position_mod: None,
+        }
+    }
+
+    #[test]
+    fn a_clean_instrument_builds() {
+        assert!(build(vec![0.0, 1.0, 0.0, -1.0].into(), vec![0.0, 1.0]).is_ok());
+    }
+
+    #[test]
+    fn an_empty_wave_is_refused() {
+        let err = build(Vec::new().into(), vec![0.0, 1.0]).err();
+        assert_eq!(err, Some(InstrumentError::NoFrames));
+        let err = build(table(Vec::new(), 4), vec![0.0, 1.0]).err();
+        assert_eq!(err, Some(InstrumentError::NoFrames));
+    }
+
+    #[test]
+    fn every_frame_is_checked() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1.5, -1.01] {
+            let wave = table(vec![0.0, 1.0, 0.0, -1.0, 0.0, 1.0, bad, -1.0], 4);
+            let err = build(wave, vec![0.0, 1.0]).err().expect("refused");
+            let InstrumentError::Wave { frame, phase, .. } = err else {
+                panic!("{err:?}");
+            };
+            assert_eq!((frame, phase), (1, 0.5), "for {bad}");
+        }
+    }
+
+    #[test]
+    fn every_envelope_point_is_checked() {
+        for bad in [f32::NAN, f32::INFINITY, 1000.0, -0.1] {
+            let err = build(vec![0.0, 1.0].into(), vec![0.0, bad, 1.0]).err();
+            let Some(InstrumentError::Envelope { stage, t, .. }) = err else {
+                panic!("{err:?} for {bad}");
+            };
+            assert_eq!((stage, t), ("attack", 0.5), "for {bad}");
+        }
+    }
+}
