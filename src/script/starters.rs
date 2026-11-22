@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::Context;
+use super::Error;
 
 /// The file each kind folder starts with.
 const FILE: &str = "example.lua";
@@ -44,16 +44,16 @@ fn has_lua(dir: &Path) -> bool {
 
 /// Creates each kind folder under `patches` and writes its starter into
 /// those holding no Lua yet. Returns what it wrote, as `kind/example.lua`.
-pub fn write(patches: &Path) -> anyhow::Result<Vec<String>> {
+pub fn write(patches: &Path) -> Result<Vec<String>, Error> {
     let mut wrote = Vec::new();
     for (kind, source) in STARTERS {
         let dir = patches.join(kind);
-        fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+        fs::create_dir_all(&dir).map_err(|error| Error::io("create", &dir, error))?;
         if has_lua(&dir) {
             continue;
         }
         let path = dir.join(FILE);
-        fs::write(&path, source).with_context(|| format!("write {}", path.display()))?;
+        fs::write(&path, source).map_err(|error| Error::io("write", &path, error))?;
         wrote.push(format!("{kind}/{FILE}"));
     }
     Ok(wrote)
