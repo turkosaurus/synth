@@ -212,3 +212,72 @@ fn tiny_sample_rate_takes_the_ceiling() {
     let svf = Svf::new(lowpass(1000.0, SQRT_2), 4.0);
     assert_eq!(svf.cutoff(), 0.49 * 4.0);
 }
+
+#[test]
+fn sin_turn_tracks_std() {
+    for i in 0..1000 {
+        let turn = i as f32 / 1000.0;
+        let want = (2.0 * PI * turn).sin();
+        let got = approx::sin_turn(turn);
+        assert!(
+            (got - want).abs() <= 2e-3,
+            "sin_turn({turn}) = {got}, want {want}"
+        );
+    }
+}
+
+use super::lfo::{Lfo, Shape};
+
+const SHAPES: [Shape; 4] = [Shape::Sine, Shape::Triangle, Shape::Saw, Shape::Square];
+
+/// One cycle at 1 Hz over a 100 Hz rate: 100 samples.
+fn cycle(shape: Shape) -> Vec<f32> {
+    let mut lfo = Lfo::new(shape, 1.0, 100.0);
+    (0..100).map(|_| lfo.next()).collect()
+}
+
+#[test]
+fn every_lfo_shape_stays_within_full_scale() {
+    for shape in SHAPES {
+        assert!(
+            cycle(shape).iter().all(|v| (-1.0..=1.0).contains(v)),
+            "{shape:?}"
+        );
+    }
+}
+
+#[test]
+fn an_lfo_peaks_where_its_shape_does() {
+    let sine = cycle(Shape::Sine);
+    assert!((sine[25] - 1.0).abs() < 2e-3 && (sine[75] + 1.0).abs() < 2e-3);
+    // steps of 0.01 add up only close to 0.25, so read near the edges
+    assert!((cycle(Shape::Triangle)[25] - 1.0).abs() < 1e-4);
+    let square = cycle(Shape::Square);
+    assert_eq!((square[40], square[60]), (1.0, -1.0));
+}
+
+#[test]
+fn an_lfo_repeats_every_period() {
+    let mut lfo = Lfo::new(Shape::Triangle, 1.0, 100.0);
+    let first: Vec<f32> = (0..100).map(|_| lfo.next()).collect();
+    let second: Vec<f32> = (0..100).map(|_| lfo.next()).collect();
+    for (a, b) in first.iter().zip(&second) {
+        assert!((a - b).abs() < 1e-4, "{a} then {b}");
+    }
+}
+
+#[test]
+fn an_lfo_with_a_rate_that_is_not_finite_holds_still() {
+    let mut lfo = Lfo::new(Shape::Saw, f32::NAN, 100.0);
+    assert!((0..10).all(|_| lfo.next() == 0.0));
+}
+
+#[test]
+fn reset_returns_an_lfo_to_its_start() {
+    let mut lfo = Lfo::new(Shape::Sine, 5.0, 100.0);
+    (0..7).for_each(|_| {
+        lfo.next();
+    });
+    lfo.reset();
+    assert_eq!(lfo.next(), 0.0);
+}

@@ -17,6 +17,18 @@ pub(crate) fn tan(x: f32) -> f32 {
     }
 }
 
+/// `sin(2 * PI * turn)` for `turn` in `0.0..1.0`, from Bhaskara's
+/// approximation on each half cycle. Error stays under 0.2%.
+pub(crate) fn sin_turn(turn: f32) -> f32 {
+    let (sign, t) = if turn < 0.5 {
+        (1.0, 2.0 * turn)
+    } else {
+        (-1.0, 2.0 * turn - 1.0)
+    };
+    let x = t * (1.0 - t);
+    sign * 16.0 * x / (5.0 - 4.0 * x)
+}
+
 // (15x - x³) / (15 - 6x²), the [3/2] Padé approximant of tan
 fn pade(x: f32) -> f32 {
     let x2 = x * x;
