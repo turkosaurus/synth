@@ -1497,3 +1497,46 @@ fn a_tuning_that_returns_no_number_is_matched_by_variant() {
         "{error:#}"
     );
 }
+
+#[test]
+fn an_uncalled_slope_is_matched_by_variant() {
+    let error = rejected(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({
+            envelope = synth.envelope({ attack_curve = synth.slope.exponential }),
+        })
+        "#,
+    );
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::CurveUncalled {
+                field: "attack_curve"
+            })
+        ),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn a_curve_that_is_not_finite_is_matched_by_variant_inside_a_sequence() {
+    let error = rejected(
+        r#"
+        local synth = require("synth")
+        local nan = synth.envelope({ decay_curve = function(t) return t / t end })
+        return synth.sequence({
+            instruments = { a = synth.instrument({ envelope = nan }) },
+            instrument = "a",
+            steps = { { note = 60 } },
+        })
+        "#,
+    );
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::CurveNotFinite { field: "decay_curve", t, .. }) if *t == 0.0
+        ),
+        "{error:#}"
+    );
+}

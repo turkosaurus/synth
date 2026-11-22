@@ -119,6 +119,31 @@ pub enum Error {
     #[error("tuning returned {} Hz for note {note}; must be positive and finite", hz_shown(*hz))]
     TuningHz { note: u8, hz: f64 },
 
+    #[error("waveform must return a number for every phase")]
+    Waveform {
+        #[source]
+        source: mlua::Error,
+    },
+
+    #[error(
+        "envelope.{field} returned a function, not a number: a curve \
+         constructor needs its (), as in synth.slope.exponential(2)"
+    )]
+    CurveUncalled { field: &'static str },
+
+    #[error("envelope.{field} must return a number from 0 to 1, got {got}")]
+    CurveType {
+        field: &'static str,
+        got: &'static str,
+    },
+
+    #[error("envelope.{field} returned {value} at t = {t}; must be a number from 0 to 1")]
+    CurveNotFinite {
+        field: &'static str,
+        value: f64,
+        t: f64,
+    },
+
     /// Lua's own message already says what failed, so it is shown as is.
     #[error(transparent)]
     Lua(#[from] mlua::Error),
