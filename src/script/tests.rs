@@ -1592,3 +1592,58 @@ fn a_wave_table_bakes_one_frame_per_wave_each_rising_from_zero() {
     }
     assert!(patch.clean(), "{:?}", patch.reports[0].1.diagnostics);
 }
+
+#[test]
+fn an_envelope_out_of_range_keeps_its_variant_through_lua() {
+    let error = rejected(
+        r#"
+        local synth = require("synth")
+        local swell = synth.envelope({ sustain = 2 })
+        return synth.sequence({
+            instruments = { a = synth.instrument({ envelope = swell }) },
+            instrument = "a",
+            steps = { { note = 60 } },
+        })
+        "#,
+    );
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::OutOfRange { field: "sustain", value, .. }) if *value == 2.0
+        ),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn a_bare_instrument_keeps_its_variant_through_lua() {
+    let error = rejected(
+        r#"
+        local synth = require("synth")
+        return synth.instrument({ envelope = synth.envelope({ sustain = 2 }) })
+        "#,
+    );
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::OutOfRange {
+                field: "sustain",
+                ..
+            })
+        ),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn a_missing_patch_file_is_matched_by_variant() {
+    let path = std::env::temp_dir().join("synth-no-such-patch.lua");
+    let error = load(&path, 48000, None).err().expect("no file");
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::Io { action: "reading", path: at, .. }) if *at == path
+        ),
+        "{error:#}"
+    );
+}

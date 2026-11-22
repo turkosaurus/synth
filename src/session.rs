@@ -10,7 +10,7 @@ use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::audio::{self, Player, Stats};
+use crate::audio::{self, Feed, Player, Stats};
 use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke};
 use crate::script;
 use crate::spec::{Config, Event};
@@ -101,10 +101,12 @@ impl Session {
 
         // the producer stays here; the consumer moves into the audio callback
         let (tx, rx) = rtrb::RingBuffer::<Event>::new(config.queue);
-        let player = Player::live(
-            patch.timeline.instruments,
+        let player = Player::new(
+            Feed::Live {
+                instruments: patch.timeline.instruments,
+                events: rx,
+            },
             patch.freqs,
-            rx,
             output.sample_rate as f32,
         )
         .with_filter(patch.filter);

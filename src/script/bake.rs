@@ -53,7 +53,7 @@ impl mlua::FromLua for InstrumentSpec {
         let table = spec_table(value, "instrument")?;
         schema::INSTRUMENT
             .check(&table, None)
-            .map_err(|error| mlua::Error::RuntimeError(format!("{error:#}")))?;
+            .map_err(mlua::Error::external)?;
         Ok(Self {
             // no wrapping: WavetableSpec names its own bad field
             waveform: table.get(field::WAVEFORM)?,
@@ -109,7 +109,7 @@ impl mlua::FromLua for EnvelopeSpec {
         let table = spec_table(value, "envelope")?;
         schema::ENVELOPE
             .check(&table, None)
-            .map_err(|error| mlua::Error::RuntimeError(format!("{error:#}")))?;
+            .map_err(mlua::Error::external)?;
         let what = "envelope";
         Ok(Self {
             attack_ms: spec_entry(&table, what, field::ATTACK, "number")?,

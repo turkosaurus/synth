@@ -1,6 +1,6 @@
 /// Why a patch failed to load. Each variant names where in the patch it
 /// failed, so a caller can match on the reason and still print the place.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
     #[error("{what}: unknown field `{field}`; expected one of {}", .expected.join(", "))]
@@ -171,9 +171,38 @@ pub enum Error {
     #[error("step {step} names instrument `{name}`, which is not defined")]
     UndefinedInstrument { step: usize, name: String },
 
+    /// The source is shared so `Error` stays `Clone`.
+    #[error("{action} {}", path.display())]
+    Io {
+        action: &'static str,
+        path: std::path::PathBuf,
+        #[source]
+        source: std::sync::Arc<std::io::Error>,
+    },
+
+    #[error("file must return a table, got {got}")]
+    ReturnNotATable { got: &'static str },
+
+    #[error("{what} is not callable")]
+    NotCallable { what: &'static str },
+
     /// Lua's own message already says what failed, so it is shown as is.
     #[error(transparent)]
-    Lua(#[from] mlua::Error),
+    Lua(mlua::Error),
+}
+
+impl From<mlua::Error> for Error {
+    /// `FromLua` can only fail with an `mlua::Error`, so a check there
+    /// crosses as an external error. Only a bare wrapper is unwrapped:
+    /// a callback's traceback is part of its message.
+    fn from(error: mlua::Error) -> Self {
+        if let mlua::Error::ExternalError(external) = &error {
+            if let Some(inner) = external.downcast_ref::<Error>() {
+                return inner.clone();
+            }
+        }
+        Error::Lua(error)
+    }
 }
 
 /// `an envelope`, `a keyboard`.
