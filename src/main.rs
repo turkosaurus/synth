@@ -375,8 +375,12 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
 
     let patch = script::load(path, sample_rate, config.patch_dir.as_deref())?;
     let notes = patch.timeline.events.len();
-    let player = audio::Player::new(patch.timeline, patch.freqs, sample_rate as f32)
-        .with_filter(patch.filter);
+    let player = audio::Player::new(
+        audio::Feed::Timeline(patch.timeline),
+        patch.freqs,
+        sample_rate as f32,
+    )
+    .with_filter(patch.filter);
     let seconds = player.total_samples() as f64 / sample_rate as f64;
 
     let stats = Arc::new(audio::Stats::default());
