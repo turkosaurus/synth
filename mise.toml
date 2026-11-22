@@ -35,9 +35,12 @@ env = { RUST_LOG = "synth=debug" }
 run = 'cargo run ${usage_release:+--release} -- play lua/example.lua; cat "${XDG_STATE_HOME:-$HOME/.local/state}/synth/synth.log"'
 
 [tasks.tui]
-description = "play live from the keyboard with the default instrument; --release builds optimized"
-usage = 'flag "--release" help="build optimized, as releases are"'
-run = "cargo run ${usage_release:+--release} -- tui"
+description = "play live from the keyboard, a patch or the default instrument; --release builds optimized"
+usage = '''
+flag "--release" help="build optimized, as releases are"
+arg "[patch]" help="the patch to play; the default instrument without one"
+'''
+run = 'cargo run ${usage_release:+--release} -- tui ${usage_patch:+"$usage_patch"}'
 
 
 ### TEST ###
