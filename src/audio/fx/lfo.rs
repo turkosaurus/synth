@@ -1,8 +1,8 @@
 //! A low-frequency oscillator: a baked cycle read at a rate, -1..1 out.
 //!
 //! The cycle is a Lua waveform, baked the way an oscillator's is, so an
-//! LFO has whatever shape a patch can write. One LFO is shared by every
-//! voice it drives.
+//! LFO has whatever shape a patch can write. Each note runs its own LFO,
+//! from the start of its cycle.
 
 pub(crate) struct Lfo {
     /// cycles per sample: rate over sample rate

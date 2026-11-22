@@ -1,6 +1,6 @@
 -- A low-frequency oscillator: a waveform at a slow rate, moving a parameter
--- through that parameter's `<name>_mod` field. One LFO is shared by every
--- voice of the instrument it moves.
+-- through that parameter's `<name>_mod` field. Each note runs its own LFO,
+-- from the start of its cycle.
 local wave = require("synth.wave")
 local construct = require("synth.construct")
 
