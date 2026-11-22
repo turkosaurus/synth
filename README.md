@@ -8,7 +8,7 @@ _Lua-defined, Rust-driven synthesizer and sequencer_
 
 A real-time Rust digital instrument and audio workstation configured and driven by Lua functions and tables.
 - Design principles: [`RULES.md`](RULES.md)
-- Development process: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Development process: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ## install
 
@@ -35,13 +35,34 @@ synth tui
 ### components
 
 ```mermaid
-flowchart LR
-    lua[(lua)] --> script --> spec[(spec)] --> audio
-    input -- events --> audio
-    audio --> output([OS audio])
-    session -. wires .-> input & audio
-    view -. drives .-> session
-```
+``flowchart LR
+    lua[(lua)] --> script
+    subgraph hardware
+        input
+        output
+        display
+    end
+    spec -->|instrument|input
+    subgraph rust
+        model
+        spec --> model
+        subgraph audio
+            events --> render
+        end
+        subgraph ui
+            script -->|validate| spec
+            spec -->|sequence| events
+            view
+        end
+        spec --> model
+    end
+    input -->|play|events
+    input -->|msg|view
+    view -->|cmd|model
+    view -->|read|model
+    view -->|render|display
+    render --> output
+`
 
 details: [`lua`](./lua), [`script`](./src/script), [`spec`](./src/spec), [`audio`](./src/audio), [`view`](./src/view), or [`src`](./src)
 
