@@ -1540,3 +1540,24 @@ fn a_curve_that_is_not_finite_is_matched_by_variant_inside_a_sequence() {
         "{error:#}"
     );
 }
+
+#[test]
+fn a_step_naming_an_undefined_instrument_is_matched_by_variant() {
+    let error = rejected(
+        r#"
+        local synth = require("synth")
+        return synth.sequence({
+            instruments = { a = synth.instrument({}) },
+            instrument = "b",
+            steps = { { note = 60 } },
+        })
+        "#,
+    );
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::UndefinedInstrument { step: 1, name }) if name == "b"
+        ),
+        "{error:#}"
+    );
+}

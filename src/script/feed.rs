@@ -2,7 +2,7 @@ use anyhow::Context;
 use std::time::Duration;
 
 use super::bake::{bake_instrument, InstrumentSpec};
-use super::field;
+use super::{field, Error};
 use crate::spec::Patch;
 
 /// One resolved step. The struct is the schema: field names come from here,
@@ -109,7 +109,7 @@ pub(super) fn sequence(
         // so a bad spec is reported under its instrument name
         let (instrument, report) = lua
             .unpack(spec)
-            .map_err(super::Error::from)
+            .map_err(Error::from)
             .and_then(|spec| bake_instrument(spec, sample_rate))
             .with_context(|| format!("instrument `{name}`"))?;
         index.insert(name.clone(), instruments.len());
@@ -120,8 +120,12 @@ pub(super) fn sequence(
 
     // deserialized once, then walked three times: the struct replaces a
     // dozen get("...") calls and validates every field name
-    let parsed: Vec<Step> = mlua::LuaSerdeExt::from_value(lua, mlua::Value::Table(steps.clone()))
-        .context("sequence steps")?;
+    let value = mlua::Value::Table(steps.clone());
+    let parsed: Vec<Step> =
+        mlua::LuaSerdeExt::from_value(lua, value).map_err(|source| Error::Convert {
+            what: "sequence steps",
+            source,
+        })?;
 
     let starts: Vec<(usize, u64)> = parsed
         .iter()
@@ -137,12 +141,10 @@ pub(super) fn sequence(
         let name = step
             .instrument
             .as_deref()
-            .with_context(|| format!("step {} has a note but no instrument is in effect", i + 1))?;
-        let instrument = *index.get(name).with_context(|| {
-            format!(
-                "step {} names instrument `{name}`, which is not defined",
-                i + 1
-            )
+            .ok_or(Error::NoInstrument { step: i + 1 })?;
+        let instrument = *index.get(name).ok_or_else(|| Error::UndefinedInstrument {
+            step: i + 1,
+            name: name.to_string(),
         })?;
 
         events.push((
@@ -177,11 +179,9 @@ pub(super) fn sequence(
         let Some(name) = step.instrument.as_deref() else {
             continue;
         };
-        let instrument = *index.get(name).with_context(|| {
-            format!(
-                "step {} names instrument `{name}`, which is not defined",
-                i + 1
-            )
+        let instrument = *index.get(name).ok_or_else(|| Error::UndefinedInstrument {
+            step: i + 1,
+            name: name.to_string(),
         })?;
         events.push((
             (step_len * i as f64) as u64,

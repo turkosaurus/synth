@@ -144,6 +144,12 @@ pub enum Error {
         t: f64,
     },
 
+    #[error("step {step} has a note but no instrument is in effect")]
+    NoInstrument { step: usize },
+
+    #[error("step {step} names instrument `{name}`, which is not defined")]
+    UndefinedInstrument { step: usize, name: String },
+
     /// Lua's own message already says what failed, so it is shown as is.
     #[error(transparent)]
     Lua(#[from] mlua::Error),
