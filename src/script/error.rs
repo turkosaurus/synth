@@ -29,7 +29,77 @@ pub enum Error {
         bound: String,
     },
 
+    #[error(
+        "{what}: expected {}, got {} made at {at}",
+        article(expected),
+        article(got)
+    )]
+    WrongKind {
+        what: String,
+        expected: &'static str,
+        got: String,
+        at: String,
+    },
+
+    #[error(
+        "{what}: expected {}, got a plain table; build it with {}",
+        article(expected),
+        constructor(expected)
+    )]
+    PlainTable {
+        what: String,
+        expected: &'static str,
+    },
+
+    #[error("{what}: expected {}, got a {got}", article(expected))]
+    NotATable {
+        what: String,
+        expected: &'static str,
+        got: &'static str,
+    },
+
+    #[error(
+        "a patch must return an instrument or a sequence, got {} made at {at}",
+        article(got)
+    )]
+    RootKind { got: String, at: String },
+
+    #[error(
+        "a patch must return synth.instrument({{…}}) or synth.sequence({{…}}), got a plain table"
+    )]
+    RootPlainTable,
+
+    #[error(
+        "{what}: `{field}` applies only to the patch's root; \
+         set it on the sequence (instrument made at {at})"
+    )]
+    RootOnly {
+        what: String,
+        field: &'static str,
+        at: String,
+    },
+
+    #[error("{what} contains itself; a patch cannot hold a cycle")]
+    Cycle { what: String },
+
     /// Lua's own message already says what failed, so it is shown as is.
     #[error(transparent)]
     Lua(#[from] mlua::Error),
+}
+
+/// `an envelope`, `a keyboard`.
+fn article(kind: &str) -> String {
+    match kind.chars().next() {
+        Some('a' | 'e' | 'i' | 'o' | 'u') => format!("an {kind}"),
+        _ => format!("a {kind}"),
+    }
+}
+
+/// How to build a value of `kind`, for an error about an untagged table.
+fn constructor(kind: &str) -> String {
+    match kind {
+        // filters have one constructor per type
+        "filter" => "synth.filter.lowpass({…}) or another synth.filter constructor".to_string(),
+        other => format!("synth.{other}({{…}})"),
+    }
 }
