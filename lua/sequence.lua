@@ -1,4 +1,6 @@
-local new -- the constructor, defined below
+local construct = require("synth.construct")
+
+local new, defaults, step_defaults -- defined below
 
 -- `file:line` of whoever called the constructor, read by Rust
 local site = require("synth.site")
@@ -7,7 +9,9 @@ local site = require("synth.site")
 ---@overload fun(opts: synth.SequenceOpts): synth.Sequence
 local sequence = setmetatable({}, {
 	__call = function(_, opts)
-		return setmetatable(new(opts), { kind = "sequence", at = site() })
+		local filled = construct("sequence", site(), opts, defaults)
+		-- the flattened result is a new table, so it takes the stamp over
+		return setmetatable(new(filled), getmetatable(filled))
 	end,
 })
 
@@ -46,6 +50,17 @@ local sequence = setmetatable({}, {
 ---@field tuning? synth.Tuning
 ---@field filter? synth.Filter
 
+defaults = {
+	bpm = 120,
+	division = 1, -- steps per beat; 4 = sixteenths
+	loop = 1, -- times to play the chain
+}
+
+step_defaults = {
+	duration = 0.5, -- steps to sound; may exceed 1
+	velocity = 127, -- 1 to 127
+}
+
 -- `note` and `instrument` stick until a later step changes them,
 -- so a step only names what differs.
 -- Resolved here so Rust reads a uniform list.
@@ -64,8 +79,11 @@ local function resolve(pattern, into, default_instrument)
 			out[key] = value
 		end
 		out.instrument = instrument
-		out.duration = step.duration or 0.5 -- steps to sound; may exceed 1
-		out.velocity = step.velocity or 127 -- 1 to 127
+		for key, default in pairs(step_defaults) do
+			if out[key] == nil then
+				out[key] = default
+			end
+		end
 		into[#into + 1] = out
 	end
 end
@@ -114,7 +132,7 @@ new = function(opts)
 	local steps = {}
 	local patterns = 0
 	local chain = opts.chain or {}
-	local loop = opts.loop or 1
+	local loop = opts.loop
 
 	if opts.patterns then
 		for _ in pairs(opts.patterns) do
@@ -134,8 +152,8 @@ new = function(opts)
 	end
 
 	return {
-		bpm = opts.bpm or 120,
-		division = opts.division or 1, -- steps per beat; 4 = sixteenths
+		bpm = opts.bpm,
+		division = opts.division,
 		instruments = opts.instruments or {},
 		steps = steps,
 		patterns = patterns,

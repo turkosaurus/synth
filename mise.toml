@@ -73,6 +73,7 @@ depends = [
     "lint:fmt",
     "lint:rust",
     "lint:pedantic",
+    "lint:doc",
     "lint:lua",
     "lint:lsp",
     "lint:stylua",
@@ -91,6 +92,11 @@ run = "cargo clippy --all-targets -- -D warnings || { echo '::error title=lint:r
 [tasks."lint:pedantic"]
 description = "clippy pedantic, for review; reports but never fails"
 run = "cargo clippy --all-targets -- -W clippy::pedantic"
+
+[tasks."lint:doc"]
+description = "cargo doc on the crate; any warning fails"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc --no-deps || { echo '::error title=lint:doc::cargo doc found warnings'; exit 1; }"
 
 [tasks."lint:stylua"]
 description = "stylua formatting check on lua/, tests/lua/, and tests/nvim/; any difference fails"

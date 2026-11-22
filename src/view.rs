@@ -1,3 +1,6 @@
+//! Presentation only: the TUI, reports, and prompts. Draws data it is
+//! handed and does no work of its own.
+
 pub(crate) mod diff;
 pub(crate) mod meter;
 pub mod prompt;

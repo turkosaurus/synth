@@ -1,3 +1,7 @@
+//! Lua in, `spec` out, and the only place `mlua` appears. Loads a patch,
+//! checks it, and bakes it into [`crate::spec`] data; Lua is dropped once
+//! the patch is returned.
+
 use anyhow::Context;
 use tracing::instrument;
 
