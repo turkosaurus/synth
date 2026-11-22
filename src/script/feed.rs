@@ -109,7 +109,7 @@ pub(super) fn sequence(
         // so a bad spec is reported under its instrument name
         let (instrument, report) = lua
             .unpack(spec)
-            .map_err(anyhow::Error::from)
+            .map_err(super::Error::from)
             .and_then(|spec| bake_instrument(spec, sample_rate))
             .with_context(|| format!("instrument `{name}`"))?;
         index.insert(name.clone(), instruments.len());

@@ -1,11 +1,10 @@
 use std::ops::RangeInclusive;
 
-use anyhow::Context;
 use tracing::{debug_span, instrument};
 
 use crate::spec::{Diagnostic, DiagnosticKind, Instrument, Report, Segment};
 
-use super::{field, schema};
+use super::{field, schema, Error};
 
 // points per waveform cycle: enough that every note above 23.4 Hz
 // advances at least one entry per sample, small enough that 8 KB
@@ -129,7 +128,7 @@ pub(super) fn expect_only(table: &mlua::Table, what: &str, allowed: &[&str]) -> 
 pub(super) fn bake_instrument(
     spec: InstrumentSpec,
     sample_rate: u32,
-) -> anyhow::Result<(Instrument, Report)> {
+) -> Result<(Instrument, Report), Error> {
     let env = spec.envelope;
 
     // phase 1 is phase 0 again, so a cycle stops one point short of it
@@ -139,14 +138,14 @@ pub(super) fn bake_instrument(
         sample(phases, -1.0..=1.0, |phase| {
             spec.waveform
                 .call(phase)
-                .context("waveform must return a number for every phase")
+                .map_err(|source| Error::Waveform { source })
         })?
     };
 
     // each curve is sampled at the same points whatever its stage's
     // length; render stretches it over the stage and scales it from the
     // stage's start level to its end
-    let curve = |ms: f64, shape: &mlua::Function, name: &str| -> anyhow::Result<(Segment, usize)> {
+    let curve = |ms: f64, shape: &mlua::Function, field: &'static str| -> Result<_, Error> {
         let ts = (0..=CURVE_POINTS).map(|i| i as f64 / CURVE_POINTS as f64);
         let (curve, clamped) = sample(ts, 0.0..=1.0, |t| {
             let along = match shape.call::<mlua::Value>(t)? {
@@ -154,19 +153,21 @@ pub(super) fn bake_instrument(
                 mlua::Value::Integer(n) => n as f64,
                 // `synth.slope.exponential` handed over without its (),
                 // which then returns a curve rather than a point on one
-                mlua::Value::Function(_) => anyhow::bail!(
-                    "envelope.{name} returned a function, not a number: a curve \
-                     constructor needs its (), as in synth.slope.exponential(2)"
-                ),
-                other => anyhow::bail!(
-                    "envelope.{name} must return a number from 0 to 1, got {}",
-                    other.type_name()
-                ),
+                mlua::Value::Function(_) => return Err(Error::CurveUncalled { field }),
+                other => {
+                    return Err(Error::CurveType {
+                        field,
+                        got: other.type_name(),
+                    })
+                }
             };
-            anyhow::ensure!(
-                along.is_finite(),
-                "envelope.{name} returned {along} at t = {t}; must be a number from 0 to 1"
-            );
+            if !along.is_finite() {
+                return Err(Error::CurveNotFinite {
+                    field,
+                    value: along,
+                    t,
+                });
+            }
             Ok(along)
         })?;
         Ok((Segment { curve, ms }, clamped))
@@ -216,8 +217,8 @@ pub(super) fn rising_zero(cycle: &[f32]) -> Option<usize> {
 fn sample(
     xs: impl Iterator<Item = f64>,
     range: RangeInclusive<f64>,
-    mut read: impl FnMut(f64) -> anyhow::Result<f64>,
-) -> anyhow::Result<(Vec<f32>, usize)> {
+    mut read: impl FnMut(f64) -> Result<f64, Error>,
+) -> Result<(Vec<f32>, usize), Error> {
     let mut out = Vec::with_capacity(xs.size_hint().0);
     let mut clamped = 0usize;
     for x in xs {
