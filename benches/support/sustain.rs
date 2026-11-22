@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use synth::audio::bench::{fill, live as live_player};
-use synth::audio::Player;
+use synth::audio::{Feed, Player};
 use synth::script;
 use synth::spec::{Event, Patch};
 
@@ -30,7 +30,8 @@ fn fixture(voices: usize) -> Patch {
 pub(crate) fn player(voices: usize, filtered: bool) -> Player {
     let patch = fixture(voices);
     let filter = if filtered { patch.filter } else { None };
-    let mut player = Player::new(patch.timeline, patch.freqs, RATE_HZ).with_filter(filter);
+    let mut player =
+        Player::new(Feed::Timeline(patch.timeline), patch.freqs, RATE_HZ).with_filter(filter);
 
     let mut out = buffer();
     for _ in 0..WARM_UP {

@@ -305,9 +305,18 @@ impl Pool {
     }
 }
 
-/// Where a player's events come from. Downstream handling is identical, so
-/// the sequencer and a live input differ only here.
-enum Feed {
+/// What a player plays and where its events come from. Downstream handling
+/// is identical, so the sequencer and a live input differ only here.
+pub enum Feed {
+    Timeline(Timeline),
+    Live {
+        instruments: Vec<Instrument>,
+        events: rtrb::Consumer<Event>,
+    },
+}
+
+/// A feed's events once its instruments are in pools.
+enum Source {
     Timeline {
         events: Vec<(u64, Event)>,
         next: usize,
@@ -319,7 +328,7 @@ pub struct Player {
     /// one per instrument, indexed the same way events name instruments
     pools: Vec<Pool>,
     freqs: Freqs,
-    feed: Feed,
+    source: Source,
     sample_rate: f32,
     clock: u64,
     total_samples: u64,
@@ -328,41 +337,31 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(timeline: Timeline, freqs: Freqs, sample_rate: f32) -> Self {
-        Self {
-            pools: timeline
-                .instruments
-                .into_iter()
-                .map(|instrument| Pool::new(Arc::new(instrument)))
-                .collect(),
-            freqs,
-            feed: Feed::Timeline {
-                events: timeline.events,
-                next: 0,
-            },
-            sample_rate,
-            clock: 0,
-            total_samples: timeline.total_samples,
-            filter: None,
-        }
-    }
-
-    pub(crate) fn live(
-        instruments: Vec<Instrument>,
-        freqs: Freqs,
-        events: rtrb::Consumer<Event>,
-        sample_rate: f32,
-    ) -> Self {
+    pub fn new(feed: Feed, freqs: Freqs, sample_rate: f32) -> Self {
+        let (instruments, source, total_samples) = match feed {
+            Feed::Timeline(timeline) => (
+                timeline.instruments,
+                Source::Timeline {
+                    events: timeline.events,
+                    next: 0,
+                },
+                timeline.total_samples,
+            ),
+            Feed::Live {
+                instruments,
+                events,
+            } => (instruments, Source::Live(events), u64::MAX),
+        };
         Self {
             pools: instruments
                 .into_iter()
                 .map(|instrument| Pool::new(Arc::new(instrument)))
                 .collect(),
             freqs,
-            feed: Feed::Live(events),
+            source,
             sample_rate,
             clock: 0,
-            total_samples: u64::MAX,
+            total_samples,
             filter: None,
         }
     }
@@ -378,12 +377,12 @@ impl Player {
         self.total_samples
     }
 
-    // returns an owned event so the borrow of `feed` ends before `apply`
+    // returns an owned event so the borrow of `source` ends before `apply`
     // needs &mut self
     fn pull(&mut self) -> Option<Event> {
         let clock = self.clock;
-        match &mut self.feed {
-            Feed::Timeline { events, next } => {
+        match &mut self.source {
+            Source::Timeline { events, next } => {
                 let (at, event) = events.get(*next)?;
                 if *at <= clock {
                     *next += 1;
@@ -392,7 +391,7 @@ impl Player {
                     None
                 }
             }
-            Feed::Live(consumer) => consumer.pop().ok(),
+            Source::Live(consumer) => consumer.pop().ok(),
         }
     }
 
@@ -466,11 +465,11 @@ impl Player {
     /// events carry no time stamp, so a live feed is read once per callback
     /// and never splits one.
     fn until_event(&self) -> u64 {
-        match &self.feed {
-            Feed::Timeline { events, next } => events
+        match &self.source {
+            Source::Timeline { events, next } => events
                 .get(*next)
                 .map_or(u64::MAX, |(at, _)| at.saturating_sub(self.clock)),
-            Feed::Live(_) => u64::MAX,
+            Source::Live(_) => u64::MAX,
         }
     }
 
@@ -714,9 +713,16 @@ mod tests {
         freqs
     }
 
+    fn live(instruments: Vec<Instrument>, events: rtrb::Consumer<Event>) -> Feed {
+        Feed::Live {
+            instruments,
+            events,
+        }
+    }
+
     fn player(instrument: Instrument) -> Player {
         Player::new(
-            Timeline {
+            Feed::Timeline(Timeline {
                 instruments: vec![instrument],
                 events: vec![(
                     0,
@@ -727,7 +733,7 @@ mod tests {
                     },
                 )],
                 total_samples: 64,
-            },
+            }),
             freqs(),
             4.0,
         )
@@ -755,7 +761,7 @@ mod tests {
     #[test]
     fn a_live_feed_drains_the_queue() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![flat_instrument()], freqs(), rx, 4.0);
+        let mut player = Player::new(live(vec![flat_instrument()], rx), freqs(), 4.0);
 
         // nothing queued yet, so silence
         assert_eq!(player.next(), 0.0);
@@ -780,7 +786,7 @@ mod tests {
     #[test]
     fn a_noteoff_for_a_note_that_is_not_sounding_is_ignored() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![flat_instrument()], freqs(), rx, 4.0);
+        let mut player = Player::new(live(vec![flat_instrument()], rx), freqs(), 4.0);
 
         tx.push(Event::NoteOn {
             instrument: 0,
@@ -803,7 +809,7 @@ mod tests {
     #[test]
     fn velocity_zero_means_note_off() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![flat_instrument()], freqs(), rx, 4.0);
+        let mut player = Player::new(live(vec![flat_instrument()], rx), freqs(), 4.0);
 
         tx.push(Event::NoteOn {
             instrument: 0,
@@ -826,7 +832,7 @@ mod tests {
     #[test]
     fn velocity_scales_the_output() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![flat_instrument()], freqs(), rx, 4.0);
+        let mut player = Player::new(live(vec![flat_instrument()], rx), freqs(), 4.0);
 
         tx.push(Event::NoteOn {
             instrument: 0,
@@ -917,7 +923,7 @@ mod tests {
         let (tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let mut instrument = flat_instrument();
         instrument.voice_count = voice_count;
-        (tx, Player::live(vec![instrument], freqs(), rx, 4.0))
+        (tx, Player::new(live(vec![instrument], rx), freqs(), 4.0))
     }
 
     fn on(note: u8) -> Event {
@@ -975,7 +981,7 @@ mod tests {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let mut instrument = flat_instrument();
         instrument.release = stage(&[0.0, 0.5, 0.75]); // 1.0, 0.5, 0.25
-        let mut player = Player::live(vec![instrument], freqs(), rx, 4.0);
+        let mut player = Player::new(live(vec![instrument], rx), freqs(), 4.0);
 
         tx.push(on(2)).unwrap();
         player.next();
@@ -990,7 +996,7 @@ mod tests {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let mut instrument = flat_instrument();
         instrument.release = stage(&[0.0, 0.5, 0.75]); // 1.0, 0.5, 0.25
-        let mut player = Player::live(vec![instrument], freqs(), rx, 4.0);
+        let mut player = Player::new(live(vec![instrument], rx), freqs(), 4.0);
 
         tx.push(on(2)).unwrap();
         player.next();
@@ -1026,7 +1032,7 @@ mod tests {
         let mut instrument = flat_instrument();
         instrument.voice_count = 2;
         instrument.release = stage(&[0.0; 16]); // long enough to still be fading
-        let mut player = Player::live(vec![instrument], freqs(), rx, 4.0);
+        let mut player = Player::new(live(vec![instrument], rx), freqs(), 4.0);
 
         for event in [on(1), on(2), off(2), on(3)] {
             tx.push(event).unwrap();
@@ -1066,7 +1072,7 @@ mod tests {
         let mut wide = flat_instrument();
         wide.voice_count = 2;
         let instruments = vec![wide, flat_instrument()];
-        let mut player = Player::live(instruments, freqs(), rx, 4.0);
+        let mut player = Player::new(live(instruments, rx), freqs(), 4.0);
 
         tx.push(on(1)).unwrap();
         tx.push(on(2)).unwrap();
@@ -1093,7 +1099,7 @@ mod tests {
         let mut releasing = flat_instrument();
         releasing.release = stage(&[0.0, 0.5, 0.75]);
         let instruments = vec![releasing, flat_instrument()];
-        let mut player = Player::live(instruments, freqs(), rx, 4.0);
+        let mut player = Player::new(live(instruments, rx), freqs(), 4.0);
 
         tx.push(on(1)).unwrap();
         tx.push(Event::NoteOn {
@@ -1114,7 +1120,7 @@ mod tests {
     fn instruments_do_not_share_voices() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let instruments = vec![flat_instrument(), flat_instrument()];
-        let mut player = Player::live(instruments, freqs(), rx, 4.0);
+        let mut player = Player::new(live(instruments, rx), freqs(), 4.0);
 
         tx.push(on(2)).unwrap();
         tx.push(Event::NoteOn {
@@ -1159,10 +1165,10 @@ mod tests {
         let mut freqs = freqs();
         freqs[2] = 2.0;
 
-        let mut stepped = Player::new(timeline(), freqs.clone(), 4.0);
+        let mut stepped = Player::new(Feed::Timeline(timeline()), freqs.clone(), 4.0);
         let expected: Vec<f32> = (0..12).map(|_| stepped.next()).collect();
 
-        let mut split = Player::new(timeline(), freqs, 4.0);
+        let mut split = Player::new(Feed::Timeline(timeline()), freqs, 4.0);
         let mut out = Vec::new();
         for frames in [5, 1, 3, 3] {
             let mut buffer = vec![9.0; frames];
@@ -1177,7 +1183,7 @@ mod tests {
     #[test]
     fn fill_plays_live_events_from_the_first_frame() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut player = Player::live(vec![flat_instrument()], freqs(), rx, 4.0);
+        let mut player = Player::new(live(vec![flat_instrument()], rx), freqs(), 4.0);
         tx.push(Event::NoteOn {
             instrument: 0,
             note: 1,
@@ -1248,7 +1254,8 @@ mod tests {
             root: 1.0,
         };
         let instruments = vec![broken, flat_instrument()];
-        let mut player = Player::live(instruments, freqs(), rx, 4.0).with_filter(Some(lowpass));
+        let mut player =
+            Player::new(live(instruments, rx), freqs(), 4.0).with_filter(Some(lowpass));
 
         tx.push(on(1)).unwrap();
         let mut out = [0.0f32; 4];
@@ -1281,7 +1288,7 @@ mod tests {
             instrument.wave = vec![1.0, -1.0, 1.0, -1.0].into();
             instrument
         };
-        let mut player = Player::live(vec![loud(), loud()], freqs(), rx, 4.0);
+        let mut player = Player::new(live(vec![loud(), loud()], rx), freqs(), 4.0);
 
         // two mono instruments add with no scaling, so every sample is 2.0
         // or -2.0 before the clamp
