@@ -71,9 +71,9 @@ impl Note {
         sample_rate: f32,
         hold: Option<Duration>,
     ) -> Self {
-        let (from, to, mix) = instrument.wave.blend();
+        let (from, to, mix) = instrument.wave().blend();
         let lfo = instrument
-            .wave
+            .wave()
             .position_mod
             .as_ref()
             .map(|baked| Lfo::new(baked.rate, sample_rate));
@@ -89,9 +89,9 @@ impl Note {
             step: freq / sample_rate,
             hold_samples: hold.map(|d| (d.as_secs_f32() * sample_rate) as usize),
             lengths: Lengths {
-                attack: instrument.attack.samples(f64::from(sample_rate)),
-                decay: instrument.decay.samples(f64::from(sample_rate)),
-                release: instrument.release.samples(f64::from(sample_rate)),
+                attack: instrument.attack().samples(f64::from(sample_rate)),
+                decay: instrument.decay().samples(f64::from(sample_rate)),
+                release: instrument.release().samples(f64::from(sample_rate)),
             },
             instrument,
             phase: 0.0,
@@ -106,8 +106,8 @@ impl Note {
     // release starts from wherever the envelope actually was, so a key
     // lifted mid-attack does not jump up to sustain level first
     fn off(&mut self) {
-        self.release_scale = if self.instrument.sustain_level > 0.0 {
-            self.level / self.instrument.sustain_level
+        self.release_scale = if self.instrument.sustain_level() > 0.0 {
+            self.level / self.instrument.sustain_level()
         } else {
             1.0
         };
@@ -145,15 +145,15 @@ impl Note {
                         continue;
                     }
                     self.held += 1;
-                    self.level = self.instrument.sustain_level;
+                    self.level = self.instrument.sustain_level();
                     return self.level;
                 }
                 Stage::Release => {
                     if self.idx < self.lengths.release {
-                        let sustain = self.instrument.sustain_level;
+                        let sustain = self.instrument.sustain_level();
                         let along = self
                             .instrument
-                            .release
+                            .release()
                             .along(self.idx, self.lengths.release);
                         self.idx += 1;
                         self.level = (sustain - sustain * along) * self.release_scale;
@@ -171,17 +171,17 @@ impl Note {
 
     // attack rises from 0 to 1
     fn attack_at(&self, i: usize) -> f32 {
-        self.instrument.attack.along(i, self.lengths.attack)
+        self.instrument.attack().along(i, self.lengths.attack)
     }
 
     // decay falls from 1 to the sustain level
     fn decay_at(&self, i: usize) -> f32 {
-        let along = self.instrument.decay.along(i, self.lengths.decay);
-        1.0 + (self.instrument.sustain_level - 1.0) * along
+        let along = self.instrument.decay().along(i, self.lengths.decay);
+        1.0 + (self.instrument.sustain_level() - 1.0) * along
     }
 
     fn wave(&self) -> f32 {
-        let table = &self.instrument.wave;
+        let table = self.instrument.wave();
         let a = cycle_at(table.frame(self.from), self.phase);
         // a single waveform, or a position on a frame, reads one frame
         if self.mix == 0.0 {
@@ -192,8 +192,8 @@ impl Note {
     }
 
     fn next(&mut self) -> f32 {
-        if let (Some(lfo), Some(baked)) = (&mut self.lfo, &self.instrument.wave.position_mod) {
-            let table = &self.instrument.wave;
+        if let (Some(lfo), Some(baked)) = (&mut self.lfo, &self.instrument.wave().position_mod) {
+            let table = self.instrument.wave();
             (self.from, self.to, self.mix) =
                 table.blend_at(table.position + baked.depth * lfo.next(&baked.cycle));
         }
@@ -232,7 +232,7 @@ impl Note {
         } else if self.lengths.decay > 0 {
             self.decay_at(0)
         } else {
-            self.instrument.sustain_level
+            self.instrument.sustain_level()
         };
         if first > 0.0 {
             self.velocity = audible / first;
@@ -270,8 +270,8 @@ struct Pool {
 
 impl Pool {
     fn new(instrument: Arc<Instrument>) -> Self {
-        let voices = (0..instrument.voice_count).map(|_| None).collect();
-        let gain = 1.0 / (instrument.voice_count.max(1) as f32).sqrt();
+        let voices = (0..instrument.voice_count()).map(|_| None).collect();
+        let gain = 1.0 / (instrument.voice_count().max(1) as f32).sqrt();
         Self {
             instrument,
             voices,
@@ -606,7 +606,7 @@ fn write(frame: &mut [f32], player: &mut Player, tally: &mut Tally) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::{Kind, Segment};
+    use crate::spec::{Kind, Lfo, Segment, Wavetable};
 
     /// A stage that plays `along` one point per sample at the 4 Hz test
     /// rate, so each sample reads a point exactly.
@@ -619,9 +619,44 @@ mod tests {
         }
     }
 
+    /// What `Instrument::new` takes, so a test can change one part.
+    struct Parts {
+        wave: Wavetable,
+        attack: Segment,
+        decay: Segment,
+        sustain_level: f32,
+        release: Segment,
+        voice_count: usize,
+    }
+
+    impl Parts {
+        fn build(self) -> Instrument {
+            Instrument::new(
+                self.wave,
+                self.attack,
+                self.decay,
+                self.sustain_level,
+                self.release,
+                self.voice_count,
+            )
+            .unwrap()
+        }
+
+        fn unchecked(self) -> Instrument {
+            Instrument::unchecked(
+                self.wave,
+                self.attack,
+                self.decay,
+                self.sustain_level,
+                self.release,
+                self.voice_count,
+            )
+        }
+    }
+
     // 4-entry wave so interpolation is checkable by hand
-    fn instrument() -> Instrument {
-        Instrument {
+    fn parts() -> Parts {
+        Parts {
             wave: vec![0.0, 1.0, 0.0, -1.0].into(),
             attack: stage(&[0.0, 0.5]),
             decay: stage(&[0.0, 0.5]), // 1.0, 0.85
@@ -629,6 +664,10 @@ mod tests {
             release: stage(&[0.0, 0.5]), // 0.7, 0.35
             voice_count: 1,
         }
+    }
+
+    fn instrument() -> Instrument {
+        parts().build()
     }
 
     // 4 Hz sample rate makes hold = 1s exactly 4 samples
@@ -645,29 +684,33 @@ mod tests {
     /// Frames that each hold one level, so a read at any phase shows the
     /// blend directly.
     fn table(levels: &[f32], slopes: Vec<Vec<f32>>, position: f32) -> Instrument {
-        Instrument {
-            wave: crate::spec::Wavetable {
+        table_parts(levels, slopes, position).build()
+    }
+
+    fn table_parts(levels: &[f32], slopes: Vec<Vec<f32>>, position: f32) -> Parts {
+        Parts {
+            wave: Wavetable {
                 frames: levels.iter().flat_map(|&level| [level; 4]).collect(),
                 points: 4,
                 slopes,
                 position,
                 position_mod: None,
             },
-            ..instrument()
+            ..parts()
         }
     }
 
     /// Two frames a blend apart, swept by an LFO whose cycle reads
     /// 0, 0.5, 1, -1 at one entry per sample.
     fn swept(voice_count: usize) -> Pool {
-        let mut instrument = table(&[0.0, 1.0], vec![], 0.5);
-        instrument.voice_count = voice_count;
-        instrument.wave.position_mod = Some(crate::spec::Lfo {
+        let mut parts = table_parts(&[0.0, 1.0], vec![], 0.5);
+        parts.voice_count = voice_count;
+        parts.wave.position_mod = Some(Lfo {
             cycle: vec![0.0, 0.5, 1.0, -1.0],
             rate: 1.0,
             depth: 0.5,
         });
-        Pool::new(Arc::new(instrument))
+        Pool::new(Arc::new(parts.build()))
     }
 
     fn start(pool: &mut Pool, slot: usize, pitch: u8) {
@@ -757,23 +800,27 @@ mod tests {
 
     #[test]
     fn a_stage_longer_than_its_curve_reads_between_points() {
-        let mut instrument = instrument();
         // two points stretched over 1 s, 4 samples at 4 Hz
-        instrument.attack = Segment {
-            curve: vec![0.0, 1.0],
-            ms: 1000.0,
+        let instrument = Parts {
+            attack: Segment {
+                curve: vec![0.0, 1.0],
+                ms: 1000.0,
+            },
+            ..parts()
         };
-        let mut note = note(instrument);
+        let mut note = note(instrument.build());
         let got: Vec<f32> = (0..4).map(|_| note.envelope()).collect();
         assert_eq!(got, [0.0, 0.25, 0.5, 0.75]);
     }
 
     #[test]
     fn zero_length_segment_falls_through() {
-        let mut instrument = instrument();
-        instrument.attack = stage(&[]);
+        let instrument = Parts {
+            attack: stage(&[]),
+            ..parts()
+        };
         // with no attack samples the first value must come from decay
-        assert_eq!(note(instrument).envelope(), 1.0);
+        assert_eq!(note(instrument.build()).envelope(), 1.0);
     }
 
     #[test]
@@ -824,8 +871,8 @@ mod tests {
 
     // an instrument whose envelope holds 1.0 forever, so fill() output is the
     // waveform alone and easy to predict
-    fn flat_instrument() -> Instrument {
-        Instrument {
+    fn flat() -> Parts {
+        Parts {
             wave: vec![0.25, 0.5, 0.75, 1.0].into(),
             attack: stage(&[]),
             decay: stage(&[]),
@@ -833,6 +880,10 @@ mod tests {
             release: stage(&[]),
             voice_count: 1,
         }
+    }
+
+    fn flat_instrument() -> Instrument {
+        flat().build()
     }
 
     // a Player whose timeline is a single note-on at sample 0
@@ -988,9 +1039,11 @@ mod tests {
     }
 
     fn rising() -> Instrument {
-        let mut instrument = instrument();
-        instrument.attack = stage(&[0.0, 0.25, 0.5, 0.75]);
-        instrument
+        Parts {
+            attack: stage(&[0.0, 0.25, 0.5, 0.75]),
+            ..parts()
+        }
+        .build()
     }
 
     #[test]
@@ -1034,8 +1087,11 @@ mod tests {
 
     #[test]
     fn take_over_with_no_attack_eases_up_from_the_handed_over_level() {
-        let mut instrument = rising();
-        instrument.attack = stage(&[]);
+        let instrument = Parts {
+            attack: stage(&[]),
+            ..parts()
+        }
+        .build();
         let mut from = Note::new(Arc::new(rising()), 1.0, 1.0, 4.0, None);
         from.level = 0.2;
         from.phase = 0.25;
@@ -1051,9 +1107,14 @@ mod tests {
     // freqs[1] is nonzero, so any other note holds still at wave[0] = 0.25.
     fn pooled(voice_count: usize) -> (rtrb::Producer<Event>, Player) {
         let (tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut instrument = flat_instrument();
-        instrument.voice_count = voice_count;
-        (tx, Player::new(live(vec![instrument], rx), freqs(), 4.0))
+        let instrument = Parts {
+            voice_count,
+            ..flat()
+        };
+        (
+            tx,
+            Player::new(live(vec![instrument.build()], rx), freqs(), 4.0),
+        )
     }
 
     fn on(note: u8) -> Event {
@@ -1109,9 +1170,11 @@ mod tests {
     #[test]
     fn a_second_release_does_not_restart_the_fade() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut instrument = flat_instrument();
-        instrument.release = stage(&[0.0, 0.5, 0.75]); // 1.0, 0.5, 0.25
-        let mut player = Player::new(live(vec![instrument], rx), freqs(), 4.0);
+        let instrument = Parts {
+            release: stage(&[0.0, 0.5, 0.75]), // 1.0, 0.5, 0.25
+            ..flat()
+        };
+        let mut player = Player::new(live(vec![instrument.build()], rx), freqs(), 4.0);
 
         tx.push(on(2)).unwrap();
         player.next();
@@ -1124,9 +1187,11 @@ mod tests {
     #[test]
     fn a_retrigger_while_releasing_resumes_from_the_fade() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut instrument = flat_instrument();
-        instrument.release = stage(&[0.0, 0.5, 0.75]); // 1.0, 0.5, 0.25
-        let mut player = Player::new(live(vec![instrument], rx), freqs(), 4.0);
+        let instrument = Parts {
+            release: stage(&[0.0, 0.5, 0.75]), // 1.0, 0.5, 0.25
+            ..flat()
+        };
+        let mut player = Player::new(live(vec![instrument.build()], rx), freqs(), 4.0);
 
         tx.push(on(2)).unwrap();
         player.next();
@@ -1159,10 +1224,12 @@ mod tests {
     #[test]
     fn a_full_pool_steals_a_releasing_voice_before_an_older_held_one() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut instrument = flat_instrument();
-        instrument.voice_count = 2;
-        instrument.release = stage(&[0.0; 16]); // long enough to still be fading
-        let mut player = Player::new(live(vec![instrument], rx), freqs(), 4.0);
+        let instrument = Parts {
+            voice_count: 2,
+            release: stage(&[0.0; 16]), // long enough to still be fading
+            ..flat()
+        };
+        let mut player = Player::new(live(vec![instrument.build()], rx), freqs(), 4.0);
 
         for event in [on(1), on(2), off(2), on(3)] {
             tx.push(event).unwrap();
@@ -1199,8 +1266,11 @@ mod tests {
     #[test]
     fn all_notes_off_releases_every_voice_on_its_instrument() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut wide = flat_instrument();
-        wide.voice_count = 2;
+        let wide = Parts {
+            voice_count: 2,
+            ..flat()
+        }
+        .build();
         let instruments = vec![wide, flat_instrument()];
         let mut player = Player::new(live(instruments, rx), freqs(), 4.0);
 
@@ -1226,8 +1296,11 @@ mod tests {
     #[test]
     fn all_sound_off_silences_its_instrument_with_no_release() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut releasing = flat_instrument();
-        releasing.release = stage(&[0.0, 0.5, 0.75]);
+        let releasing = Parts {
+            release: stage(&[0.0, 0.5, 0.75]),
+            ..flat()
+        }
+        .build();
         let instruments = vec![releasing, flat_instrument()];
         let mut player = Player::new(live(instruments, rx), freqs(), 4.0);
 
@@ -1339,8 +1412,11 @@ mod tests {
 
     #[test]
     fn fill_tracks_peak_and_clipping() {
-        let mut instrument = flat_instrument();
-        instrument.wave = vec![0.5, -2.0, 1.5, 0.1].into();
+        let instrument = Parts {
+            wave: vec![0.5, -2.0, 1.5, 0.1].into(),
+            ..flat()
+        }
+        .unchecked();
 
         let mut out = [0.0f32; 8];
         let tally = fill(&mut out, 2, &mut player(instrument));
@@ -1355,8 +1431,11 @@ mod tests {
     #[test]
     fn fill_drops_non_finite_samples() {
         for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            let mut instrument = flat_instrument();
-            instrument.wave = vec![0.5, bad, 0.25, 0.75].into();
+            let instrument = Parts {
+                wave: vec![0.5, bad, 0.25, 0.75].into(),
+                ..flat()
+            }
+            .unchecked();
 
             let mut out = [0.0f32; 4];
             let tally = fill(&mut out, 1, &mut player(instrument));
@@ -1375,8 +1454,11 @@ mod tests {
     #[test]
     fn the_filter_recovers_after_a_non_finite_sample() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
-        let mut broken = flat_instrument();
-        broken.wave = vec![0.5, f32::NAN, 0.25, 0.75].into();
+        let broken = Parts {
+            wave: vec![0.5, f32::NAN, 0.25, 0.75].into(),
+            ..flat()
+        }
+        .unchecked();
         let lowpass = Filter {
             kind: Kind::Lowpass,
             cutoff: 20000.0, // clamps just below Nyquist
@@ -1414,9 +1496,11 @@ mod tests {
     fn fill_clamps_summed_voices_to_full_scale() {
         let (mut tx, rx) = rtrb::RingBuffer::<Event>::new(8);
         let loud = || {
-            let mut instrument = flat_instrument();
-            instrument.wave = vec![1.0, -1.0, 1.0, -1.0].into();
-            instrument
+            Parts {
+                wave: vec![1.0, -1.0, 1.0, -1.0].into(),
+                ..flat()
+            }
+            .build()
         };
         let mut player = Player::new(live(vec![loud(), loud()], rx), freqs(), 4.0);
 

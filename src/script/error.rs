@@ -169,6 +169,9 @@ pub enum Error {
         t: f64,
     },
 
+    #[error(transparent)]
+    Instrument(#[from] crate::spec::InstrumentError),
+
     #[error("step {step} has a note but no instrument is in effect")]
     NoInstrument { step: usize },
 
