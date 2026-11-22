@@ -9,7 +9,6 @@ license = "GPL-3.0-or-later"
 [dependencies]
 anyhow = "1.0.104"
 comfy-table = "8.0.1"
-cpal = "0.18.2"
 crossterm = "0.29.0"
 flate2 = "1.1.11"
 ratatui = "0.30"
@@ -19,6 +18,13 @@ sha2 = "0.10.9"
 signal-hook = "0.3"
 thiserror = "2.0.21"
 tracing = "0.1.44"
+
+# `realtime` promotes the callback thread where cpal's host does so: MMCSS
+# on Windows. On Linux without `realtime-dbus` the request is a no-op, and
+# cpal's ALSA host never promotes plugin devices such as pipewire-alsa.
+[dependencies.cpal]
+version = "0.18.2"
+features = ["realtime"]
 
 [dependencies.clap]
 version = "4.6.6"
