@@ -1426,3 +1426,43 @@ fn a_field_of_the_wrong_kind_is_matched_by_variant() {
         "{error:#}"
     );
 }
+
+#[test]
+fn a_key_bound_to_a_note_and_a_control_is_matched_by_variant() {
+    let error = with_keyboard(
+        r#"synth.keyboard({
+            layout = { notes = { ["="] = 60 }, octave_up = { "=" }, octave_down = {}, help = {} },
+        })"#,
+    )
+    .err()
+    .expect("the patch should not load");
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::KeyConflict {
+                what: "layout.octave_up",
+                key: '=',
+                note: 60
+            })
+        ),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn a_note_outside_midi_is_matched_by_variant() {
+    let error = with_keyboard(
+        r#"synth.keyboard({
+            layout = { notes = { a = 128 }, octave_up = {}, octave_down = {}, help = {} },
+        })"#,
+    )
+    .err()
+    .expect("the patch should not load");
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::NoteRange { key, value }) if key == "a" && *value == 128.0
+        ),
+        "{error:#}"
+    );
+}

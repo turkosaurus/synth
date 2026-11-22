@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::Context;
-
+use super::Error;
 use crate::spec::{Key, Keymap};
 
 /// The raw keyboard layout as written in Lua. Field names live here, in
@@ -41,20 +40,27 @@ struct Layout {
     help: Vec<String>,
 }
 
-pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Keymap> {
+pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> Result<Keymap, Error> {
     super::schema::KEYBOARD.check(table, None)?;
     let config: KeyboardConfig =
-        mlua::LuaSerdeExt::from_value(lua, mlua::Value::Table(table.clone()))
-            .context("keyboard layout")?;
+        mlua::LuaSerdeExt::from_value(lua, mlua::Value::Table(table.clone())).map_err(
+            |source| Error::Convert {
+                what: "keyboard layout",
+                source,
+            },
+        )?;
 
     let notes = notes(config.layout.notes)?;
 
     // a binding is a character or a key name; an unrecognised name is an
     // error rather than a silently dead key
-    let bindings = |list: Vec<String>, what: &str| -> anyhow::Result<Vec<_>> {
-        list.iter()
+    let bindings = |list: Vec<String>, what: &str| -> Result<Vec<_>, Error> {
+        list.into_iter()
             .map(|name| {
-                binding(name).with_context(|| format!("keyboard.{what}: unknown key '{name}'"))
+                binding(&name).ok_or_else(|| Error::UnknownKey {
+                    what: format!("keyboard.{what}"),
+                    key: name,
+                })
             })
             .collect()
     };
@@ -62,10 +68,9 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
     let stop = bindings(config.stop, "stop")?;
     // a live instrument with no way to silence a stuck note is a trap, and
     // quitting is the only other recovery
-    anyhow::ensure!(
-        !stop.is_empty(),
-        "keyboard.stop must name at least one key to silence with"
-    );
+    if stop.is_empty() {
+        return Err(Error::NoStopKey);
+    }
 
     let octave_up = bindings(config.layout.octave_up, "layout.octave_up")?;
     let octave_down = bindings(config.layout.octave_down, "layout.octave_down")?;
@@ -83,11 +88,12 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
     ] {
         for key in keys {
             if let Key::Char(ch) = key {
-                if let Some(note) = notes.get(ch) {
-                    anyhow::bail!(
-                        "keyboard.layout plays note {note} on '{ch}', \
-                         which keyboard.{what} also binds"
-                    );
+                if let Some(&note) = notes.get(ch) {
+                    return Err(Error::KeyConflict {
+                        what,
+                        key: *ch,
+                        note,
+                    });
                 }
             }
         }
@@ -115,17 +121,16 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> anyhow::Result<Key
 /// Checks each entry of `notes`: one character to one MIDI note. A
 /// key event carries a single character, so a longer string could never
 /// be pressed.
-fn notes(raw: HashMap<String, f64>) -> anyhow::Result<HashMap<char, u8>> {
+fn notes(raw: HashMap<String, f64>) -> Result<HashMap<char, u8>, Error> {
     let mut notes = HashMap::with_capacity(raw.len());
     for (key, note) in raw {
         let mut chars = key.chars();
         let (Some(ch), None) = (chars.next(), chars.next()) else {
-            anyhow::bail!("keyboard.layout.notes: key '{key}' must be one character");
+            return Err(Error::NoteKey { key });
         };
-        anyhow::ensure!(
-            note.fract() == 0.0 && (0.0..=127.0).contains(&note),
-            "keyboard.layout.notes['{key}'] is {note}; must be a whole number 0 to 127"
-        );
+        if !(note.fract() == 0.0 && (0.0..=127.0).contains(&note)) {
+            return Err(Error::NoteRange { key, value: note });
+        }
         notes.insert(ch, note as u8);
     }
     Ok(notes)
