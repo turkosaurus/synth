@@ -82,6 +82,33 @@ pub enum Error {
     #[error("{what} contains itself; a patch cannot hold a cycle")]
     Cycle { what: String },
 
+    /// Lua's message follows as the source, as context would add it.
+    #[error("{what}")]
+    Convert {
+        what: &'static str,
+        #[source]
+        source: mlua::Error,
+    },
+
+    #[error("{what}: unknown key '{key}'")]
+    UnknownKey { what: String, key: String },
+
+    #[error("keyboard.stop must name at least one key to silence with")]
+    NoStopKey,
+
+    #[error("keyboard.layout plays note {note} on '{key}', which keyboard.{what} also binds")]
+    KeyConflict {
+        what: &'static str,
+        key: char,
+        note: u8,
+    },
+
+    #[error("keyboard.layout.notes: key '{key}' must be one character")]
+    NoteKey { key: String },
+
+    #[error("keyboard.layout.notes['{key}'] is {value}; must be a whole number 0 to 127")]
+    NoteRange { key: String, value: f64 },
+
     /// Lua's own message already says what failed, so it is shown as is.
     #[error(transparent)]
     Lua(#[from] mlua::Error),
