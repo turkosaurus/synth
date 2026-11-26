@@ -4,7 +4,7 @@
 | --- | --- |
 | [`main.rs`](./main.rs) | CLI: parses a command and dispatches it |
 | [`script`](./script) | Lua in, `spec` out |
-| [`spec`](./spec) | plain data between `script` and `audio` |
+| [`spec`](./spec) | plain data every module shares; names nothing else in the crate |
 | [`audio`](./audio) | the realtime path: render and device |
 | [`input`](./input) | character keyboard to note events |
 | [`session.rs`](./session.rs) | model, msg, and cmd for a live view; wires device, patch, and ring |
@@ -16,13 +16,27 @@
 
 ```mermaid
 flowchart LR
-    main --> check & play & tui
-    main --> install & update
-    check --> script --> view
-    play --> script & audio
+    subgraph patch [patch commands]
+        doctor([doctor])
+        check([check])
+        config([config])
+        patches([patches])
+        play([play])
+        tui([tui])
+    end
+    subgraph binary [binary commands]
+        install_cmd([install])
+        uninstall([uninstall])
+        update_cmd([update])
+        version([version])
+    end
+    patch --> script & view
+    doctor & tui --> terminal
+    play --> audio
     tui --> session --> script & audio & input
-    tui --> view
-    update --> install
+    install_cmd & uninstall --> install
+    update_cmd --> update --> install & release
+    version --> release
 ```
 
-`mlua` stays in `script`, `cpal` in `audio/device.rs`, `crossterm` in `view` and `terminal.rs`, and `spec` names none of them; [`test:separation`](../mise-tasks/test/separation) checks it.
+`mlua` stays in `script`, `cpal` in `audio/device.rs`, `crossterm` in `view` and `terminal.rs`, and `spec` depends on nothing else in the crate; [`test:separation`](../mise-tasks/test/separation) checks it.
