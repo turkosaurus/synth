@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="bench.yml: bench:compare NEW into comparison.md; a regression writes regressed=true and passes"
+
+# The regression fails a later step, so the result is still committed and
+# the comment still posted.
+set -euo pipefail
+
+new=${NEW:?NEW is the result to compare}
+# exit 2 is a regression; any other failure fails here
+code=0
+mise run bench:compare "$new" >comparison.md || code=$?
+if [ "$code" = 2 ]; then
+  echo "regressed=true" >>"${GITHUB_OUTPUT:-/dev/stdout}"
+elif [ "$code" != 0 ]; then
+  exit "$code"
+fi

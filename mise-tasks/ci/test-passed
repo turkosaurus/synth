@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="test.yml: fail unless every job succeeded: mise run ci:test-passed <name=result>..."
+set -euo pipefail
+
+failed=0
+for pair in "$@"; do
+  if [ "${pair#*=}" != success ]; then
+    echo "::error title=test::${pair%%=*}: ${pair#*=}"
+    failed=1
+  fi
+done
+exit "$failed"

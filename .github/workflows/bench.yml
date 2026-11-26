@@ -55,30 +55,22 @@ jobs:
           # the workflow's own token is used
           token: ${{ secrets.BENCH_TOKEN || github.token }}
 
-      # Only Rust, Lua, and Cargo changes can move a result. A PR compares
-      # with its base, the merge commit's first parent; main compares with
-      # the commit its last result measured. The job still runs and passes
-      # when skipping, since main's ruleset requires this check.
+      # mise alone, so a skip installs nothing
+      - name: Install mise
+        uses: jdx/mise-action@v5
+        with:
+          install: false
+          cache: false
+
+      # Only Rust, Lua, and Cargo changes can move a result. The job still
+      # runs and passes when skipping, since main's ruleset requires this
+      # check.
       - name: Skip unless Rust or Lua changed
         id: changed
         env:
+          MISE_TASK_RUN_AUTO_INSTALL: false
           EVENT: ${{ github.event_name }}
-        run: |
-          if [ "$EVENT" = pull_request ]; then
-            base=HEAD^1
-          else
-            last=$(find benches/results -name '*.toml' 2>/dev/null | sort | tail -1)
-            base=""
-            if [ -n "$last" ]; then
-              base=$(sed -n 's/^commit = "\(.*\)"$/\1/p' "$last")
-            fi
-          fi
-          if [ -n "$base" ] && git diff --quiet "$base" HEAD -- '*.rs' '*.lua' Cargo.toml Cargo.lock; then
-            echo "::notice title=bench::no Rust or Lua change since $base; nothing to measure"
-            echo "run=false" >>"$GITHUB_OUTPUT"
-          else
-            echo "run=true" >>"$GITHUB_OUTPUT"
-          fi
+        run: mise run ci:bench-changed
 
       # Valgrind for the instruction count; gungraun-runner comes from mise
       - name: Install ALSA headers and Valgrind
@@ -96,14 +88,10 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # the saved file's path is the last line on stdout
       - name: Bench
         id: bench
         if: steps.changed.outputs.run != 'false'
-        run: |
-          set -o pipefail
-          file=$(mise run bench:record | tail -1)
-          echo "file=$file" >>"$GITHUB_OUTPUT"
+        run: mise run ci:bench-record
 
       # bench:compare writes the job summary itself; the copy kept here is
       # for the PR comment. A regression is held until the last step, so
@@ -113,40 +101,17 @@ jobs:
         if: steps.changed.outputs.run != 'false'
         env:
           NEW: ${{ steps.bench.outputs.file }}
-        run: |
-          # exit 2 is a regression; any other failure fails here
-          code=0
-          mise run bench:compare "$NEW" >comparison.md || code=$?
-          if [ "$code" = 2 ]; then
-            echo "regressed=true" >>"$GITHUB_OUTPUT"
-          elif [ "$code" != 0 ]; then
-            exit "$code"
-          fi
+        run: mise run ci:bench-compare
 
       # main's ruleset requires status checks, so this push needs either
       # BENCH_TOKEN or a ruleset that admits the workflow's token. A push
       # with BENCH_TOKEN starts workflows, and paths-ignore keeps it from
       # starting this one.
-      # Main may have moved during the run; the result is a new file, so
-      # rebasing onto it never conflicts.
       - name: Commit the result
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.changed.outputs.run != 'false'
         env:
           FILE: ${{ steps.bench.outputs.file }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$FILE"
-          git commit -q -m "bench: results for $GITHUB_SHA"
-          for attempt in 1 2 3; do
-            if git pull -q --rebase origin main && git push -q origin HEAD:main; then
-              exit 0
-            fi
-            echo "push attempt $attempt failed; retrying" >&2
-            sleep $((attempt * 5))
-          done
-          echo "::error title=bench::could not push the result to main"
-          exit 1
+        run: mise run ci:bench-commit
 
       # a fork's PR gets a read-only token, so it has only the job summary
       - name: Comment on the PR
@@ -158,6 +123,4 @@ jobs:
 
       - name: Fail on a regression
         if: steps.compare.outputs.regressed == 'true'
-        run: |
-          echo "::error title=bench::instructions rose beyond the regression limit; see the job summary"
-          exit 1
+        run: echo "::error title=bench::instructions rose beyond the regression limit; see the job summary"; exit 1

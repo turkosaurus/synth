@@ -83,23 +83,19 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Install mise
+        uses: jdx/mise-action@v5
+        with:
+          install: false
+          cache: false
+
       - name: Every platform passed
         env:
+          MISE_TASK_RUN_AUTO_INSTALL: false
           LINUX: ${{ needs.linux.result }}
           MACOS: ${{ needs.macos.result }}
           WINDOWS: ${{ needs.windows.result }}
-        run: |
-          failed=0
-          if [ "$LINUX" != success ]; then
-            echo "::error title=test::linux: $LINUX"
-            failed=1
-          fi
-          if [ "$MACOS" != success ]; then
-            echo "::error title=test::macos: $MACOS"
-            failed=1
-          fi
-          if [ "$WINDOWS" != success ]; then
-            echo "::error title=test::windows: $WINDOWS"
-            failed=1
-          fi
-          exit "$failed"
+        run: mise run ci:test-passed "linux=$LINUX" "macos=$MACOS" "windows=$WINDOWS"

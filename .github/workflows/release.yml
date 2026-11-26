@@ -49,26 +49,12 @@ jobs:
           VERSION_BASE: ${{ github.event_name == 'push' && 'latest' || '' }}
         run: mise run version
 
-      # semver build metadata names the commit without ordering it,
-      # so a dev build shows what it was built from and never outranks a release
       - name: Name the build
         id: name
         env:
           RELEASE: ${{ steps.check.outputs.release }}
           VERSION: ${{ steps.check.outputs.version }}
-        run: |
-          if [ "$RELEASE" = true ]; then
-            tag="v$VERSION"
-          else
-            tag="v$VERSION+${GITHUB_SHA::7}"
-          fi
-          case $tag in
-          *-* | *+*) prerelease=true ;;
-          *) prerelease=false ;;
-          esac
-          echo "tag=$tag" | tee -a "$GITHUB_OUTPUT"
-          echo "build=${tag#v}" | tee -a "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" | tee -a "$GITHUB_OUTPUT"
+        run: mise run ci:release-name
 
   test:
     needs: version
@@ -109,9 +95,23 @@ jobs:
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
+    env:
+      # the task is bash, and mise runs file tasks with cmd on Windows;
+      # see test-platform.yml
+      MISE_WINDOWS_DEFAULT_FILE_SHELL_ARGS: bash
+      MISE_TASK_RUN_AUTO_INSTALL: false
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Check out
         uses: actions/checkout@v7
+
+      # mise alone and uncached, so the runner's cargo builds, not a Rust
+      # a cache restored
+      - name: Install mise
+        uses: jdx/mise-action@v5
+        with:
+          install: false
+          cache: false
 
       # cpal links the system audio API.
       # macOS and Windows ship their audio APIs;
@@ -131,16 +131,8 @@ jobs:
         with:
           name: notices
 
-      # GPL-3.0 and the dependencies' licenses travel with the binary
       - name: Package ${{ matrix.target }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          dir=target/${{ matrix.target }}/release
-          if [ "$RUNNER_OS" = Windows ]; then bin=synth.exe; else bin=synth; fi
-          mkdir pkg
-          cp "$dir/$bin" LICENSE THIRD-PARTY-NOTICES.txt pkg/
-          tar -czf synth-${{ matrix.target }}.tar.gz -C pkg .
+        run: mise run ci:package ${{ matrix.target }}
 
       - name: Upload ${{ matrix.target }}
         uses: actions/upload-artifact@v7
@@ -151,32 +143,50 @@ jobs:
   release:
     needs: [version, build]
     runs-on: ubuntu-latest
+    env:
+      MISE_TASK_RUN_AUTO_INSTALL: false
     steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      # mise alone, for the task below
+      - name: Install mise
+        uses: jdx/mise-action@v5
+        with:
+          install: false
+          cache: false
+
       - name: Download builds
         uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           path: dist
 
-      # one call with every asset, so a release is never seen half uploaded
       - name: Create release ${{ needs.version.outputs.tag }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
-        run: |
-          gh release create "$TAG" dist/* \
-            --target "$GITHUB_SHA" \
-            --generate-notes \
-            --prerelease="$PRERELEASE" \
-            --repo "$GITHUB_REPOSITORY"
+        run: mise run ci:release-create
 
   # the release just published, end to end: its Linux build finds it on the
   # release page by its channel, downloads, verifies, and unpacks it
   verify:
     needs: [version, release]
     runs-on: ubuntu-latest
+    env:
+      MISE_TASK_RUN_AUTO_INSTALL: false
     steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      # mise alone, for the task below
+      - name: Install mise
+        uses: jdx/mise-action@v5
+        with:
+          install: false
+          cache: false
+
       - name: Download the Linux build
         uses: actions/download-artifact@v8
         with:
@@ -186,19 +196,7 @@ jobs:
         env:
           TAG: ${{ needs.version.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
-        run: |
-          tar -xzf synth-x86_64-unknown-linux-gnu.tar.gz
-          case $TAG in
-          *+*) channel=(--dev "${TAG##*+}") ;;
-          *-*) channel=(--beta) ;;
-          *) channel=(--stable) ;;
-          esac
-          out=$(./synth update --dry-run "${channel[@]}")
-          echo "$out"
-          if [[ $out != "synth ${TAG#v} verified;"* ]]; then
-            echo "::error::update --dry-run ${channel[*]} did not find $TAG"
-            exit 1
-          fi
+        run: mise run ci:release-verify
 
   # install.ps1 end to end from the release just published, once per release:
   # it installs the latest stable, so a PR would test nothing new
@@ -220,6 +218,7 @@ jobs:
         uses: jdx/mise-action@v5
         with:
           install: false
+          cache: false
 
       - name: Install, run, and uninstall with install.ps1
         run: mise run test:install-windows

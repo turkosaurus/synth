@@ -16,7 +16,7 @@ flowchart LR
 
 - `test` is required per ruleset, so `test` requires all platform-specific workflows to pass
 - Lua, license, and version checks never vary, so they run only on Linux.
-- `mise` defines CI and manual checks through [`mise-tasks`](../../mise-tasks).
+- `mise` defines CI and manual checks through [`mise-tasks`](../../mise-tasks). A step runs one `mise run` line; any longer script is a file task, which `lint:shell` checks, and the workflow-only ones are `ci:*`.
 
 ## workflow settings
 
@@ -25,4 +25,5 @@ flowchart LR
 | `MISE_JOBS: 1`, `MISE_TASK_OUTPUT: interleave` | mise prefixes parallel output with the task's label, and Actions reads `::error::` only at the start of a line |
 | `MISE_WINDOWS_DEFAULT_*_SHELL_ARGS` | the tasks are bash, and mise runs them with cmd on Windows. mise ignores these in a project's `mise.toml`, so a repository cannot choose a user's shell |
 | `MISE_TASK_RUN_AUTO_INSTALL: false` | `mise run` would install every tool in `mise.toml`, the Linux-only lint tools included; macOS hit GitHub's API rate limit doing so |
+| `install: false`, `cache: false` | mise alone, for a job that runs only `ci:*` tasks; uncached, so no restored Rust shadows the runner's in `release.yml`'s build |
 | `GITHUB_TOKEN` | lifts the rate limit for any API call mise still makes |

@@ -7,6 +7,7 @@ neovim = "0.12"
 jq = "1"
 stylua = "2"
 cargo-deny = "0.20"
+shellcheck = "0.11"
 "ubi:EmbarkStudios/cargo-about" = "0.9"
 # runs benches/instructions.rs under Valgrind; must match the gungraun crate's
 # version exactly. Valgrind itself comes from the system's package manager.
@@ -82,6 +83,7 @@ depends = [
     "lint:stylua",
     "lint:licenses",
     "lint:ps1",
+    "lint:shell",
 ]
 description = "run all linters; any warning fails, except pedantic"
 

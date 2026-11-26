@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#MISE description="bench.yml: run=true unless no Rust, Lua, or Cargo file changed since the base; EVENT=pull_request compares with HEAD^1"
+
+# A PR compares with its base, the merge commit's first parent; main
+# compares with the commit its last result measured. Writes run=true|false
+# to $GITHUB_OUTPUT, or to stdout outside Actions.
+set -euo pipefail
+
+out=${GITHUB_OUTPUT:-/dev/stdout}
+if [ "${EVENT:-}" = pull_request ]; then
+  base=HEAD^1
+else
+  last=$(find benches/results -name '*.toml' 2>/dev/null | sort | tail -1)
+  base=""
+  if [ -n "$last" ]; then
+    base=$(sed -n 's/^commit = "\(.*\)"$/\1/p' "$last")
+  fi
+fi
+if [ -n "$base" ] && git diff --quiet "$base" HEAD -- '*.rs' '*.lua' Cargo.toml Cargo.lock; then
+  echo "::notice title=bench::no Rust or Lua change since $base; nothing to measure"
+  echo "run=false" >>"$out"
+else
+  echo "run=true" >>"$out"
+fi
