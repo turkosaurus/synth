@@ -21,3 +21,9 @@ Lua defines not only configuration, but provides functions to the Rust audio eng
 | [`config.lua`](./config.lua) | default system config bootstrapped by `synth config` |
 | [`patches/`](./patches) | example/bootstrap patches written by `synth patches` |
 
+## terms
+
+| term | type | definition |
+| ---  | ---  | ---        |
+| cycle | `[]f32` | one wavetable waveform, baked `TABLE_SIZE` points long; `waveforms` gives one cycle each |
+| `repeats` | | what a sequence does: its note events play again; a clip loops instead |

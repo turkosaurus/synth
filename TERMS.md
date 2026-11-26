@@ -12,7 +12,7 @@
 | envelope (follower) | `AR` | attack and release rates, no sections (defines reactivity for a compressor) |
 | slope | `lua:func` | points along a sloped curve between two points |
 | waveform | `lua:func` | phase (`0.0` to `1.0`) to amplitude (`-1.0` to `1.0`) |
-| oscillator | `synth.osc` | an instrument's tone: one waveform is a fixed cycle, and several are frames blended by position |
+| oscillator | `synth.osc` | an instrument's tone: one waveform is a fixed cycle, and several are cycles blended by position |
 | wavetable | `[][]f32` | waveforms baked one cycle each, `TABLE_SIZE` points apiece, and blended by position |
 | position | `0.0` - `1.0` | where a wavetable sounds, from its first wave to its last |
 | phase | `0.0` - `1.0` | position in oscillation cycle |

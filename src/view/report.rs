@@ -251,7 +251,7 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
 pub fn stats(snap: &Snapshot) -> String {
     let Snapshot {
         frames,
-        clips,
+        clipped,
         non_finite,
         overruns,
         errors,
@@ -263,7 +263,7 @@ pub fn stats(snap: &Snapshot) -> String {
     } = *snap;
     let pct = load * 100.0;
     format!(
-        "frames={frames} clips={clips} non_finite={non_finite} peak={peak:.3} \
+        "frames={frames} clipped={clipped} non_finite={non_finite} peak={peak:.3} \
          callback_max={callback_us_max}us budget={budget_us}us ({pct:.1}%) \
          overruns={overruns} errors={errors} dropped={dropped}"
     )

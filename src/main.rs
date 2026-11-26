@@ -384,7 +384,7 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
     let snap = stats.snapshot();
     debug!(
         frames = snap.frames,
-        clips = snap.clips,
+        clipped = snap.clipped,
         non_finite = snap.non_finite,
         overruns = snap.overruns,
         errors = snap.errors,
