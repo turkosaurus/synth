@@ -35,6 +35,7 @@ pub(crate) fn exp2(x: f32) -> f32 {
     }
     let f = x - whole as f32;
     // ln(2)^k / k!
+    // what the fuck?
     let frac = 1.0
         + f * (LN_2 + f * (0.240_226_5 + f * (0.055_504_1 + f * (0.009_618_1 + f * 0.001_333_4))));
     frac * f32::from_bits(((whole + 127) as u32) << 23)
