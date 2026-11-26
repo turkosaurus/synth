@@ -12,9 +12,9 @@ use super::render::{fill, Player, Tally};
 /// holders need not import cpal, which stays in this file.
 pub use cpal::Stream;
 
-// written by the audio thread, read anywhere, lock-free because the
-// callback must never block, and Relaxed because these are standalone
-// counters, not gates on other memory.
+// written by the audio thread, except `dropped`, and read anywhere.
+// lock-free because the callback must never block, and Relaxed because
+// these are standalone counters, not gates on other memory.
 #[derive(Default)]
 pub struct Stats {
     /// frames, not samples: one frame is one sample per channel
@@ -28,6 +28,8 @@ pub struct Stats {
     /// errors the driver reported, counted rather than logged because the
     /// error callback may run on the audio thread
     errors: AtomicU64,
+    /// events the UI thread could not push because the ring was full
+    dropped: AtomicU64,
     peak_bits: AtomicU32,
     /// the most recent callback's deadline, so it describes a callback that
     /// actually ran
@@ -54,6 +56,10 @@ impl Stats {
         f32::from_bits(self.peak_bits.swap(0, Ordering::Relaxed))
     }
 
+    pub(crate) fn record_dropped(&self) {
+        self.dropped.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// How long one callback has before the buffer it was handed is late.
     /// Polyphony needs this as a number to know what it can afford, and
     /// asking must not disturb the gauges, so this does not reset.
@@ -73,6 +79,7 @@ impl Stats {
             non_finite: self.non_finite.load(Ordering::Relaxed),
             overruns: self.overruns.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
+            dropped: self.dropped.load(Ordering::Relaxed),
             peak: self.take_peak(),
             budget_us: self.budget_us(),
             callback_us_max: self.callback_us_max.swap(0, Ordering::Relaxed),
@@ -91,6 +98,7 @@ pub struct Snapshot {
     pub non_finite: u64,
     pub overruns: u64,
     pub errors: u64,
+    pub dropped: u64,
     pub peak: f32,
     pub budget_us: u32,
     pub callback_us_max: u32,
@@ -313,6 +321,16 @@ mod tests {
         assert_eq!(got, want);
         let converted: Vec<i16> = expected.iter().map(|&s| i16::from_sample(s)).collect();
         assert_eq!(out, converted);
+    }
+
+    // a count, not a gauge: taking a snapshot must not reset it
+    #[test]
+    fn dropped_events_accumulate_across_snapshots() {
+        let stats = Stats::default();
+        stats.record_dropped();
+        stats.record_dropped();
+        assert_eq!(stats.snapshot().dropped, 2);
+        assert_eq!(stats.snapshot().dropped, 2);
     }
 
     const RANGE: cpal::SupportedBufferSize =

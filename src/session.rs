@@ -146,7 +146,9 @@ impl Session {
             // the queue is bounded; a full queue means the audio thread has
             // stalled, and dropping an event is better than blocking the UI
             Cmd::Play(event) => {
-                let _ = self.tx.push(event);
+                if self.tx.push(event).is_err() {
+                    self.stats.record_dropped();
+                }
             }
         }
     }

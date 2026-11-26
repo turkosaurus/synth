@@ -255,6 +255,7 @@ pub fn stats(snap: &Snapshot) -> String {
         non_finite,
         overruns,
         errors,
+        dropped,
         peak,
         budget_us,
         callback_us_max,
@@ -264,6 +265,6 @@ pub fn stats(snap: &Snapshot) -> String {
     format!(
         "frames={frames} clips={clips} non_finite={non_finite} peak={peak:.3} \
          callback_max={callback_us_max}us budget={budget_us}us ({pct:.1}%) \
-         overruns={overruns} errors={errors}"
+         overruns={overruns} errors={errors} dropped={dropped}"
     )
 }
