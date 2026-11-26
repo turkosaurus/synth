@@ -58,12 +58,12 @@ description = "tests that need no network"
 description = "cargo tests"
 run = "cargo test --verbose -- --show-output || { echo '::error title=test:rust::cargo test failed'; exit 1; }"
 
-# #[ignore]d tests in tests/network.rs; CI runs them beside test
-[tasks."test:network"]
-description = "tests that reach GitHub releases"
+# #[ignore]d tests in tests/update.rs, since they reach GitHub
+[tasks."test:update"]
+description = "update against GitHub releases"
 # they run target/debug/synth, which the other cargo tasks may be relinking
 wait_for = ["test:rust", "test:example"]
-run = "cargo test --test network -- --ignored || { echo '::error title=test:network::network tests failed'; exit 1; }"
+run = "cargo test --test update -- --ignored || { echo '::error title=test:update::update tests failed'; exit 1; }"
 
 [tasks."test:example"]
 description = "lint example.lua; nonzero exit on warnings"

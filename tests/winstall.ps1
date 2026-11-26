@@ -8,7 +8,7 @@ param()
 $ErrorActionPreference = 'Stop'
 
 function Fail([string]$message) {
-    Write-Output "::error title=test:install-windows::$message"
+    Write-Output "::error title=test:winstall::$message"
     exit 1
 }
 

@@ -202,7 +202,7 @@ jobs:
 
   # install.ps1 end to end from the release just published, once per release:
   # it installs the latest stable, so a PR would test nothing new
-  install-windows:
+  winstall:
     needs: [version, release]
     runs-on: windows-latest
     env:
@@ -222,4 +222,4 @@ jobs:
           install: false
 
       - name: Install, run, and uninstall with install.ps1
-        run: mise run test:install-windows
+        run: mise run test:winstall

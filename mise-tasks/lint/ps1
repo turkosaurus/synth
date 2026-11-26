@@ -4,7 +4,7 @@
 # Contributors without pwsh still pass `mise run lint`; CI must not skip.
 set -euo pipefail
 
-scripts=(install.ps1 tests/install-windows.ps1)
+scripts=(install.ps1 tests/winstall.ps1)
 
 skip() {
   if [ "${CI:-}" = true ]; then

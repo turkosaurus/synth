@@ -1,5 +1,5 @@
-//! Tests that reach GitHub releases. `cargo test` skips them;
-//! `mise run test:network` runs them, and `mise run tests` runs everything.
+//! `update` against the live GitHub releases. `cargo test` skips them;
+//! `mise run test:update` runs them, and `mise run tests` runs everything.
 
 use std::fs;
 use std::process::Command;

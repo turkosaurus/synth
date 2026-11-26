@@ -1,6 +1,6 @@
 name: test-platform
 
-# The Rust tests, network tests, and clippy on one platform, through the
+# The Rust tests, update tests, and clippy on one platform, through the
 # same mise tasks as Linux. test.yml calls this once per platform beyond Linux; the Lua,
 # license and version checks give the same answer everywhere, so they run
 # on Linux only.
@@ -56,10 +56,10 @@ jobs:
 
       # update replaces the running binary, which each platform does its own
       # way; the token lifts GitHub's API limit
-      - name: Test network
+      - name: Test update
         env:
           GH_TOKEN: ${{ github.token }}
-        run: mise run test:network
+        run: mise run test:update
 
       - name: Lint
         run: mise run lint:rust
