@@ -58,7 +58,8 @@ description = "tests that need no network"
 description = "cargo tests"
 run = "cargo test --verbose -- --show-output || { echo '::error title=test:rust::cargo test failed'; exit 1; }"
 
-# #[ignore]d tests in tests/update.rs, since they reach GitHub
+# integration tests that reach GitHub are #[ignore]d and skipped;
+# update test runs them
 [tasks."test:update"]
 description = "update against GitHub releases"
 # they run target/debug/synth, which the other cargo tasks may be relinking
