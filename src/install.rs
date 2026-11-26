@@ -150,7 +150,7 @@ fn remove_old(_exe: &Path) {}
 #[cfg(windows)]
 fn set_aside(to: &Path) -> std::io::Result<()> {
     remove_old(to);
-    match fs::rename(to, &to.with_extension("exe.old")) {
+    match fs::rename(to, to.with_extension("exe.old")) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         other => other,
     }

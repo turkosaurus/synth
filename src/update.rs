@@ -86,8 +86,12 @@ pub enum Channel {
 pub enum Outcome {
     /// The installed build is already the channel's.
     Current(String),
-    /// The binary was replaced.
-    Installed { from: String, to: String },
+    /// The binary at `path` was replaced.
+    Installed {
+        from: String,
+        to: String,
+        path: PathBuf,
+    },
     /// `--dry-run`: the build was downloaded, verified, and unpacked,
     /// and would replace `path`.
     Checked { to: String, path: PathBuf },
@@ -206,6 +210,7 @@ pub fn run(channel: &Channel, dry_run: bool) -> anyhow::Result<Outcome> {
     Ok(Outcome::Installed {
         from: VERSION.to_string(),
         to,
+        path: exe,
     })
 }
 
