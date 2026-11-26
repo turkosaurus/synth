@@ -1,2 +1,2 @@
--- expect: no built-in module 'synth.nope'
+-- expect: module 'synth.nope' not found
 return require("synth.nope")

@@ -1094,7 +1094,7 @@ fn cutoff_below_floor_warns() {
 #[test]
 fn the_root_reexports_every_module() {
     let lua = mlua::Lua::new();
-    lua_register(&lua, Vec::new(), None).unwrap();
+    lua_register(&lua, None, None).unwrap();
 
     // the constructors' helper is theirs, not a patch's
     for (name, _) in MODULES
@@ -1185,7 +1185,7 @@ fn every_lua_default_passes_rust_validation() {
     // Lua owns the defaults and Rust owns what is valid; this keeps the two
     // from drifting apart
     let lua = mlua::Lua::new();
-    lua_register(&lua, Vec::new(), None).unwrap();
+    lua_register(&lua, None, None).unwrap();
     let empty = || lua.create_table().unwrap();
 
     let envelope = construct(&lua, "synth.envelope", empty());
@@ -1228,7 +1228,7 @@ fn a_patch_requires_from_the_patches_folder_after_its_own() {
 }
 
 #[test]
-fn a_file_named_like_a_built_in_does_not_replace_it() {
+fn a_file_beside_the_patch_replaces_a_built_in() {
     load(&fixture("shadow"), 48000, None).unwrap();
 }
 
@@ -1750,7 +1750,7 @@ fn the_sweep_patch_loads_clean() {
 /// registered, as a patch would see it.
 fn sandboxed(expr: &str) -> mlua::Value {
     let lua = mlua::Lua::new();
-    lua_register(&lua, Vec::new(), None).unwrap();
+    lua_register(&lua, None, None).unwrap();
     sandbox::chunk(&lua, format!("return {expr}"), "test")
         .unwrap()
         .eval()
@@ -1814,7 +1814,7 @@ fn package_loadlib_is_gone() {
 fn package_cpath_is_not_searched() {
     assert_gone("package");
     let lua = mlua::Lua::new();
-    lua_register(&lua, Vec::new(), None).unwrap();
+    lua_register(&lua, None, None).unwrap();
     let cpath: String = lua.load("return package.cpath").eval().unwrap();
     assert_eq!(cpath, "");
 }
@@ -1869,7 +1869,7 @@ fn a_loaded_chunk_runs_in_the_sandbox() {
 #[test]
 fn load_rejects_a_binary_chunk() {
     let lua = mlua::Lua::new();
-    lua_register(&lua, Vec::new(), None).unwrap();
+    lua_register(&lua, None, None).unwrap();
     let compiled = lua.load("return 1").into_function().unwrap().dump(true);
     let load: mlua::Function = sandbox::environment(&lua).unwrap().get("load").unwrap();
     let (chunk, message): (mlua::Value, Option<String>) =
@@ -1902,4 +1902,50 @@ fn a_module_from_disk_runs_in_the_sandbox() {
         return require("synth").instrument({})
     "#;
     load_in(patch, "test", 48000, Some(&dir), None).unwrap();
+}
+
+/// A patches folder whose `synth/wave.lua` is marked but still matches its
+/// recorded base, as an untouched copy from an older built-in does.
+fn patches_with_a_stale_copy(case: &str) -> std::path::PathBuf {
+    use sha2::{Digest, Sha256};
+    let patches = std::env::temp_dir().join(format!("synth-{case}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&patches);
+    builtins::write(&patches).unwrap();
+    let dir = patches.join("synth");
+    let copy = "return { stale = true }\n";
+    std::fs::write(dir.join("wave.lua"), copy).unwrap();
+    let hash = format!("{:x}", Sha256::digest(copy.as_bytes()));
+    std::fs::write(dir.join(".base.sha256"), format!("{hash}  wave.lua\n")).unwrap();
+    patches
+}
+
+const NOT_STALE: &str = r#"
+    local synth = require("synth")
+    assert(not require("synth.wave").stale, "a copy matching its base loaded")
+    return synth.instrument({})
+"#;
+
+#[test]
+fn a_copy_matching_its_base_does_not_replace_the_built_in() {
+    let patches = patches_with_a_stale_copy("stale-copy");
+    load_in(NOT_STALE, "test", 48000, None, Some(&patches)).unwrap();
+}
+
+#[test]
+fn a_patch_in_the_patches_folder_skips_a_copy_matching_its_base() {
+    let patches = patches_with_a_stale_copy("stale-in-folder");
+    load_in(NOT_STALE, "test", 48000, Some(&patches), Some(&patches)).unwrap();
+}
+
+#[test]
+fn a_synth_name_with_no_built_in_loads_from_the_patches_folder() {
+    let patches = std::env::temp_dir().join(format!("synth-extra-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&patches);
+    std::fs::create_dir_all(patches.join("synth")).unwrap();
+    std::fs::write(patches.join("synth/extra.lua"), "return { extra = true }").unwrap();
+    let patch = r#"
+        assert(require("synth.extra").extra, "synth.extra from the patches folder")
+        return require("synth").instrument({})
+    "#;
+    load_in(patch, "test", 48000, None, Some(&patches)).unwrap();
 }
