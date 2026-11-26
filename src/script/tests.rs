@@ -1823,8 +1823,11 @@ fn getfenv_and_setfenv_are_gone() {
 }
 
 #[test]
-fn the_globals_table_is_gone() {
-    assert_gone("_G");
+fn the_globals_table_is_the_sandbox() {
+    assert_eq!(sandboxed("rawequal(_G, _G._G)"), mlua::Value::Boolean(true));
+    assert_gone("_G.io");
+    assert_gone("_G.package");
+    assert_gone("_VERSION");
 }
 
 #[test]

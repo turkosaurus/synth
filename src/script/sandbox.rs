@@ -54,6 +54,7 @@ pub(super) fn environment(lua: &Lua) -> mlua::Result<Table> {
     let text = lua.create_function(load_text)?;
     env.set("load", text.clone())?;
     env.set("loadstring", text)?;
+    env.set("_G", &env)?;
     lua.set_named_registry_value(REGISTRY, &env)?;
     Ok(env)
 }
