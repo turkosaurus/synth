@@ -611,10 +611,11 @@ fn a_note_outside_midi_is_named() {
 #[test]
 fn the_frequency_table_covers_every_midi_note() {
     let patch = one_instrument(10, 48000);
-    assert_eq!(patch.freqs.len(), 128);
-    assert!((patch.freqs[69] - 440.0).abs() < 0.01);
-    assert!((patch.freqs[81] - 880.0).abs() < 0.01);
-    assert!((patch.freqs[57] - 220.0).abs() < 0.01);
+    let hz = |note| patch.freqs.hz(note).unwrap();
+    assert!(patch.freqs.hz(127).is_some());
+    assert!((hz(69) - 440.0).abs() < 0.01);
+    assert!((hz(81) - 880.0).abs() < 0.01);
+    assert!((hz(57) - 220.0).abs() < 0.01);
 }
 
 #[test]
@@ -626,9 +627,10 @@ fn a_patch_tuning_replaces_equal_temperament() {
         })
     "#;
     let patch = load_source(source, "test", 48000).unwrap();
-    assert!((patch.freqs[69] - 432.0).abs() < 0.01);
+    let hz = |note| patch.freqs.hz(note).unwrap();
+    assert!((hz(69) - 432.0).abs() < 0.01);
     // 19 steps up is one octave in 19-EDO
-    assert!((patch.freqs[88] - 864.0).abs() < 0.01);
+    assert!((hz(88) - 864.0).abs() < 0.01);
 }
 
 #[test]

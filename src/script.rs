@@ -16,7 +16,7 @@ mod schema;
 pub mod starters;
 mod structure;
 
-use crate::spec::{Diagnostic, DiagnosticKind, Patch};
+use crate::spec::{Diagnostic, DiagnosticKind, Freqs, Patch};
 pub use config::{config, config_path, log_path, template as config_template};
 pub use error::Error;
 use feed::{sequence, single, SINGLE};
@@ -441,10 +441,10 @@ fn load_in(
 /// A frequency that is not positive and finite stops the load: it would
 /// reach the oscillator as a NaN or a frozen phase. One above Nyquist is
 /// only a warning, since it plays, folded back to a lower pitch.
-fn tune(to_hz: &mlua::Function, sample_rate: u32) -> Result<(Vec<f32>, Vec<Diagnostic>), Error> {
+fn tune(to_hz: &mlua::Function, sample_rate: u32) -> Result<(Freqs, Vec<Diagnostic>), Error> {
     let notes = (0..128u8).map(f64::from);
     // the check passes only values the f32 table holds, so none clamp
-    let (freqs, _) = bake::sample(notes, 0.0..=f64::from(f32::MAX), |x| {
+    let (sampled, _) = bake::sample(notes, 0.0..=f64::from(f32::MAX), |x| {
         // an integer, not 69.0, so `math.type` and `tostring` see a note
         let note = x as u8;
         let hz: f64 = to_hz
@@ -457,6 +457,10 @@ fn tune(to_hz: &mlua::Function, sample_rate: u32) -> Result<(Vec<f32>, Vec<Diagn
         }
         Ok(hz)
     })?;
+    let mut freqs = [0.0; 128];
+    for (slot, hz) in freqs.iter_mut().zip(sampled) {
+        *slot = hz;
+    }
 
     let nyquist = sample_rate as f32 / 2.0;
     let mut diagnostics = Vec::new();
@@ -476,7 +480,7 @@ fn tune(to_hz: &mlua::Function, sample_rate: u32) -> Result<(Vec<f32>, Vec<Diagn
             format!("tuning: {notes} above Nyquist ({nyquist} Hz at {sample_rate} Hz) and fold to lower pitches"),
         ));
     }
-    Ok((freqs, diagnostics))
+    Ok((Freqs::new(freqs)?, diagnostics))
 }
 
 /// Gives every diagnostic the `file:line` of the constructor that built the

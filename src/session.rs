@@ -36,7 +36,7 @@ pub(crate) enum Cmd {
 pub(crate) struct Model {
     pub(crate) keyboard: Keyboard,
     /// The same baked table the player reads, copied for the view.
-    pub(crate) freqs: Vec<f32>,
+    pub(crate) freqs: crate::spec::Freqs,
     /// Whether the help overlay is up.
     pub(crate) help: bool,
 }
@@ -179,7 +179,7 @@ mod tests {
         };
         Model {
             keyboard: Keyboard::new(keymap, Gating::Held),
-            freqs: vec![],
+            freqs: crate::spec::Freqs::unchecked([0.0; 128]),
             help: false,
         }
     }
