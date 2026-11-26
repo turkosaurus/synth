@@ -460,6 +460,62 @@ fn a_patch_can_write_its_own_notes() {
     assert_eq!(patch.keymap.name, None, "unnamed notes read as custom");
 }
 
+/// The note a bare instrument file plays, and the sample it is released on.
+fn preview(patch: &Patch) -> (u8, u64) {
+    let events = &patch.timeline.events;
+    let crate::spec::Event::NoteOn { note, .. } = events[0].1 else {
+        panic!("expected a note on first");
+    };
+    let crate::spec::Event::NoteOff { .. } = events[1].1 else {
+        panic!("expected a note off second");
+    };
+    (note, events[1].0)
+}
+
+#[test]
+fn a_bare_instrument_previews_the_default_anchor() {
+    let patch = with_keyboard("synth.keyboard({})").unwrap();
+    assert_eq!(preview(&patch), (69, 48000 * 1200 / 1000));
+}
+
+#[test]
+fn a_bare_instrument_previews_its_grids_anchor() {
+    let patch = with_keyboard(
+        "synth.keyboard({ layout = synth.keyboard.grid({ note = 57 }), preview = 500 })",
+    )
+    .unwrap();
+    assert_eq!(preview(&patch), (57, 48000 / 2));
+}
+
+#[test]
+fn a_bare_instrument_with_written_notes_previews_the_default_anchor() {
+    let patch = with_keyboard(
+        r#"synth.keyboard({ layout = {
+            notes = { a = 60 }, octave_up = {}, octave_down = {}, help = {},
+        } })"#,
+    )
+    .unwrap();
+    assert_eq!(preview(&patch).0, 69);
+}
+
+#[test]
+fn an_anchor_outside_midi_is_named() {
+    let error = with_keyboard(
+        r#"synth.keyboard({ layout = {
+            notes = {}, note = 128, octave_up = {}, octave_down = {}, help = {},
+        } })"#,
+    )
+    .err()
+    .expect("not a MIDI note");
+    assert!(
+        matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::AnchorRange { value }) if *value == 128.0
+        ),
+        "{error:#}"
+    );
+}
+
 #[test]
 fn the_default_layout_is_named() {
     let patch = with_keyboard("synth.keyboard({})").unwrap();

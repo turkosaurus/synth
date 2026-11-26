@@ -25,20 +25,17 @@ struct Step {
 /// at the root of the patch rather than under `instruments`.
 pub(super) const SINGLE: &str = "(single note)";
 
-const SINGLE_HOLD: Duration = Duration::from_millis(1200);
-
-/// A4, for a bare instrument file with no sequence to say otherwise
-const SINGLE_NOTE: u8 = 69;
-
 pub(super) fn single(
     spec: InstrumentSpec,
     sample_rate: u32,
     freqs: crate::spec::Freqs,
     keymap: crate::spec::Keymap,
+    note: u8,
+    hold: Duration,
 ) -> anyhow::Result<Patch> {
     let (instrument, report) = bake_instrument(spec, sample_rate)?;
     let tail = instrument.release().samples(f64::from(sample_rate)) as u64;
-    let hold = (SINGLE_HOLD.as_secs_f64() * sample_rate as f64) as u64;
+    let hold = (hold.as_secs_f64() * sample_rate as f64) as u64;
 
     Ok(Patch {
         timeline: crate::spec::Timeline {
@@ -48,7 +45,7 @@ pub(super) fn single(
                     0,
                     crate::spec::Event::NoteOn {
                         instrument: 0,
-                        note: SINGLE_NOTE,
+                        note,
                         velocity: 127,
                     },
                 ),
@@ -56,7 +53,7 @@ pub(super) fn single(
                     hold,
                     crate::spec::Event::NoteOff {
                         instrument: 0,
-                        note: SINGLE_NOTE,
+                        note,
                     },
                 ),
             ],

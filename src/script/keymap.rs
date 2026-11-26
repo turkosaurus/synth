@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use super::Error;
 use crate::spec::{Key, Keymap};
@@ -21,6 +22,8 @@ struct KeyboardConfig {
     octave: i32,
     octave_low: i32,
     octave_high: i32,
+    #[serde(rename = "preview")]
+    preview_ms: f64,
 }
 
 /// Which character plays which note, and which keys a layout keeps for
@@ -35,12 +38,22 @@ struct Layout {
     /// Character to MIDI note. A float survives here so the range check
     /// below can name it, rather than serde rejecting it unnamed.
     notes: HashMap<String, f64>,
+    /// The anchor key's note. Absent when a patch writes its own `notes`.
+    #[serde(default)]
+    note: Option<f64>,
     octave_up: Vec<String>,
     octave_down: Vec<String>,
     help: Vec<String>,
 }
 
-pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> Result<Keymap, Error> {
+/// What a bare instrument file plays: the layout's anchor note, if it
+/// names one, held for the keyboard's `preview`.
+pub(super) struct Preview {
+    pub(super) note: Option<u8>,
+    pub(super) hold: Duration,
+}
+
+pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> Result<(Keymap, Preview), Error> {
     super::schema::KEYBOARD.check(table, None)?;
     let config: KeyboardConfig =
         mlua::LuaSerdeExt::from_value(lua, mlua::Value::Table(table.clone())).map_err(
@@ -51,6 +64,11 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> Result<Keymap, Err
         )?;
 
     let notes = notes(config.layout.notes)?;
+    let note = config
+        .layout
+        .note
+        .map(|value| midi(value).ok_or(Error::AnchorRange { value }))
+        .transpose()?;
 
     // a binding is a character or a key name; an unrecognised name is an
     // error rather than a silently dead key
@@ -101,7 +119,7 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> Result<Keymap, Err
 
     // gate, both thresholds, velocity, and octave ranges: schema::KEYBOARD
 
-    Ok(Keymap {
+    let keymap = Keymap {
         notes,
         name: config.layout.name,
         octave_up,
@@ -115,7 +133,12 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> Result<Keymap, Err
         octave: config.octave,
         octave_low: config.octave_low,
         octave_high: config.octave_high,
-    })
+    };
+    let preview = Preview {
+        note,
+        hold: Duration::from_secs_f64(config.preview_ms / 1000.0),
+    };
+    Ok((keymap, preview))
 }
 
 /// Checks each entry of `notes`: one character to one MIDI note. A
@@ -128,12 +151,14 @@ fn notes(raw: HashMap<String, f64>) -> Result<HashMap<char, u8>, Error> {
         let (Some(ch), None) = (chars.next(), chars.next()) else {
             return Err(Error::NoteKey { key });
         };
-        if !(note.fract() == 0.0 && (0.0..=127.0).contains(&note)) {
-            return Err(Error::NoteRange { key, value: note });
-        }
-        notes.insert(ch, note as u8);
+        let note = midi(note).ok_or(Error::NoteRange { key, value: note })?;
+        notes.insert(ch, note);
     }
     Ok(notes)
+}
+
+fn midi(value: f64) -> Option<u8> {
+    (value.fract() == 0.0 && (0.0..=127.0).contains(&value)).then_some(value as u8)
 }
 
 /// Parses a binding from the keymap. A single character is that key; anything

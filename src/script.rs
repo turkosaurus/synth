@@ -213,6 +213,7 @@ mod field {
     pub(super) const OCTAVE: &str = "octave";
     pub(super) const OCTAVE_LOW: &str = "octave_low";
     pub(super) const OCTAVE_HIGH: &str = "octave_high";
+    pub(super) const PREVIEW: &str = "preview";
 
     pub(super) const TUNING: &str = "tuning";
     pub(super) const EQUAL: &str = "equal";
@@ -384,21 +385,9 @@ fn load_in(
     // a patch may ship its own layout; otherwise the embedded default
     let layout: mlua::Table = match table.get(field::KEYBOARD)? {
         Some(table) => table,
-        // the module is itself the constructor, so the default layout is
-        // keyboard() rather than the module table
-        None => {
-            let keyboard: mlua::Table = require.call(module::KEYBOARD)?;
-            // a callable table: __call receives the module itself first
-            let call: mlua::Function = keyboard
-                .metatable()
-                .ok_or(Error::NotCallable {
-                    what: "synth.keyboard",
-                })?
-                .get(field::CALL)?;
-            call.call((keyboard, mlua::Value::Nil))?
-        }
+        None => default_keyboard(&require)?,
     };
-    let keys = keymap(&lua, &layout)?;
+    let (keys, preview) = keymap(&lua, &layout)?;
 
     // read before the instrument, which only checks that the field is allowed
     let filter: Option<filter::FilterSpec> = table.get(field::FILTER)?;
@@ -413,12 +402,23 @@ fn load_in(
             sequence(&lua, &table, &specs, &steps, sample_rate, freqs, keys)
         }
         // a bare instrument file: one sustained note, so a two-event timeline
-        _ => single(
-            lua.unpack(mlua::Value::Table(table)).map_err(Error::from)?,
-            sample_rate,
-            freqs,
-            keys,
-        ),
+        _ => {
+            // a layout written by hand may name no anchor
+            let note = match preview.note {
+                Some(note) => note,
+                None => default_keyboard(&require)?
+                    .get::<mlua::Table>(field::LAYOUT)?
+                    .get(field::NOTE)?,
+            };
+            single(
+                lua.unpack(mlua::Value::Table(table)).map_err(Error::from)?,
+                sample_rate,
+                freqs,
+                keys,
+                note,
+                preview.hold,
+            )
+        }
     };
     let (filter, filter_report) = filter
         .map(|spec| spec.bake(sample_rate))
@@ -434,6 +434,20 @@ fn load_in(
     };
     locate(&mut patch);
     Ok(patch)
+}
+
+/// `synth.keyboard()`. The module is itself the constructor, so the default
+/// is its call rather than the module table.
+fn default_keyboard(require: &mlua::Function) -> anyhow::Result<mlua::Table> {
+    let keyboard: mlua::Table = require.call(module::KEYBOARD)?;
+    // a callable table: __call receives the module itself first
+    let call: mlua::Function = keyboard
+        .metatable()
+        .ok_or(Error::NotCallable {
+            what: "synth.keyboard",
+        })?
+        .get(field::CALL)?;
+    Ok(call.call((keyboard, mlua::Value::Nil))?)
 }
 
 /// Hz for every MIDI note from the patch's tuning.

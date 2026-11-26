@@ -31,10 +31,11 @@ local keyboard = setmetatable({}, {
 ---@field help string[]
 
 -- What Rust reads as a keyboard's `layout`: `notes` maps each character to
--- a MIDI note.
+-- a MIDI note, and `note` is the anchor key's.
 ---@class synth.Layout
 ---@field name string
 ---@field notes table<string, integer>
+---@field note? integer
 ---@field octave_up string[]
 ---@field octave_down string[]
 ---@field help string[] may be empty
@@ -175,6 +176,7 @@ function keyboard.grid(opts)
 	return {
 		name = template.name,
 		notes = notes,
+		note = note,
 		octave_up = template.octave_up,
 		octave_down = template.octave_down,
 		help = template.help,
@@ -200,13 +202,15 @@ keyboard.colemak = keyboard.grid({ template = keyboard.templates.colemak })
 ---@field octave? integer the octave shift to start at
 ---@field octave_low? integer octaves octave_down may move from the start
 ---@field octave_high? integer octaves octave_up may move from the start
+---@field preview? number ms; how long a bare instrument file's note sounds
 ---@field octave_up? string[]
 ---@field octave_down? string[]
 ---@field help? string[]
 defaults = {
-	-- `{ name, notes, octave_up, octave_down, help }`, where `notes` maps
-	-- each character to a MIDI note. Rust reads only this table, so a patch
-	-- may write its own. `help` may be empty. `octave_up`, `octave_down`, and
+	-- `{ name, notes, note, octave_up, octave_down, help }`, where `notes`
+	-- maps each character to a MIDI note and `note` is the anchor key's.
+	-- Rust reads only this table, so a patch may write its own. `note` may
+	-- be left out, and `help` may be empty. `octave_up`, `octave_down`, and
 	-- `help` given on the keyboard itself replace the layout's.
 	layout = keyboard.qwerty,
 	stop = { "escape" }, -- silence everything; must not be empty
@@ -229,6 +233,8 @@ defaults = {
 	-- how many octaves octave_down and octave_up may move from the start
 	octave_low = 2,
 	octave_high = 3,
+	-- a bare instrument file plays its layout's `note` for this long
+	preview = 1200, -- ms
 }
 
 -- `octave_up`, `octave_down`, and `help` on the keyboard replace the

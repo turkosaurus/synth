@@ -109,6 +109,9 @@ pub enum Error {
     #[error("keyboard.layout.notes['{key}'] is {value}; must be a whole number 0 to 127")]
     NoteRange { key: String, value: f64 },
 
+    #[error("keyboard.layout.note is {value}; must be a whole number 0 to 127")]
+    AnchorRange { value: f64 },
+
     #[error("tuning must return Hz for note {note}")]
     TuningCall {
         note: u8,

@@ -177,6 +177,8 @@ pub(super) const KEYBOARD: Schema = Schema {
         field(field::OCTAVE, Ty::Integer, Bound::Between(-10.0, 10.0)),
         field(field::OCTAVE_LOW, Ty::Integer, Bound::Between(0.0, 10.0)),
         field(field::OCTAVE_HIGH, Ty::Integer, Bound::Between(0.0, 10.0)),
+        // a zero preview would end the note on the sample it starts
+        field(field::PREVIEW, Ty::Number, Bound::Above(0.0)),
     ],
 };
 
