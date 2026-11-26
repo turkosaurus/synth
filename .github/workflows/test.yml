@@ -75,72 +75,11 @@ jobs:
     with:
       os: windows-latest
 
-  # install.ps1 end to end, from the latest release, under both PowerShells
-  # Windows ships: install, run, uninstall, and nothing left behind
-  install-windows:
-    strategy:
-      fail-fast: false
-      matrix:
-        shell: [powershell, pwsh]
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: ${{ matrix.shell }}
-    steps:
-      - name: Check out
-        uses: actions/checkout@v7
-
-      # PSScriptAnalyzer ships on GitHub's Windows images
-      - name: Analyze install.ps1
-        if: matrix.shell == 'pwsh'
-        run: |
-          $found = Invoke-ScriptAnalyzer -Path install.ps1 -Severity Warning,Error
-          $found | Format-Table -AutoSize
-          if ($found) {
-            echo "::error file=install.ps1,title=install-windows::PSScriptAnalyzer found $(@($found).Count) issues"
-            exit 1
-          }
-
-      # piped to iex, as the README runs it; $out holds each line it printed
-      - name: Install
-        run: |
-          $out = Get-Content -Raw install.ps1 | Invoke-Expression
-          $out
-          $line = @($out) -match '^installed synth .* to (.+)$'
-          if (-not $line) {
-            echo "::error title=install-windows::install.ps1 printed no install line"
-            exit 1
-          }
-          $exe = ($line[0] -replace '^installed synth .* to ', '').Trim()
-          "SYNTH_EXE=$exe" >> $env:GITHUB_ENV
-
-      - name: Run
-        run: |
-          $version = & $env:SYNTH_EXE --version
-          $version
-          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^synth \d') {
-            echo "::error title=install-windows::$env:SYNTH_EXE --version failed"
-            exit 1
-          }
-
-      - name: Uninstall
-        run: |
-          & $env:SYNTH_EXE uninstall
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          $dir = Split-Path $env:SYNTH_EXE
-          $left = @(Get-ChildItem -Force -LiteralPath $dir -Filter 'synth*')
-          $left += @(Get-ChildItem -Force -LiteralPath ([IO.Path]::GetTempPath()) -Filter 'synth-install-*')
-          $left | Format-Table -AutoSize FullName
-          if ($left) {
-            echo "::error title=install-windows::uninstall left $(@($left).Count) files"
-            exit 1
-          }
-
   # the check main's ruleset requires. It runs even when a platform fails,
   # since a skipped required check counts as passed, and fails unless every
   # platform succeeded.
   test:
-    needs: [linux, macos, windows, install-windows]
+    needs: [linux, macos, windows]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -149,7 +88,6 @@ jobs:
           LINUX: ${{ needs.linux.result }}
           MACOS: ${{ needs.macos.result }}
           WINDOWS: ${{ needs.windows.result }}
-          INSTALL_WINDOWS: ${{ needs.install-windows.result }}
         run: |
           failed=0
           if [ "$LINUX" != success ]; then
@@ -162,10 +100,6 @@ jobs:
           fi
           if [ "$WINDOWS" != success ]; then
             echo "::error title=test::windows: $WINDOWS"
-            failed=1
-          fi
-          if [ "$INSTALL_WINDOWS" != success ]; then
-            echo "::error title=test::install-windows: $INSTALL_WINDOWS"
             failed=1
           fi
           exit "$failed"

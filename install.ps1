@@ -31,7 +31,7 @@
 
     # HTTPS only, redirects included. Windows PowerShell's response names
     # the final URI; PowerShell 7's names the request that reached it.
-    function Get-Https([string]$uri, [string]$outFile) {
+    function Save-HttpsFile([string]$uri, [string]$outFile) {
         $response = Invoke-WebRequest -Uri $uri -OutFile $outFile `
             -PassThru -UseBasicParsing
         $base = $response.BaseResponse
@@ -79,7 +79,7 @@
 
         $json = Join-Path $tmp 'release.json'
         try {
-            Get-Https $api $json
+            Save-HttpsFile $api $json
         } catch {
             Fail "cannot read the latest release: $_"
         }
@@ -98,7 +98,7 @@
 
         $archive = Join-Path $tmp $asset
         try {
-            Get-Https "$downloads/$tag/$asset" $archive
+            Save-HttpsFile "$downloads/$tag/$asset" $archive
         } catch {
             Fail "cannot download $asset from ${tag}: $_"
         }

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+#MISE description="PSScriptAnalyzer on install.ps1 and tests/; any warning fails, skipped without pwsh"
+
+# Contributors without pwsh still pass `mise run lint`; CI must not skip.
+set -euo pipefail
+
+scripts=(install.ps1 tests/install-windows.ps1)
+
+skip() {
+  if [ "${CI:-}" = true ]; then
+    echo "::error title=lint:ps1::$*"
+    exit 1
+  fi
+  echo "lint:ps1: skipped, $*"
+  exit 0
+}
+
+if ! command -v pwsh >/dev/null; then
+  skip "pwsh is not installed"
+fi
+if ! pwsh -NoProfile -Command 'if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { exit 1 }'; then
+  skip "PSScriptAnalyzer is not installed: Install-Module PSScriptAnalyzer"
+fi
+
+failed=0
+for script in "${scripts[@]}"; do
+  # -EnableExit exits with the number of findings
+  if ! pwsh -NoProfile -Command "Invoke-ScriptAnalyzer -Path '$script' -Severity Warning,Error -EnableExit"; then
+    echo "::error file=$script,title=lint:ps1::PSScriptAnalyzer found problems in $script"
+    failed=1
+  fi
+done
+exit "$failed"

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="install.ps1 from the latest release under both Windows PowerShells: install, run, uninstall"
+
+# Windows only, and it installs the published release, not this checkout's
+# build, so release.yml runs it once per release rather than per PR.
+set -euo pipefail
+
+if [ "${OS:-}" != Windows_NT ]; then
+  echo "test:install-windows: skipped, not Windows"
+  exit 0
+fi
+
+failed=0
+for shell in powershell pwsh; do
+  echo "test:install-windows: $shell"
+  if ! "$shell" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/install-windows.ps1; then
+    echo "::error title=test:install-windows::install.ps1 failed under $shell"
+    failed=1
+  fi
+done
+exit "$failed"

@@ -10,6 +10,8 @@ Tasks long enough for their own file. Shorter ones live in [`mise.toml`](../mise
 | [`lint:lsp`](./lint/lsp) | in a patches folder from this build, lua-language-server flags each `tests/lua/lsp/` case and nothing else, and a headless Neovim ([`tests/nvim/lsp.lua`](../tests/nvim/lsp.lua)) gets the root, hover, and completion the annotations give |
 | [`lsp:edit`](./lsp/edit) | opens that patches folder, at `target/lsp/`, in `$VISUAL` or `$EDITOR`, to try the annotations by hand |
 | [`lint:licenses`](./lint/licenses) | every dependency is GPLv3-compatible and from crates.io |
+| [`lint:ps1`](./lint/ps1) | PSScriptAnalyzer on `install.ps1` and `tests/install-windows.ps1`; skipped without `pwsh`, except in CI |
+| [`test:install-windows`](./test/install-windows) | `install.ps1` from the latest release under Windows PowerShell and PowerShell 7: install, `--version`, uninstall, nothing left; Windows only, run by `release.yml` |
 | [`version`](./version) | Cargo.toml's version is one bump from the last and has no tag yet |
 | [`notices`](./notices) | writes third-party license notices for a release |
 | [`bench:run`](./bench/run), alias `bench` | `bench:record`, then `bench:compare` on the result it saved |

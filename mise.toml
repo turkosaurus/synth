@@ -81,6 +81,7 @@ depends = [
     "lint:lsp",
     "lint:stylua",
     "lint:licenses",
+    "lint:ps1",
 ]
 description = "run all linters; any warning fails, except pedantic"
 
