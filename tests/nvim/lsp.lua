@@ -1,8 +1,8 @@
--- Checks what a Neovim user sees from lua-language-server in a patches
+-- Checks what a Neovim user sees from lua-language-server in a custom
 -- folder: the root it finds, hover, and completion.
--- Run by `lint:lsp` as `nvim --headless --clean -l tests/nvim/lsp.lua <patches>`.
+-- Run by `lint:lsp` as `nvim --headless --clean -l tests/nvim/lsp.lua <custom>`.
 
-local patches = assert(arg[1], "usage: lsp.lua <patches folder>")
+local custom = assert(arg[1], "usage: lsp.lua <custom folder>")
 local failures = {}
 
 local function fail(message)
@@ -11,7 +11,7 @@ end
 
 -- A patch written for the probe, removed at the end: line and column are
 -- 0-based, as LSP counts them.
-local probe = patches .. "/probe.lua"
+local probe = custom .. "/probe.lua"
 local lines = {
 	"local synth = require('synth')",
 	"local env = synth.envelope({  })",
@@ -20,8 +20,8 @@ local lines = {
 vim.fn.writefile(lines, probe)
 
 local root = vim.fs.root(probe, { ".luarc.json" })
-if root ~= vim.fs.normalize(patches) then
-	fail(("root from .luarc.json: want %s, got %s"):format(patches, tostring(root)))
+if root ~= vim.fs.normalize(custom) then
+	fail(("root from .luarc.json: want %s, got %s"):format(custom, tostring(root)))
 end
 
 vim.cmd.edit(probe)
@@ -29,7 +29,7 @@ local buf = vim.api.nvim_get_current_buf()
 local id = vim.lsp.start({
 	name = "lua_ls",
 	cmd = { "lua-language-server" },
-	root_dir = root or patches,
+	root_dir = root or custom,
 }, { bufnr = buf })
 local client = assert(vim.lsp.get_client_by_id(assert(id, "lua_ls did not start")))
 

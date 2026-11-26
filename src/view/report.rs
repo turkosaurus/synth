@@ -64,8 +64,8 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
             ("buffer", buffer),
             ("queue", format!("{} events", config.queue)),
             (
-                "patch_dir",
-                match &config.patch_dir {
+                "custom_dir",
+                match &config.custom_dir {
                     Some(dir) => dir.display().to_string(),
                     None => "none (no HOME)".to_string(),
                 },
@@ -79,7 +79,7 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
     );
 }
 
-/// What `synth patches` did to the built-in copies: one line for each file
+/// What `synth custom` did to the built-in copies: one line for each file
 /// it changed or kept, nothing for those already current.
 /// With `asking`, an edited copy behind its built-in is left to the prompt
 /// that follows; without, the line says how to be asked.
@@ -93,7 +93,7 @@ pub fn builtins_written(wrote: &[(&str, crate::script::builtins::Wrote)], asking
             Wrote::KeptBehind if asking => {}
             Wrote::KeptBehind => println!(
                 "kept {name}: edited, and the built-in has changed since; \
-                 run synth patches in a terminal to choose"
+                 run synth custom in a terminal to choose"
             ),
             Wrote::Current => {}
         }

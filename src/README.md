@@ -20,7 +20,7 @@ flowchart LR
         doctor([doctor])
         check([check])
         config([config])
-        patches([patches])
+        custom([custom])
         play([play])
         tui([tui])
     end

@@ -12,8 +12,10 @@ use crate::spec::{Config, TuiConfig};
 
 /// `config.lua` under the config directory.
 const FILE: [&str; 2] = ["synth", "config.lua"];
-/// The patches folder under the data directory.
-const PATCHES: [&str; 2] = ["synth", "patches"];
+/// The custom folder under the data directory.
+const CUSTOM: [&str; 2] = ["synth", "custom"];
+/// The custom folder's default before it was renamed.
+const OLD_CUSTOM: [&str; 2] = ["synth", "patches"];
 /// The debug log under the state directory.
 const LOG: [&str; 2] = ["synth", "synth.log"];
 
@@ -26,7 +28,7 @@ struct Dirs {
     xdg_data: Option<OsString>,
     xdg_state: Option<OsString>,
     home: Option<OsString>,
-    /// Windows' roaming application data, for config, patches, and the log
+    /// Windows' roaming application data, for config, the custom folder, and the log
     appdata: Option<OsString>,
     /// Windows' home, for `~/` when `HOME` is not set
     userprofile: Option<OsString>,
@@ -93,10 +95,10 @@ fn under(dir: PathBuf, parts: &[&str]) -> PathBuf {
 /// A user's file is laid over it, so it need set only what it changes.
 const TEMPLATE: &str = include_str!("../../lua/config.lua");
 const TEMPLATE_NAME: &str = "config.lua (built in)";
-/// Stands in for the default patches folder in [`TEMPLATE`]'s comment.
-const DEFAULT_PATCH_DIR: &str = "{default}";
+/// Stands in for the default custom folder in [`TEMPLATE`]'s comment.
+const DEFAULT_CUSTOM_DIR: &str = "{default}";
 
-/// `TEMPLATE` as `synth config` writes it, with the default patches
+/// `TEMPLATE` as `synth config` writes it, with the default custom
 /// folder filled in, so the file shows a real path in the form to copy.
 pub fn template() -> String {
     template_for(&Dirs::current())
@@ -105,12 +107,12 @@ pub fn template() -> String {
 /// The line naming the default is dropped when there is no data directory,
 /// or when the path holds `]]` and would end the long string early.
 fn template_for(dirs: &Dirs) -> String {
-    let dir = patch_dir("", dirs).ok().flatten();
+    let dir = custom_dir("", dirs).ok().flatten();
     match dir.map(|dir| dir.display().to_string()) {
-        Some(dir) if !dir.contains("]]") => TEMPLATE.replace(DEFAULT_PATCH_DIR, &dir),
+        Some(dir) if !dir.contains("]]") => TEMPLATE.replace(DEFAULT_CUSTOM_DIR, &dir),
         _ => TEMPLATE
             .lines()
-            .filter(|line| !line.contains(DEFAULT_PATCH_DIR))
+            .filter(|line| !line.contains(DEFAULT_CUSTOM_DIR))
             .map(|line| format!("{line}\n"))
             .collect(),
     }
@@ -139,6 +141,12 @@ pub fn config_path() -> Option<PathBuf> {
 /// `None` when the environment names none.
 pub fn log_path() -> Option<PathBuf> {
     Dirs::current().state().map(|dir| under(dir, &LOG))
+}
+
+/// Where the custom folder defaulted to under its old name, whether or not
+/// a folder is there. `None` when the environment names no data directory.
+pub fn old_custom_dir() -> Option<PathBuf> {
+    Dirs::current().data().map(|dir| under(dir, &OLD_CUSTOM))
 }
 
 /// The file's source, or `None` when there is no file.
@@ -198,20 +206,20 @@ fn overlay(base: &mlua::Table, over: &mlua::Table) -> mlua::Result<()> {
 }
 
 /// The settings from a checked, complete table.
-/// The patches folder `setting` names. `""` is `synth/patches` under the
+/// The custom folder `setting` names. `""` is `synth/custom` under the
 /// data directory; any other value is an absolute path or one starting
 /// `~/`. `None` when the default is asked for and there is no data directory.
-fn patch_dir(setting: &str, dirs: &Dirs) -> Result<Option<PathBuf>, Error> {
+fn custom_dir(setting: &str, dirs: &Dirs) -> Result<Option<PathBuf>, Error> {
     if setting.is_empty() {
-        return Ok(dirs.data().map(|dir| under(dir, &PATCHES)));
+        return Ok(dirs.data().map(|dir| under(dir, &CUSTOM)));
     }
     if let Some(rest) = setting.strip_prefix("~/") {
-        let home = dirs.home().ok_or(Error::PatchDirNoHome)?;
+        let home = dirs.home().ok_or(Error::CustomDirNoHome)?;
         return Ok(Some(home.join(rest)));
     }
     let path = PathBuf::from(setting);
     if !path.is_absolute() {
-        return Err(Error::PatchDirRelative {
+        return Err(Error::CustomDirRelative {
             setting: setting.to_string(),
         });
     }
@@ -230,9 +238,9 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
             .filter(|&frames| frames > 0),
         queue: table.get(field::QUEUE)?,
         // absent is the default; "" says the same thing explicitly
-        patch_dir: patch_dir(
+        custom_dir: custom_dir(
             &table
-                .get::<Option<String>>(field::PATCH_DIR)?
+                .get::<Option<String>>(field::CUSTOM_DIR)?
                 .unwrap_or_default(),
             &Dirs::current(),
         )?,
@@ -392,64 +400,64 @@ mod tests {
         );
     }
 
-    fn patches(setting: &str, xdg: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    fn custom(setting: &str, xdg: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
         // an absolute setting is made absolute on the host, as `var` does
         let setting = match setting.starts_with('/') {
             true => abs(setting).display().to_string(),
             false => setting.to_string(),
         };
-        patch_dir(&setting, &unix(xdg, home)).unwrap()
+        custom_dir(&setting, &unix(xdg, home)).unwrap()
     }
 
     #[test]
-    fn the_patches_folder_defaults_to_the_data_dir() {
+    fn the_custom_folder_defaults_to_the_data_dir() {
         assert_eq!(
-            patches("", Some("/d"), Some("/h")),
-            Some(abs("/d/synth/patches"))
+            custom("", Some("/d"), Some("/h")),
+            Some(abs("/d/synth/custom"))
         );
         assert_eq!(
-            patches("", None, Some("/h")),
-            Some(abs("/h/.local/share/synth/patches"))
+            custom("", None, Some("/h")),
+            Some(abs("/h/.local/share/synth/custom"))
         );
-        assert_eq!(patches("", Some("d"), None), None);
+        assert_eq!(custom("", Some("d"), None), None);
     }
 
     #[test]
-    fn the_template_names_the_default_patches_folder() {
+    fn the_template_names_the_default_custom_folder() {
         // joined as the code joins it, so Windows gets its own separators
-        let dir = abs("/d").join("synth").join("patches");
+        let dir = abs("/d").join("synth").join("custom");
         let dir = dir.display().to_string();
         let written = template_for(&unix(Some("/d"), None));
-        assert!(written.contains(&format!("-- patch_dir = [[{dir}]]")));
-        assert!(!written.contains(DEFAULT_PATCH_DIR));
+        assert!(written.contains(&format!("-- custom_dir = [[{dir}]]")));
+        assert!(!written.contains(DEFAULT_CUSTOM_DIR));
 
         let written = template_for(&unix(None, None));
-        assert!(!written.contains("-- patch_dir ="));
+        assert!(!written.contains("-- custom_dir ="));
     }
 
     #[test]
-    fn the_patches_folder_takes_absolute_and_home_paths() {
+    fn the_custom_folder_takes_absolute_and_home_paths() {
         assert_eq!(
-            patches("/music/synth", None, Some("/h")),
+            custom("/music/synth", None, Some("/h")),
             Some(abs("/music/synth"))
         );
-        assert_eq!(patches("~/music", None, Some("/h")), Some(abs("/h/music")));
+        assert_eq!(custom("~/music", None, Some("/h")), Some(abs("/h/music")));
     }
 
     #[test]
-    fn windows_uses_appdata_for_config_and_patches() {
+    fn windows_uses_appdata_for_config_and_custom() {
         let dirs = windows(Some("/appdata"), Some("/users/me"));
         assert_eq!(
             dirs.config().map(|dir| under(dir, &FILE)),
             Some(abs("/appdata/synth/config.lua"))
         );
         assert_eq!(
-            patch_dir("", &dirs).unwrap(),
-            Some(abs("/appdata/synth/patches"))
+            custom_dir("", &dirs).unwrap(),
+            Some(abs("/appdata/synth/custom"))
         );
         // with no HOME, ~/ is the user profile
         assert_eq!(
-            patch_dir("~/music", &dirs).unwrap(),
+            custom_dir("~/music", &dirs).unwrap(),
             Some(abs("/users/me/music"))
         );
     }
@@ -475,14 +483,14 @@ mod tests {
     }
 
     #[test]
-    fn a_relative_patches_folder_is_named() {
-        let error = patch_dir("music", &unix(None, Some("/h"))).unwrap_err();
+    fn a_relative_custom_folder_is_named() {
+        let error = custom_dir("music", &unix(None, Some("/h"))).unwrap_err();
         assert!(
-            matches!(&error, Error::PatchDirRelative { setting } if setting == "music"),
+            matches!(&error, Error::CustomDirRelative { setting } if setting == "music"),
             "{error}"
         );
-        let error = patch_dir("~/music", &unix(None, None)).unwrap_err();
-        assert!(matches!(error, Error::PatchDirNoHome), "{error}");
+        let error = custom_dir("~/music", &unix(None, None)).unwrap_err();
+        assert!(matches!(error, Error::CustomDirNoHome), "{error}");
     }
 
     #[test]
@@ -502,7 +510,7 @@ mod tests {
                 "unknown field `bufer_frames`",
             ),
             ("return { queue = 8 }", "`queue` is 8; must be at least 16"),
-            ("return { patch_dir = 5 }", "`patch_dir` must be a string"),
+            ("return { custom_dir = 5 }", "`custom_dir` must be a string"),
             ("return { tui = 16 }", "`tui` must be a table"),
             (
                 "return { tui = { poll = 0 } }",

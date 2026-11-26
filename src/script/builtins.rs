@@ -1,4 +1,4 @@
-//! Copies of the built-in files under the patches folder: each module in
+//! Copies of the built-in files under the custom folder: each module in
 //! `synth/`, and the guides at the folder's root.
 //!
 //! Each folder's `.base.sha256` records the hash of the built-in each copy
@@ -16,22 +16,22 @@ use sha2::{Digest, Sha256};
 
 use super::MODULES;
 
-/// The folder under the patches folder that holds the module copies.
+/// The folder under the custom folder that holds the module copies.
 const DIR: &str = "synth";
 /// The record of each copy's base, beside the copies.
 const BASES: &str = ".base.sha256";
 
-/// Guides for the patches folder, written to its root.
+/// Guides for the custom folder, written to its root.
 const GUIDES: [(&str, &str); 3] = [
-    ("README.md", include_str!("../../lua/patches/README.md")),
-    ("AGENTS.md", include_str!("../../lua/patches/AGENTS.md")),
-    (".luarc.json", include_str!("../../lua/patches/.luarc.json")),
+    ("README.md", include_str!("../../lua/custom/README.md")),
+    ("AGENTS.md", include_str!("../../lua/custom/AGENTS.md")),
+    (".luarc.json", include_str!("../../lua/custom/.luarc.json")),
 ];
 
 /// One built-in file and where its copy goes.
 struct Entry {
     name: &'static str,
-    /// folder under the patches folder; empty for its root
+    /// folder under the custom folder; empty for its root
     dir: &'static str,
     file: String,
     source: &'static str,
@@ -110,8 +110,8 @@ fn bases(dir: &Path) -> BTreeMap<String, String> {
 
 /// The copy that replaces built-in module `name`, if one is edited. Read
 /// by the module searcher on every `require` of a `synth.*` name.
-pub(super) fn edited(patches: &Path, name: &str) -> Option<(PathBuf, String)> {
-    let dir = patches.join(DIR);
+pub(super) fn edited(custom: &Path, name: &str) -> Option<(PathBuf, String)> {
+    let dir = custom.join(DIR);
     let file = file_name(name);
     let path = dir.join(&file);
     let source = fs::read_to_string(&path).ok()?;
@@ -120,11 +120,11 @@ pub(super) fn edited(patches: &Path, name: &str) -> Option<(PathBuf, String)> {
 }
 
 /// Where every built-in stands, for `doctor`.
-pub fn states(patches: &Path) -> Vec<(&'static str, State)> {
+pub fn states(custom: &Path) -> Vec<(&'static str, State)> {
     let mut records: BTreeMap<&str, BTreeMap<String, String>> = BTreeMap::new();
     entries()
         .map(|entry| {
-            let dir = patches.join(entry.dir);
+            let dir = custom.join(entry.dir);
             let bases = records.entry(entry.dir).or_insert_with(|| bases(&dir));
             let path = dir.join(&entry.file);
             let state = match (fs::read(&path), bases.get(&entry.file)) {
@@ -145,12 +145,12 @@ pub fn states(patches: &Path) -> Vec<(&'static str, State)> {
 /// Writes a copy of every built-in that has none, refreshes unedited copies
 /// to the current built-in, and leaves edited ones alone, then rewrites
 /// each folder's `.base.sha256`.
-pub fn write(patches: &Path) -> Result<Vec<(&'static str, Wrote)>, Error> {
+pub fn write(custom: &Path) -> Result<Vec<(&'static str, Wrote)>, Error> {
     let mut records: BTreeMap<&str, BTreeMap<String, String>> = BTreeMap::new();
     let mut wrote = Vec::new();
 
     for entry in entries() {
-        let dir = patches.join(entry.dir);
+        let dir = custom.join(entry.dir);
         if !records.contains_key(entry.dir) {
             fs::create_dir_all(&dir).map_err(|error| Error::io("create", &dir, error))?;
             records.insert(entry.dir, bases(&dir));
@@ -189,7 +189,7 @@ pub fn write(patches: &Path) -> Result<Vec<(&'static str, Wrote)>, Error> {
     }
 
     for (dir, bases) in &records {
-        save_bases(&patches.join(dir), bases)?;
+        save_bases(&custom.join(dir), bases)?;
     }
     Ok(wrote)
 }
@@ -203,14 +203,14 @@ fn save_bases(dir: &Path, bases: &BTreeMap<String, String>) -> Result<(), Error>
     fs::write(&path, record).map_err(|error| Error::io("write", &path, error))
 }
 
-/// Whether `synth patches` has written copies under `patches`, so there is
+/// Whether `synth custom` has written copies under `custom`, so there is
 /// anything for `synth update` to bring up to date.
-pub fn written(patches: &Path) -> bool {
-    patches.join(DIR).join(BASES).exists()
+pub fn written(custom: &Path) -> bool {
+    custom.join(DIR).join(BASES).exists()
 }
 
 /// An edited copy whose built-in has changed since it was written: the one
-/// case `synth patches` asks about.
+/// case `synth custom` asks about.
 pub struct Behind {
     pub name: &'static str,
     pub path: PathBuf,
@@ -222,17 +222,17 @@ pub struct Behind {
 
 /// The copy of `name` and its new built-in, for the prompt, if the copy is
 /// behind.
-pub fn behind(patches: &Path, name: &str) -> Result<Option<Behind>, Error> {
+pub fn behind(custom: &Path, name: &str) -> Result<Option<Behind>, Error> {
     let Some(entry) = entries().find(|entry| entry.name == name) else {
         return Ok(None);
     };
     if !matches!(
-        states(patches).into_iter().find(|(n, _)| *n == name),
+        states(custom).into_iter().find(|(n, _)| *n == name),
         Some((_, State::EditedBehind(_)))
     ) {
         return Ok(None);
     }
-    let path = patches.join(entry.dir).join(&entry.file);
+    let path = custom.join(entry.dir).join(&entry.file);
     let copy = fs::read_to_string(&path).map_err(|error| Error::io("read", &path, error))?;
     Ok(Some(Behind {
         name: entry.name,
@@ -246,21 +246,21 @@ pub fn behind(patches: &Path, name: &str) -> Result<Option<Behind>, Error> {
 
 /// Replaces the copy with the current built-in, as the user chose, and
 /// records it as unedited.
-pub fn overwrite(patches: &Path, behind: &Behind) -> Result<(), Error> {
+pub fn overwrite(custom: &Path, behind: &Behind) -> Result<(), Error> {
     fs::write(&behind.path, behind.built_in)
         .map_err(|error| Error::io("write", &behind.path, error))?;
-    rebase(patches, behind)
+    rebase(custom, behind)
 }
 
 /// Keeps the copy, as the user chose, and records the current built-in as
 /// its base, so it counts as edited but no longer behind until the
 /// built-in changes again.
-pub fn keep(patches: &Path, behind: &Behind) -> Result<(), Error> {
-    rebase(patches, behind)
+pub fn keep(custom: &Path, behind: &Behind) -> Result<(), Error> {
+    rebase(custom, behind)
 }
 
-fn rebase(patches: &Path, behind: &Behind) -> Result<(), Error> {
-    let dir = patches.join(behind.dir);
+fn rebase(custom: &Path, behind: &Behind) -> Result<(), Error> {
+    let dir = custom.join(behind.dir);
     let mut bases = bases(&dir);
     bases.insert(behind.file.clone(), hash(behind.built_in.as_bytes()));
     save_bases(&dir, &bases)
@@ -270,8 +270,8 @@ fn rebase(patches: &Path, behind: &Behind) -> Result<(), Error> {
 mod tests {
     use super::*;
 
-    /// An empty patches folder for one test.
-    fn patches(test: &str) -> PathBuf {
+    /// An empty custom folder for one test.
+    fn custom(test: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("synth-builtins-{test}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -279,8 +279,8 @@ mod tests {
         dir
     }
 
-    fn wave(patches: &Path) -> PathBuf {
-        patches.join(DIR).join("wave.lua")
+    fn wave(custom: &Path) -> PathBuf {
+        custom.join(DIR).join("wave.lua")
     }
 
     fn outcome(wrote: &[(&str, Wrote)], name: &str) -> &'static str {
@@ -295,8 +295,8 @@ mod tests {
     }
 
     /// Records `base` as wave.lua's base, as an older synth would have.
-    fn set_base(patches: &Path, base: &[u8]) {
-        let path = patches.join(DIR).join(BASES);
+    fn set_base(custom: &Path, base: &[u8]) {
+        let path = custom.join(DIR).join(BASES);
         let text = fs::read_to_string(&path).unwrap();
         let text: String = text
             .lines()
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn the_first_write_copies_every_built_in_unedited() {
-        let dir = patches("first");
+        let dir = custom("first");
         let wrote = write(&dir).unwrap();
         assert!(wrote.iter().all(|(_, w)| *w == Wrote::Written), "{wrote:?}");
         assert_eq!(wrote.len(), MODULES.len() + GUIDES.len());
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn an_edited_copy_replaces_the_built_in_and_is_kept() {
-        let dir = patches("edited");
+        let dir = custom("edited");
         write(&dir).unwrap();
         fs::write(wave(&dir), "return { edited = true }").unwrap();
 
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn an_unedited_copy_follows_a_newer_built_in() {
-        let dir = patches("refresh");
+        let dir = custom("refresh");
         write(&dir).unwrap();
         // as if an older synth wrote this copy, unedited since
         fs::write(wave(&dir), "old").unwrap();
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn an_edited_copy_behind_a_newer_built_in_is_kept_and_named() {
-        let dir = patches("behind");
+        let dir = custom("behind");
         write(&dir).unwrap();
         fs::write(wave(&dir), "mine").unwrap();
         set_base(&dir, b"old");
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn overwrite_takes_the_new_built_in_and_keep_stops_asking() {
-        let dir = patches("resolve");
+        let dir = custom("resolve");
         write(&dir).unwrap();
         fs::write(wave(&dir), "mine").unwrap();
         set_base(&dir, b"old");
@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn a_copy_with_no_record_is_kept() {
-        let dir = patches("unrecorded");
+        let dir = custom("unrecorded");
         fs::create_dir_all(dir.join(DIR)).unwrap();
         fs::write(wave(&dir), "someone's own").unwrap();
 
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn an_edited_guide_is_kept_and_an_unedited_one_follows() {
-        let dir = patches("guides");
+        let dir = custom("guides");
         write(&dir).unwrap();
         fs::write(dir.join("AGENTS.md"), "mine").unwrap();
         fs::write(dir.join("README.md"), "old").unwrap();
