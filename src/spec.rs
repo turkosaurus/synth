@@ -14,7 +14,7 @@ mod keymap;
 mod patch;
 
 pub use config::{Config, TuiConfig};
-pub use diagnostic::{Diagnostic, DiagnosticKind};
+pub use diagnostic::{Diagnostic, DiagnosticKind, Severity};
 pub use filter::{
     CutoffMod, Filter, FilterReport, Kind, Unit, MAX_CUTOFF, MIN_CUTOFF, MIN_DAMPING,
 };

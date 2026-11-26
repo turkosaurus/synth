@@ -121,7 +121,14 @@ const BUILT_IN: &str = "built in";
 /// `file:line` of the code that called a constructor. Level 0 is this
 /// function, 1 the constructor, 2 whoever called the constructor.
 fn site(lua: &mlua::Lua) -> String {
-    lua.inspect_stack(2, |debug| {
+    // called from Rust, as the default keyboard is
+    at(lua, 2).unwrap_or_else(|| BUILT_IN.to_string())
+}
+
+/// `file:line` of the function `level` calls up the stack, or `None` when
+/// the stack is not that deep.
+fn at(lua: &mlua::Lua, level: usize) -> Option<String> {
+    lua.inspect_stack(level, |debug| {
         let source = debug.source().short_src.unwrap_or_default();
         // chunks named by mlua show as [string "lua/example.lua"]
         let file = source
@@ -134,8 +141,6 @@ fn site(lua: &mlua::Lua) -> String {
             None => file,
         }
     })
-    // called from Rust, as the default keyboard is
-    .unwrap_or_else(|| BUILT_IN.to_string())
 }
 
 // Every name crossing the Lua/Rust boundary, in one place.
@@ -422,6 +427,7 @@ fn load_in(
     let mut patch = Patch {
         structure,
         tuning_diagnostics,
+        printed: sandbox::printed(&lua),
         filter_report,
         filter,
         ..patch?

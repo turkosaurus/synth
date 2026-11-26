@@ -11,6 +11,25 @@ pub enum DiagnosticKind {
     Range,
     /// a field set where it has no effect
     Unused,
+    /// what a patch passed to `print`
+    Print,
+}
+
+/// How serious a diagnostic is. Only [`DiagnosticKind::severity`] decides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum Severity {
+    Info,
+    Warn,
+}
+
+impl Severity {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warn => "warn",
+        }
+    }
 }
 
 impl DiagnosticKind {
@@ -19,6 +38,14 @@ impl DiagnosticKind {
             Self::Shape => "shape",
             Self::Range => "range",
             Self::Unused => "unused",
+            Self::Print => "print",
+        }
+    }
+
+    pub fn severity(self) -> Severity {
+        match self {
+            Self::Shape | Self::Range | Self::Unused => Severity::Warn,
+            Self::Print => Severity::Info,
         }
     }
 }
@@ -40,6 +67,10 @@ impl Diagnostic {
             message: message.into(),
             at: None,
         }
+    }
+
+    pub fn severity(&self) -> Severity {
+        self.kind.severity()
     }
 }
 

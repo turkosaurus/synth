@@ -1,4 +1,4 @@
-use super::{Diagnostic, Filter, FilterReport, Keymap, Timeline};
+use super::{Diagnostic, Filter, FilterReport, Keymap, Severity, Timeline};
 
 /// A loaded file: a playable timeline plus one report per instrument in it.
 pub struct Patch {
@@ -20,6 +20,8 @@ pub struct Patch {
     pub filter_report: Option<FilterReport>,
     /// warnings about `freqs`, such as notes tuned above Nyquist
     pub tuning_diagnostics: Vec<Diagnostic>,
+    /// what the patch passed to `print`, in call order
+    pub printed: Vec<Diagnostic>,
     /// every table a constructor built, by where it sits in the patch
     pub(crate) structure: Vec<Node>,
 }
@@ -38,17 +40,23 @@ pub(crate) struct Node {
 }
 
 impl Patch {
-    /// No instrument, the filter, or the tuning raised a warning, so the patch is safe to play as written.
+    /// Nothing raised a diagnostic at `warn` or above, so the patch is safe
+    /// to play as written.
     pub fn clean(&self) -> bool {
-        self.tuning_diagnostics.is_empty()
-            && self
-                .reports
-                .iter()
-                .all(|(_, report)| report.diagnostics.is_empty())
-            && self
-                .filter_report
-                .as_ref()
-                .is_none_or(|report| report.diagnostics.is_empty())
+        let reports = self
+            .reports
+            .iter()
+            .flat_map(|(_, report)| &report.diagnostics);
+        let filter = self
+            .filter_report
+            .iter()
+            .flat_map(|report| &report.diagnostics);
+        self.tuning_diagnostics
+            .iter()
+            .chain(reports)
+            .chain(filter)
+            .chain(&self.printed)
+            .all(|diagnostic| diagnostic.severity() < Severity::Warn)
     }
 }
 
