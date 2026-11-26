@@ -1019,8 +1019,33 @@ fn lowpass_reads_into_filter() {
             cutoff: 800.0,
             damping: std::f32::consts::SQRT_2,
             root: 1.0,
+            cutoff_mod: None,
         })
     );
+}
+
+#[test]
+fn cutoff_mod_bakes_an_lfo_in_its_unit() {
+    for (depth, unit) in [
+        ("depth_hz = 300", crate::spec::Unit::Hz),
+        ("depth_octaves = 1.5", crate::spec::Unit::Octaves),
+    ] {
+        let lfo = format!("require(\"synth.lfo\")({{ rate = 0.5, {depth} }})");
+        let patch = with_filter(&format!(
+            "filter.lowpass({{ cutoff = 800, cutoff_mod = {lfo} }})"
+        ))
+        .unwrap();
+        assert!(patch.clean());
+        let sweep = patch.filter.unwrap().cutoff_mod.unwrap();
+        assert_eq!(sweep.unit, unit);
+        assert_eq!(sweep.lfo.rate, 0.5);
+        assert!(
+            [300.0, 1.5].contains(&sweep.lfo.depth),
+            "{}",
+            sweep.lfo.depth
+        );
+        assert_eq!(rising_zero(&sweep.lfo.cycle), Some(0));
+    }
 }
 
 #[test]
@@ -1740,8 +1765,191 @@ fn one_waveform_bakes_no_lfo_and_warns_about_position_mod() {
 }
 
 #[test]
+fn osc_fills_position_mod_depth_on_a_copy() {
+    let patch = load_source(
+        r#"
+        local synth = require("synth")
+        local lfo = synth.lfo({ rate = 0.5 })
+        local osc = synth.osc({
+            waveforms = { synth.wave.sine, synth.wave.saw },
+            position_mod = lfo,
+        })
+        assert(lfo.depth == nil, "osc wrote depth onto the patch's own lfo")
+        return synth.instrument({ oscillator = osc })
+        "#,
+        "patch.lua",
+        48000,
+    )
+    .unwrap();
+    let lfo = patch.timeline.instruments[0]
+        .wave()
+        .position_mod
+        .as_ref()
+        .unwrap();
+    assert_eq!(lfo.depth, 0.25);
+}
+
+#[test]
 fn the_sweep_patch_loads_clean() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("lua/sweep.lua");
     let patch = load(&path, 48000, None).unwrap();
     assert!(patch.clean(), "{:?}", patch.reports[0].1.diagnostics);
+}
+
+/// What `expr` evaluates to inside the sandbox of a state with the modules
+/// registered, as a patch would see it.
+fn sandboxed(expr: &str) -> mlua::Value {
+    let lua = mlua::Lua::new();
+    lua_register(&lua, Vec::new(), None).unwrap();
+    sandbox::chunk(&lua, format!("return {expr}"), "test")
+        .unwrap()
+        .eval()
+        .unwrap()
+}
+
+fn assert_gone(expr: &str) {
+    assert!(sandboxed(expr).is_nil(), "{expr} is reachable");
+}
+
+#[test]
+fn io_is_gone() {
+    assert_gone("io");
+}
+
+#[test]
+fn os_is_gone() {
+    assert_gone("os");
+}
+
+#[test]
+fn ffi_is_gone() {
+    assert_gone("ffi");
+    let found = sandboxed(r#"pcall(require, "ffi")"#);
+    assert_eq!(found, mlua::Value::Boolean(false));
+}
+
+#[test]
+fn debug_is_gone() {
+    assert_gone("debug");
+}
+
+#[test]
+fn jit_is_gone() {
+    assert_gone("jit");
+}
+
+#[test]
+fn dofile_is_gone() {
+    assert_gone("dofile");
+}
+
+#[test]
+fn loadfile_is_gone() {
+    assert_gone("loadfile");
+}
+
+#[test]
+fn string_dump_is_gone() {
+    assert_gone("string.dump");
+    // every string reaches the string library through its metatable
+    assert_gone(r#"("").dump"#);
+}
+
+#[test]
+fn package_loadlib_is_gone() {
+    assert_gone("package");
+}
+
+#[test]
+fn package_cpath_is_not_searched() {
+    assert_gone("package");
+    let lua = mlua::Lua::new();
+    lua_register(&lua, Vec::new(), None).unwrap();
+    let cpath: String = lua.load("return package.cpath").eval().unwrap();
+    assert_eq!(cpath, "");
+}
+
+#[test]
+fn getfenv_and_setfenv_are_gone() {
+    // either one reaches the full globals from a sandboxed function
+    assert_gone("getfenv");
+    assert_gone("setfenv");
+}
+
+#[test]
+fn the_globals_table_is_the_sandbox() {
+    assert_eq!(sandboxed("rawequal(_G, _G._G)"), mlua::Value::Boolean(true));
+    assert_gone("_G.io");
+    assert_gone("_G.package");
+    assert_gone("_VERSION");
+}
+
+#[test]
+fn the_kept_globals_are_there() {
+    for name in [
+        "string.rep",
+        "table.insert",
+        "math.sin",
+        "bit.band",
+        "coroutine.wrap",
+        "pairs",
+        "pcall",
+        "setmetatable",
+        "unpack",
+        "require",
+        "load",
+        "loadstring",
+    ] {
+        assert!(!sandboxed(name).is_nil(), "{name} is missing");
+    }
+}
+
+#[test]
+fn a_loaded_chunk_runs_in_the_sandbox() {
+    assert_gone(r#"load("return io")()"#);
+    assert_gone(r#"loadstring("return os")()"#);
+    let pieces = r#"(function()
+        local parts = { "return ", "1 + 1" }
+        local i = 0
+        return load(function() i = i + 1; return parts[i] end)()
+    end)()"#;
+    assert_eq!(sandboxed(pieces), mlua::Value::Integer(2));
+}
+
+#[test]
+fn load_rejects_a_binary_chunk() {
+    let lua = mlua::Lua::new();
+    lua_register(&lua, Vec::new(), None).unwrap();
+    let compiled = lua.load("return 1").into_function().unwrap().dump(true);
+    let load: mlua::Function = sandbox::environment(&lua).unwrap().get("load").unwrap();
+    let (chunk, message): (mlua::Value, Option<String>) =
+        load.call(lua.create_string(&compiled).unwrap()).unwrap();
+    assert!(chunk.is_nil());
+    assert!(
+        message.as_deref().is_some_and(|m| m.contains("binary")),
+        "{message:?}"
+    );
+}
+
+#[test]
+fn a_patch_cannot_reach_io() {
+    let Err(error) = load_source("return { io.popen('id') }", "song.lua", 48000) else {
+        panic!("a patch ran io.popen");
+    };
+    assert!(error.to_string().contains("io"), "{error}");
+}
+
+#[test]
+fn a_module_from_disk_runs_in_the_sandbox() {
+    let dir = std::env::temp_dir().join(format!("synth-sandbox-module-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("probe.lua"), "return { io = io, os = os }").unwrap();
+
+    let patch = r#"
+        local probe = require("probe")
+        assert(probe.io == nil and probe.os == nil, "a module reached io or os")
+        return require("synth").instrument({})
+    "#;
+    load_in(patch, "test", 48000, Some(&dir), None).unwrap();
 }

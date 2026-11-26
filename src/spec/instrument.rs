@@ -241,7 +241,7 @@ pub struct Wavetable {
 
 /// A baked LFO: one cycle read at `rate` Hz, moving a parameter `depth`
 /// either side of its value, in that parameter's units.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Lfo {
     pub(crate) cycle: Vec<f32>,
     pub(crate) rate: f32,

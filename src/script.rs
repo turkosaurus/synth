@@ -11,6 +11,7 @@ mod error;
 mod feed;
 mod filter;
 mod keymap;
+mod sandbox;
 mod schema;
 pub mod starters;
 mod structure;
@@ -74,10 +75,8 @@ fn lua_register(
                 .as_deref()
                 .and_then(|patches| builtins::edited(patches, &name));
             if let Some((path, source)) = copy {
-                let chunk = lua
-                    .load(source)
-                    .set_name(path.display().to_string())
-                    .into_function()?;
+                let chunk =
+                    sandbox::chunk(lua, source, &path.display().to_string())?.into_function()?;
                 return Ok(mlua::Value::Function(chunk));
             }
             return Ok(match MODULES.iter().find(|(module, _)| *module == name) {
@@ -102,9 +101,7 @@ fn lua_register(
             for path in [file, init] {
                 match std::fs::read_to_string(&path) {
                     Ok(source) => {
-                        let chunk = lua
-                            .load(source)
-                            .set_name(path.display().to_string())
+                        let chunk = sandbox::chunk(lua, source, &path.display().to_string())?
                             .into_function()?;
                         return Ok(mlua::Value::Function(chunk));
                     }
@@ -193,6 +190,8 @@ mod field {
     pub(super) const WAVE: &str = "wave";
     pub(super) const RATE: &str = "rate";
     pub(super) const DEPTH: &str = "depth";
+    pub(super) const DEPTH_HZ: &str = "depth_hz";
+    pub(super) const DEPTH_OCTAVES: &str = "depth_octaves";
     pub(super) const ENVELOPE: &str = "envelope";
     pub(super) const KEYBOARD: &str = "keyboard";
     pub(super) const VOICE_COUNT: &str = "voice_count";
@@ -239,6 +238,7 @@ mod field {
     pub(super) const STAMP_KIND: &str = "kind";
     pub(super) const STAMP_AT: &str = "at";
     pub(super) const CUTOFF: &str = "cutoff";
+    pub(super) const CUTOFF_MOD: &str = "cutoff_mod";
     pub(super) const RESONANCE: &str = "resonance";
     pub(super) const GAIN: &str = "gain";
 
@@ -338,7 +338,7 @@ fn load_in(
 
     // eval to a Value first: a syntax error and a wrong return type both fail
     // this call, and they deserve different messages
-    let returned: mlua::Value = lua.load(source).set_name(name).eval()?;
+    let returned: mlua::Value = sandbox::chunk(&lua, source, name)?.eval()?;
     let table = match returned {
         mlua::Value::Table(table) => table,
         other => {
@@ -407,11 +407,15 @@ fn load_in(
             keys,
         ),
     };
+    let (filter, filter_report) = filter
+        .map(|spec| spec.bake(sample_rate))
+        .transpose()?
+        .unzip();
     let mut patch = Patch {
         structure,
         tuning_diagnostics,
-        filter_report: filter.as_ref().map(|spec| spec.report(sample_rate)),
-        filter: filter.map(|spec| spec.filter),
+        filter_report,
+        filter,
         ..patch?
     };
     locate(&mut patch);

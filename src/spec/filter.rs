@@ -1,6 +1,8 @@
 //! A filter as plain data: what a patch asks for, and what `check`
 //! reports about it. `audio::fx` turns a [`Filter`] into a running filter.
 
+use super::Lfo;
+
 /// Which mix of the filter's outputs is heard.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Kind {
@@ -21,7 +23,7 @@ pub enum Kind {
 }
 
 /// A filter as plain data: what Lua configured, before any state exists.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Filter {
     pub kind: Kind,
     /// Hz
@@ -33,6 +35,23 @@ pub struct Filter {
     /// Carried as the root so `A = root * root` needs no `sqrt`.
     /// 1.0 for kinds without gain.
     pub root: f32,
+    pub cutoff_mod: Option<CutoffMod>,
+}
+
+/// One LFO moving `cutoff` either side of its value. The filter runs on
+/// the summed output, so the LFO is shared by every voice and free-running.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CutoffMod {
+    /// `depth` is in `unit`
+    pub(crate) lfo: Lfo,
+    pub(crate) unit: Unit,
+}
+
+/// What a frequency LFO's depth counts.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Unit {
+    Hz,
+    Octaves,
 }
 
 /// Damping at full resonance: rings, but never self-oscillates.
