@@ -5,6 +5,8 @@
 --   cutoff     Hz, required
 --   resonance  0 (flat) to 1 (rings hard); not on shelves
 --   gain       dB; only on bell and shelves
+--   cutoff_mod synth.lfo with `depth_hz` or `depth_octaves`; one LFO for
+--              the whole filter, free-running from load
 --
 -- Unknown fields pass through so Rust can name a misspelling.
 
@@ -12,6 +14,7 @@
 ---@field cutoff number Hz
 ---@field resonance? number 0 (flat) to 1 (rings hard); not on shelves
 ---@field gain? number dB; only on bell and shelves
+---@field cutoff_mod? synth.Lfo moves `cutoff` by `depth_hz` or `depth_octaves`
 
 -- built in the loop at the end, so declared here for editors
 ---@class synth.filter
