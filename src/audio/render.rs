@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::fx::{Lfo, Svf};
-use crate::spec::{Event, Filter, Freqs, Instrument, Timeline};
+use crate::spec::{CutoffMod, Event, Filter, Freqs, Instrument, Timeline, Unit};
 
 /// How long a stolen voice's velocity takes to ease to the new note's own.
 /// Short enough to hear as the new note, long enough not to click.
@@ -367,6 +367,27 @@ pub struct Player {
     total_samples: u64,
     /// runs on the sum of every voice
     filter: Option<Svf>,
+    /// moves `filter`'s cutoff each sample
+    sweep: Option<Sweep>,
+}
+
+/// One LFO moving the shared filter's cutoff from `base`. Never restarted,
+/// since no single note owns a filter every voice runs through.
+struct Sweep {
+    lfo: Lfo,
+    spec: CutoffMod,
+    /// Hz, as the patch wrote it
+    base: f32,
+}
+
+impl Sweep {
+    fn drive(&mut self, filter: &mut Svf) {
+        let along = self.spec.lfo.depth * self.lfo.next(&self.spec.lfo.cycle);
+        match self.spec.unit {
+            Unit::Hz => filter.set_cutoff(self.base + along),
+            Unit::Octaves => filter.set_cutoff_octaves(self.base, along),
+        }
+    }
 }
 
 impl Player {
@@ -396,13 +417,24 @@ impl Player {
             clock: 0,
             total_samples,
             filter: None,
+            sweep: None,
         }
     }
 
     /// Run the summed output through `filter`. Built here, at load, so
     /// the audio callback never allocates one.
     pub fn with_filter(mut self, filter: Option<Filter>) -> Self {
-        self.filter = filter.map(|f| Svf::new(f, self.sample_rate));
+        let Some(mut filter) = filter else {
+            self.filter = None;
+            self.sweep = None;
+            return self;
+        };
+        self.sweep = filter.cutoff_mod.take().map(|spec| Sweep {
+            lfo: Lfo::new(spec.lfo.rate, self.sample_rate),
+            spec,
+            base: filter.cutoff,
+        });
+        self.filter = Some(Svf::new(filter, self.sample_rate));
         self
     }
 
@@ -518,7 +550,12 @@ impl Player {
         self.clock += 1;
         let sum: f32 = self.pools.iter_mut().map(Pool::next).sum();
         match &mut self.filter {
-            Some(filter) => filter.next(sum),
+            Some(filter) => {
+                if let Some(sweep) = &mut self.sweep {
+                    sweep.drive(filter);
+                }
+                filter.next(sum)
+            }
             None => sum,
         }
     }
@@ -934,9 +971,73 @@ mod tests {
             cutoff: 20000.0, // clamps just below Nyquist
             damping: core::f32::consts::SQRT_2,
             root: 1.0,
+            cutoff_mod: None,
         };
         let (dry, wet) = (level(None), level(Some(highpass)));
         assert!(wet < dry, "filtered {wet} is not below unfiltered {dry}");
+    }
+
+    /// A live player at 48 kHz whose lowpass at 1000 Hz is moved by an
+    /// LFO with `cycle`, at one entry per sample.
+    fn swept_filter(cycle: Vec<f32>, depth: f32, unit: Unit) -> (rtrb::Producer<Event>, Player) {
+        let (tx, rx) = rtrb::RingBuffer::new(4);
+        let lowpass = Filter {
+            kind: Kind::Lowpass,
+            cutoff: 1000.0,
+            damping: core::f32::consts::SQRT_2,
+            root: 1.0,
+            cutoff_mod: Some(CutoffMod {
+                lfo: Lfo {
+                    rate: 48000.0 / cycle.len() as f32,
+                    cycle,
+                    depth,
+                },
+                unit,
+            }),
+        };
+        let player = Player::new(live(vec![flat_instrument()], rx), freqs(), 48000.0)
+            .with_filter(Some(lowpass));
+        (tx, player)
+    }
+
+    fn cutoff(player: &Player) -> f32 {
+        player.filter.as_ref().unwrap().cutoff()
+    }
+
+    #[test]
+    fn cutoff_mod_moves_the_cutoff_in_its_unit_and_glides() {
+        for (cycle, depth, unit, want) in [
+            (vec![-1.0, -1.0], 300.0, Unit::Hz, 700.0),
+            (vec![1.0, 1.0], 1.0, Unit::Octaves, 2000.0),
+        ] {
+            let (_tx, mut player) = swept_filter(cycle, depth, unit);
+            player.next();
+            let first = cutoff(&player);
+            assert!((first - 1000.0).abs() < 50.0, "{unit:?} jumped to {first}");
+            for _ in 0..48000 {
+                player.next();
+            }
+            let settled = cutoff(&player);
+            assert!(
+                (settled - want).abs() < 1.0,
+                "{unit:?} settled at {settled}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_note_on_does_not_restart_the_cutoff_lfo() {
+        let cycle = vec![0.0, 0.5, 1.0, 0.5, 0.0, -0.5, -1.0, -0.5];
+        let (_quiet_tx, mut quiet) = swept_filter(cycle.clone(), 1.0, Unit::Octaves);
+        let (mut tx, mut played) = swept_filter(cycle, 1.0, Unit::Octaves);
+        for i in 0..64 {
+            if i == 13 {
+                tx.push(on(1)).unwrap();
+            }
+            quiet.next();
+            played.next();
+            assert_eq!(cutoff(&quiet), cutoff(&played), "sample {i}");
+        }
     }
 
     #[test]
@@ -1464,6 +1565,7 @@ mod tests {
             cutoff: 20000.0, // clamps just below Nyquist
             damping: core::f32::consts::SQRT_2,
             root: 1.0,
+            cutoff_mod: None,
         };
         let instruments = vec![broken, flat_instrument()];
         let mut player =
