@@ -20,6 +20,14 @@ A real-time Rust digital instrument and audio workstation configured and driven 
 curl -fsSL https://raw.githubusercontent.com/turkosaurus/synth/main/install.sh | bash
 ```
 
+### Windows
+
+[`install.ps1`](./install.ps1) does the same from PowerShell, installing to `$env:XDG_BIN_HOME`, or `%USERPROFILE%\.local\bin`[^manager]. `synth update` does not run on Windows; run the script again to update.
+
+```powershell
+irm https://raw.githubusercontent.com/turkosaurus/synth/main/install.ps1 | iex
+```
+
 [^manager]: `update` and `uninstall` act on the binary being run; defer to package manager if installed through one.
 
 [^requires]: requires `GLIBC_2.34+`
