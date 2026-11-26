@@ -19,16 +19,6 @@ Tasks long enough for their own file. Shorter ones live in [`mise.toml`](../mise
 | [`bench:record`](./bench/record) | times and counts instructions for the render path and writes `benches/results/<stamp>.toml` |
 | [`bench:compare`](./bench/compare) | Markdown tables of the newest result: instructions against the last on the same arch, time against the last on the same CPU |
 
-`ci:*` tasks are the workflow scripts with logic of their own; each reads the step's `env:` and writes to `$GITHUB_OUTPUT`, or stdout outside Actions.
-
-| task | for |
-| --- | --- |
-| [`ci:bench-changed`](./ci/bench-changed) | `bench.yml`: `run=false` when no Rust, Lua, or Cargo file changed since the base |
-| [`ci:bench-compare`](./ci/bench-compare) | `bench.yml`: `bench:compare` into `comparison.md`; a regression sets `regressed=true` and passes, so the result is still committed |
-| [`ci:bench-commit`](./ci/bench-commit) | `bench.yml`: commits the result to main, retrying when main moves |
-| [`ci:release-name`](./ci/release-name) | `release.yml`: the tag, build, and prerelease flag |
-| [`ci:release-verify`](./ci/release-verify) | `release.yml`: the Linux build finds the new release by its channel with `update --dry-run` |
-
 `test:separation` and `test:core` are text checks, not compiler guarantees: they hold the module boundaries the [architecture](../RULES.md#architecture) depends on.
 
 Each task prints a `::error title=<task>::` line when it fails, so GitHub Actions annotates the run with the task's name.

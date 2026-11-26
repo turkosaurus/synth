@@ -84,5 +84,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Every platform passed
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
-        run: echo "::error title=test::a platform did not pass; see its job" && exit 1
+        env:
+          LINUX: ${{ needs.linux.result }}
+          MACOS: ${{ needs.macos.result }}
+          WINDOWS: ${{ needs.windows.result }}
+        run: |
+          failed=0
+          if [ "$LINUX" != success ]; then
+            echo "::error title=test::linux: $LINUX"
+            failed=1
+          fi
+          if [ "$MACOS" != success ]; then
+            echo "::error title=test::macos: $MACOS"
+            failed=1
+          fi
+          if [ "$WINDOWS" != success ]; then
+            echo "::error title=test::windows: $WINDOWS"
+            failed=1
+          fi
+          exit "$failed"

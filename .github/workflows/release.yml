@@ -49,12 +49,26 @@ jobs:
           VERSION_BASE: ${{ github.event_name == 'push' && 'latest' || '' }}
         run: mise run version
 
+      # semver build metadata names the commit without ordering it,
+      # so a dev build shows what it was built from and never outranks a release
       - name: Name the build
         id: name
         env:
           RELEASE: ${{ steps.check.outputs.release }}
           VERSION: ${{ steps.check.outputs.version }}
-        run: mise run ci:release-name
+        run: |
+          if [ "$RELEASE" = true ]; then
+            tag="v$VERSION"
+          else
+            tag="v$VERSION+${GITHUB_SHA::7}"
+          fi
+          case $tag in
+          *-* | *+*) prerelease=true ;;
+          *) prerelease=false ;;
+          esac
+          echo "tag=$tag" | tee -a "$GITHUB_OUTPUT"
+          echo "build=${tag#v}" | tee -a "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" | tee -a "$GITHUB_OUTPUT"
 
   test:
     needs: version
@@ -150,26 +164,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
-        run: gh release create "$TAG" dist/* --target "$GITHUB_SHA" --generate-notes --prerelease="$PRERELEASE" --repo "$GITHUB_REPOSITORY"
+        run: |
+          gh release create "$TAG" dist/* \
+            --target "$GITHUB_SHA" \
+            --generate-notes \
+            --prerelease="$PRERELEASE" \
+            --repo "$GITHUB_REPOSITORY"
 
   # the release just published, end to end: its Linux build finds it on the
   # release page by its channel, downloads, verifies, and unpacks it
   verify:
     needs: [version, release]
     runs-on: ubuntu-latest
-    env:
-      MISE_TASK_RUN_AUTO_INSTALL: false
     steps:
-      - name: Check out
-        uses: actions/checkout@v7
-
-      # mise alone, for the task below
-      - name: Install mise
-        uses: jdx/mise-action@v5
-        with:
-          install: false
-          cache: false
-
       - name: Download the Linux build
         uses: actions/download-artifact@v8
         with:
@@ -179,7 +186,19 @@ jobs:
         env:
           TAG: ${{ needs.version.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
-        run: mise run ci:release-verify
+        run: |
+          tar -xzf synth-x86_64-unknown-linux-gnu.tar.gz
+          case $TAG in
+          *+*) channel=(--dev "${TAG##*+}") ;;
+          *-*) channel=(--beta) ;;
+          *) channel=(--stable) ;;
+          esac
+          out=$(./synth update --dry-run "${channel[@]}")
+          echo "$out"
+          if [[ $out != "synth ${TAG#v} verified;"* ]]; then
+            echo "::error::update --dry-run ${channel[*]} did not find $TAG"
+            exit 1
+          fi
 
   # install.ps1 end to end from the release just published, once per release:
   # it installs the latest stable, so a PR would test nothing new
@@ -201,7 +220,6 @@ jobs:
         uses: jdx/mise-action@v5
         with:
           install: false
-          cache: false
 
       - name: Install, run, and uninstall with install.ps1
         run: mise run test:install-windows
