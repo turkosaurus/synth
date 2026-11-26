@@ -23,6 +23,12 @@ fn pade(x: f32) -> f32 {
     x * (15.0 - x2) / (15.0 - 6.0 * x2)
 }
 
+// 2^f = e^(f ln 2), so the Taylor series of e^y at y = f ln 2: (ln 2)^k / k!
+const C2: f32 = LN_2 * LN_2 / 2.0;
+const C3: f32 = C2 * LN_2 / 3.0;
+const C4: f32 = C3 * LN_2 / 4.0;
+const C5: f32 = C4 * LN_2 / 5.0;
+
 /// `2^x`. Past ±126 it saturates, which is already past every cutoff.
 ///
 /// The whole part goes straight into the float's exponent bits; a Taylor
@@ -34,9 +40,6 @@ pub(crate) fn exp2(x: f32) -> f32 {
         whole -= 1;
     }
     let f = x - whole as f32;
-    // ln(2)^k / k!
-    // what the fuck?
-    let frac = 1.0
-        + f * (LN_2 + f * (0.240_226_5 + f * (0.055_504_1 + f * (0.009_618_1 + f * 0.001_333_4))));
+    let frac = 1.0 + f * (LN_2 + f * (C2 + f * (C3 + f * (C4 + f * C5))));
     frac * f32::from_bits(((whole + 127) as u32) << 23)
 }
