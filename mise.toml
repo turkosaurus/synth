@@ -7,6 +7,7 @@ neovim = "0.12"
 jq = "1"
 stylua = "2"
 cargo-deny = "0.20"
+shellcheck = "0.11"
 "ubi:EmbarkStudios/cargo-about" = "0.9"
 # runs benches/instructions.rs under Valgrind; must match the gungraun crate's
 # version exactly. Valgrind itself comes from the system's package manager.
@@ -57,12 +58,13 @@ description = "tests that need no network"
 description = "cargo tests"
 run = "cargo test --verbose -- --show-output || { echo '::error title=test:rust::cargo test failed'; exit 1; }"
 
-# #[ignore]d tests in tests/network.rs; CI runs them beside test
-[tasks."test:network"]
-description = "tests that reach GitHub releases"
+# integration tests that reach GitHub are #[ignore]d and skipped;
+# update test runs them
+[tasks."test:update"]
+description = "update against GitHub releases"
 # they run target/debug/synth, which the other cargo tasks may be relinking
 wait_for = ["test:rust", "test:example"]
-run = "cargo test --test network -- --ignored || { echo '::error title=test:network::network tests failed'; exit 1; }"
+run = "cargo test --test update -- --ignored || { echo '::error title=test:update::update tests failed'; exit 1; }"
 
 [tasks."test:example"]
 description = "lint example.lua; nonzero exit on warnings"
@@ -81,6 +83,8 @@ depends = [
     "lint:lsp",
     "lint:stylua",
     "lint:licenses",
+    "lint:ps1",
+    "lint:shell",
 ]
 description = "run all linters; any warning fails, except pedantic"
 

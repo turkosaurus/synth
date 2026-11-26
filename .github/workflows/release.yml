@@ -199,3 +199,27 @@ jobs:
             echo "::error::update --dry-run ${channel[*]} did not find $TAG"
             exit 1
           fi
+
+  # install.ps1 end to end from the release just published, once per release:
+  # it installs the latest stable, so a PR would test nothing new
+  winstall:
+    needs: [version, release]
+    runs-on: windows-latest
+    env:
+      # the task is bash, and mise runs file tasks with cmd on Windows;
+      # see test-platform.yml
+      MISE_WINDOWS_DEFAULT_FILE_SHELL_ARGS: bash
+      MISE_TASK_RUN_AUTO_INSTALL: false
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      # the task needs only the PowerShells the runner ships
+      - name: Install mise
+        uses: jdx/mise-action@v5
+        with:
+          install: false
+
+      - name: Install, run, and uninstall with install.ps1
+        run: mise run test:winstall

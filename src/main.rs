@@ -172,9 +172,9 @@ fn run() -> anyhow::Result<ExitCode> {
         Commands::Uninstall => println!("removed {}", install::uninstall()?.display()),
         Commands::Update { channel, dry_run } => match update::run(&channel.channel(), dry_run)? {
             update::Outcome::Current(version) => println!("synth {version} is current"),
-            update::Outcome::Installed { from, to } => {
+            update::Outcome::Installed { from, to, path } => {
                 println!("synth {from} -> {to}");
-                sync_patches();
+                sync_patches(&path);
             }
             update::Outcome::Checked { to, path } => {
                 println!("synth {to} verified; would replace {}", path.display());
@@ -295,22 +295,22 @@ fn resolve_behind(
     Ok(())
 }
 
-/// After an update, runs the new binary's `patches --sync`, so built-in
+/// After an update, runs `patches --sync` from the new binary at `exe`, so built-in
 /// copies follow the new built-ins and edited ones are asked about. Only
 /// for a patches folder that already has copies; a failure here is
 /// reported, but the update itself has succeeded.
-fn sync_patches() {
+fn sync_patches(exe: &std::path::Path) {
     let Ok(Some(dir)) = script::config().map(|config| config.patch_dir) else {
         return;
     };
     if !script::builtins::written(&dir) {
         return;
     }
-    let ran = std::env::current_exe().and_then(|exe| {
-        std::process::Command::new(exe)
-            .args(["patches", "--sync"])
-            .status()
-    });
+    // current_exe would name the replaced binary, which Linux reports as
+    // deleted
+    let ran = std::process::Command::new(exe)
+        .args(["patches", "--sync"])
+        .status();
     match ran {
         Ok(status) if status.success() => {}
         Ok(status) => eprintln!("synth patches --sync exited with {status}; run it again"),
