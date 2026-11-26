@@ -5,16 +5,19 @@
 use std::f32::consts::SQRT_2;
 
 use crate::spec::{
-    Diagnostic, DiagnosticKind, Filter, FilterReport, Kind, MAX_CUTOFF, MIN_CUTOFF, MIN_DAMPING,
+    CutoffMod, Diagnostic, DiagnosticKind, Filter, FilterReport, Kind, MAX_CUTOFF, MIN_CUTOFF,
+    MIN_DAMPING,
 };
 
-use super::bake::{expect_only, spec_entry, spec_error, spec_table};
-use super::field;
+use super::bake::{expect_only, lfo_clamped, spec_entry, spec_error, spec_table, FrequencyLfoSpec};
+use super::{field, Error};
 
 const WHAT: &str = "filter";
 
 pub(super) struct FilterSpec {
-    pub(super) filter: Filter,
+    /// all but `cutoff_mod`, which `bake` fills
+    filter: Filter,
+    cutoff_mod: Option<FrequencyLfoSpec>,
     name: &'static str,
     // as written in Lua, for the report
     cutoff: f64,
@@ -23,9 +26,21 @@ pub(super) struct FilterSpec {
 }
 
 impl FilterSpec {
+    /// The filter as the audio side runs it, and what `check` shows about it.
+    pub(super) fn bake(self, sample_rate: u32) -> Result<(Filter, FilterReport), Error> {
+        let mut report = self.report(sample_rate);
+        let mut filter = self.filter;
+        if let Some(spec) = &self.cutoff_mod {
+            let (lfo, unit, count) = spec.bake()?;
+            report.diagnostics.extend(lfo_clamped(count));
+            filter.cutoff_mod = Some(CutoffMod { lfo, unit });
+        }
+        Ok((filter, report))
+    }
+
     /// The sample rate decides where the cutoff clamps, so a cutoff that is
     /// fine at 96 kHz can warn at 48 kHz.
-    pub(super) fn report(&self, sample_rate: u32) -> FilterReport {
+    fn report(&self, sample_rate: u32) -> FilterReport {
         let ceiling = f64::from(MAX_CUTOFF) * f64::from(sample_rate);
         let floor = f64::from(MIN_CUTOFF);
         let range = |message: String| Diagnostic::new(DiagnosticKind::Range, message);
@@ -71,7 +86,7 @@ impl mlua::FromLua for FilterSpec {
             }
         };
 
-        let mut allowed = vec![field::KIND, field::CUTOFF];
+        let mut allowed = vec![field::KIND, field::CUTOFF, field::CUTOFF_MOD];
         if has_resonance {
             allowed.push(field::RESONANCE);
         }
@@ -124,7 +139,10 @@ impl mlua::FromLua for FilterSpec {
                 cutoff: cutoff as f32,
                 damping,
                 root,
+                cutoff_mod: None,
             },
+            // no wrapping: FrequencyLfoSpec names its own bad field
+            cutoff_mod: table.get(field::CUTOFF_MOD)?,
             name,
             cutoff,
             resonance,
