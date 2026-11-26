@@ -60,12 +60,13 @@ const DIGEST_PREFIX: &str = "sha256:";
 const ASSET_PREFIX: &str = "synth-";
 const ASSET_SUFFIX: &str = ".tar.gz";
 
-/// The target this binary was built for, if the release workflow builds one
-/// and `update` can replace a running binary on it.
+/// The target this binary was built for, if the release workflow builds one.
 const TARGET: Option<&str> = if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
     Some("x86_64-unknown-linux-gnu")
 } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
     Some("aarch64-apple-darwin")
+} else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+    Some("x86_64-pc-windows-msvc")
 } else {
     None
 };
