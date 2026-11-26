@@ -1,11 +1,11 @@
-use anyhow::Context;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{FromSample, Sample, SampleFormat, SizedSample};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::debug;
 
-use super::render::{fill, Player};
+use super::render::{fill, Player, Tally};
 
 /// A running output stream; audio stops when it drops. Named here so
 /// holders need not import cpal, which stays in this file.
@@ -97,6 +97,43 @@ pub struct Snapshot {
     pub load: f32,
 }
 
+/// Why the output device could not be opened or streamed to. The driver's
+/// own error rides along as the source where there is one.
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum Error {
+    #[error("no default output device")]
+    NoDevice,
+
+    #[error("reading the output device's default config")]
+    Config {
+        #[source]
+        source: cpal::Error,
+    },
+
+    #[error("device wants {format:?}; f32, i16, and i32 are wired up")]
+    Format { format: cpal::SampleFormat },
+
+    #[error("device has {channels} channels; at most {max} are wired up")]
+    Channels { channels: u16, max: usize },
+
+    #[error("config.lua: `buffer_frames` is {frames}; this device takes {min} to {max}")]
+    BufferFrames { frames: u32, min: u32, max: u32 },
+
+    #[error("opening the output stream ({buffer:?})")]
+    Stream {
+        buffer: cpal::BufferSize,
+        #[source]
+        source: cpal::Error,
+    },
+
+    #[error("starting the output stream")]
+    Play {
+        #[source]
+        source: cpal::Error,
+    },
+}
+
 /// A negotiated output device, ready to build a stream on.
 pub struct Output {
     pub(crate) device: cpal::Device,
@@ -109,16 +146,26 @@ pub struct Output {
 /// Open the default output device, asking for `buffer_frames` per callback
 /// if given. Separated from playback so every view and command negotiates
 /// the device the same way.
-pub fn open(buffer_frames: Option<u32>) -> anyhow::Result<Output> {
+pub fn open(buffer_frames: Option<u32>) -> Result<Output, Error> {
     let device = cpal::default_host()
         .default_output_device()
-        .context("no default output device")?;
-    let config = device.default_output_config()?;
-    anyhow::ensure!(
-        config.sample_format() == cpal::SampleFormat::F32,
-        "device wants {:?}, only f32 is wired up",
-        config.sample_format()
-    );
+        .ok_or(Error::NoDevice)?;
+    let config = device
+        .default_output_config()
+        .map_err(|source| Error::Config { source })?;
+    let format = config.sample_format();
+    if !matches!(
+        format,
+        SampleFormat::F32 | SampleFormat::I16 | SampleFormat::I32
+    ) {
+        return Err(Error::Format { format });
+    }
+    if usize::from(config.channels()) > SCRATCH {
+        return Err(Error::Channels {
+            channels: config.channels(),
+            max: SCRATCH,
+        });
+    }
 
     let buffer = buffer_size(buffer_frames, config.buffer_size())?;
 
@@ -141,25 +188,63 @@ pub fn open(buffer_frames: Option<u32>) -> anyhow::Result<Output> {
 fn buffer_size(
     frames: Option<u32>,
     supported: &cpal::SupportedBufferSize,
-) -> anyhow::Result<cpal::BufferSize> {
+) -> Result<cpal::BufferSize, Error> {
     let Some(frames) = frames else {
         return Ok(cpal::BufferSize::Default);
     };
     if let cpal::SupportedBufferSize::Range { min, max } = *supported {
-        anyhow::ensure!(
-            (min..=max).contains(&frames),
-            "config.lua: `buffer_frames` is {frames}; this device takes {min} to {max}"
-        );
+        if !(min..=max).contains(&frames) {
+            return Err(Error::BufferFrames { frames, min, max });
+        }
     }
     Ok(cpal::BufferSize::Fixed(frames))
 }
 
 /// Build and start a stream that drives `player`, reporting into `stats`.
-pub fn stream(
+pub fn stream(output: &Output, player: Player, stats: Arc<Stats>) -> Result<cpal::Stream, Error> {
+    match output.config.sample_format() {
+        SampleFormat::I16 => build::<i16>(output, player, stats, convert),
+        SampleFormat::I32 => build::<i32>(output, player, stats, convert),
+        _ => build::<f32>(output, player, stats, fill),
+    }
+}
+
+/// Samples rendered per pass when the device is not f32: enough to keep
+/// the passes few, small enough to live on the callback's stack.
+const SCRATCH: usize = 1024;
+
+/// Renders into a stack buffer and converts each sample to `T`, in passes
+/// of whole frames so `fill` never sees a frame split across two of them.
+fn convert<T>(out: &mut [T], channels: usize, player: &mut Player) -> Tally
+where
+    T: Sample + FromSample<f32>,
+{
+    let mut scratch = [0.0f32; SCRATCH];
+    let pass = SCRATCH / channels * channels;
+    let mut tally = Tally::default();
+    for chunk in out.chunks_mut(pass) {
+        let rendered = &mut scratch[..chunk.len()];
+        let part = fill(rendered, channels, player);
+        for (sample, &value) in chunk.iter_mut().zip(rendered.iter()) {
+            *sample = T::from_sample(value);
+        }
+        tally.frames += part.frames;
+        tally.clips += part.clips;
+        tally.non_finite += part.non_finite;
+        tally.peak = tally.peak.max(part.peak);
+    }
+    tally
+}
+
+fn build<T>(
     output: &Output,
     mut player: Player,
     stats: Arc<Stats>,
-) -> anyhow::Result<cpal::Stream> {
+    render: fn(&mut [T], usize, &mut Player) -> Tally,
+) -> Result<cpal::Stream, Error>
+where
+    T: SizedSample + 'static,
+{
     let channels = output.channels;
     let sample_rate = output.sample_rate;
     let faults = Arc::clone(&stats);
@@ -171,9 +256,9 @@ pub fn stream(
         .device
         .build_output_stream(
             config,
-            move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            move |out: &mut [T], _: &cpal::OutputCallbackInfo| {
                 let start = Instant::now();
-                let tally = fill(out, channels, &mut player);
+                let tally = render(out, channels, &mut player);
 
                 // accumulated in `fill`, then written once per callback rather
                 // than once per sample
@@ -208,14 +293,67 @@ pub fn stream(
             },
             None,
         )
-        .with_context(|| format!("opening the output stream ({:?})", output.buffer))?;
-    stream.play()?;
+        .map_err(|source| Error::Stream {
+            buffer: output.buffer,
+            source,
+        })?;
+    stream.play().map_err(|source| Error::Play { source })?;
     Ok(stream)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::render::Feed;
     use super::*;
+    use crate::spec::{Event, Instrument, Segment, Timeline};
+
+    fn player() -> Player {
+        let flat = || Segment {
+            curve: vec![1.0],
+            ms: 0.0,
+        };
+        let instrument = Instrument::new(
+            vec![0.25, -0.5, 1.0, -1.0].into(),
+            flat(),
+            flat(),
+            1.0,
+            flat(),
+            1,
+        )
+        .unwrap();
+        let mut freqs = vec![0.0; 128];
+        freqs[1] = 1.0;
+        let on = Event::NoteOn {
+            instrument: 0,
+            note: 1,
+            velocity: 127,
+        };
+        Player::new(
+            Feed::Timeline(Timeline {
+                instruments: vec![instrument],
+                events: vec![(0, on)],
+                total_samples: 4096,
+            }),
+            freqs,
+            4.0,
+        )
+    }
+
+    // three channels do not divide SCRATCH, so a pass that split a frame
+    // would show here as a shifted or repeated sample
+    #[test]
+    fn convert_matches_fill_across_passes() {
+        let channels = 3;
+        let mut expected = vec![0.0f32; channels * 1000];
+        let want = fill(&mut expected, channels, &mut player());
+
+        let mut out = vec![0i16; expected.len()];
+        let got = convert(&mut out, channels, &mut player());
+
+        assert_eq!(got, want);
+        let converted: Vec<i16> = expected.iter().map(|&s| i16::from_sample(s)).collect();
+        assert_eq!(out, converted);
+    }
 
     const RANGE: cpal::SupportedBufferSize =
         cpal::SupportedBufferSize::Range { min: 64, max: 4096 };
@@ -240,9 +378,14 @@ mod tests {
     fn a_size_outside_the_device_range_is_named() {
         let error = buffer_size(Some(32), &RANGE).unwrap_err();
         assert!(
-            error
-                .to_string()
-                .contains("`buffer_frames` is 32; this device takes 64 to 4096"),
+            matches!(
+                error,
+                Error::BufferFrames {
+                    frames: 32,
+                    min: 64,
+                    max: 4096
+                }
+            ),
             "{error}"
         );
     }
