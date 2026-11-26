@@ -193,7 +193,7 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
         );
 
         for diagnostic in &report.diagnostics {
-            println!("  warn  {name}: {diagnostic}");
+            println!("  {}  {name}: {diagnostic}", diagnostic.severity().label());
         }
         println!();
     }
@@ -211,15 +211,15 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
         }
         table::pairs("filter  (summed output)", &rows, true);
         for diagnostic in &report.diagnostics {
-            println!("  warn  filter: {diagnostic}");
+            println!("  {}  filter: {diagnostic}", diagnostic.severity().label());
         }
         println!();
     }
 
-    for diagnostic in &patch.tuning_diagnostics {
-        println!("  warn  {diagnostic}");
+    for diagnostic in patch.tuning_diagnostics.iter().chain(&patch.printed) {
+        println!("  {}  {diagnostic}", diagnostic.severity().label());
     }
-    if !patch.tuning_diagnostics.is_empty() {
+    if !(patch.tuning_diagnostics.is_empty() && patch.printed.is_empty()) {
         println!();
     }
 
@@ -255,6 +255,7 @@ pub fn stats(snap: &Snapshot) -> String {
         non_finite,
         overruns,
         errors,
+        dropped,
         peak,
         budget_us,
         callback_us_max,
@@ -264,6 +265,6 @@ pub fn stats(snap: &Snapshot) -> String {
     format!(
         "frames={frames} clips={clips} non_finite={non_finite} peak={peak:.3} \
          callback_max={callback_us_max}us budget={budget_us}us ({pct:.1}%) \
-         overruns={overruns} errors={errors}"
+         overruns={overruns} errors={errors} dropped={dropped}"
     )
 }

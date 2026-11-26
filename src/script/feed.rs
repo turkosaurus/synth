@@ -75,6 +75,7 @@ pub(super) fn single(
         filter: None,
         filter_report: None,
         tuning_diagnostics: Vec::new(),
+        printed: Vec::new(),
         structure: Vec::new(),
     })
 }
@@ -216,6 +217,7 @@ pub(super) fn sequence(
         filter: None,
         filter_report: None,
         tuning_diagnostics: Vec::new(),
+        printed: Vec::new(),
         structure: Vec::new(),
     })
 }

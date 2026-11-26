@@ -58,66 +58,48 @@ const MODULES: [(&str, &str); 12] = [
 /// so nothing resolves from the shell's cwd, the system's Lua folders, or a
 /// native library.
 ///
-/// `synth` and `synth.*` come from an edited copy in `patches/synth/` when
-/// there is one, else from the embedded copies. Any other name is looked
-/// for in each of `roots` in order, as `a/b.lua` or `a/b/init.lua` for
-/// `a.b`.
+/// Every name, `synth.*` included, is looked for in `dir`, then in
+/// `patches`, then among the embedded modules. On disk `a.b` is `a/b.lua`
+/// or `a/b/init.lua`.
 fn lua_register(
     lua: &mlua::Lua,
-    roots: Vec<std::path::PathBuf>,
+    dir: Option<std::path::PathBuf>,
     patches: Option<std::path::PathBuf>,
 ) -> Result<(), Error> {
     let package: mlua::Table = lua.globals().get(field::PACKAGE)?;
 
     let searcher = lua.create_function(move |lua, name: String| -> mlua::Result<mlua::Value> {
-        if name == module::ROOT || name.starts_with("synth.") {
-            let copy = patches
-                .as_deref()
-                .and_then(|patches| builtins::edited(patches, &name));
-            if let Some((path, source)) = copy {
-                let chunk =
-                    sandbox::chunk(lua, source, &path.display().to_string())?.into_function()?;
-                return Ok(mlua::Value::Function(chunk));
-            }
-            return Ok(match MODULES.iter().find(|(module, _)| *module == name) {
-                Some((module, src)) => {
-                    mlua::Value::Function(lua.load(*src).set_name(*module).into_function()?)
-                }
-                None => mlua::Value::String(
-                    lua.create_string(format!("\n\tno built-in module '{name}'"))?,
-                ),
-            });
-        }
         let Some(relative) = module_path(&name) else {
             return Ok(mlua::Value::String(lua.create_string(format!(
                 "\n\t'{name}' is not a module name: use letters, digits, `_` and `-`, \
                  separated by dots"
             ))?));
         };
+        let embedded = MODULES.iter().find(|(module, _)| *module == name);
         let mut tried = String::new();
-        for root in &roots {
-            let file = root.join(&relative).with_extension("lua");
-            let init = root.join(&relative).join("init.lua");
-            for path in [file, init] {
-                match std::fs::read_to_string(&path) {
-                    Ok(source) => {
-                        let chunk = sandbox::chunk(lua, source, &path.display().to_string())?
-                            .into_function()?;
-                        return Ok(mlua::Value::Function(chunk));
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        tried.push_str(&format!("\n\tno file '{}'", path.display()));
-                    }
-                    Err(error) => {
-                        return Err(mlua::Error::external(format!(
-                            "reading {}: {error}",
-                            path.display()
-                        )))
-                    }
-                }
-            }
+        let mut found = match &dir {
+            Some(dir) => find(dir, &relative, &mut tried)?,
+            None => None,
+        };
+        if let (None, Some(patches)) = (&found, &patches) {
+            found = if embedded.is_some() {
+                // a copy still matching its built-in is skipped, so an
+                // updated built-in is not hidden by a stale copy
+                builtins::edited(patches, &name)
+            } else {
+                find(patches, &relative, &mut tried)?
+            };
         }
-        Ok(mlua::Value::String(lua.create_string(tried)?))
+        if let Some((path, source)) = found {
+            let chunk = sandbox::chunk(lua, source, &path.display().to_string())?;
+            return Ok(mlua::Value::Function(chunk.into_function()?));
+        }
+        Ok(match embedded {
+            Some((module, src)) => {
+                mlua::Value::Function(lua.load(*src).set_name(*module).into_function()?)
+            }
+            None => mlua::Value::String(lua.create_string(tried)?),
+        })
     })?;
     // LuaJIT is Lua 5.1, where the searchers are `package.loaders`
     package.set(field::LOADERS, lua.create_sequence_from([searcher])?)?;
@@ -139,7 +121,14 @@ const BUILT_IN: &str = "built in";
 /// `file:line` of the code that called a constructor. Level 0 is this
 /// function, 1 the constructor, 2 whoever called the constructor.
 fn site(lua: &mlua::Lua) -> String {
-    lua.inspect_stack(2, |debug| {
+    // called from Rust, as the default keyboard is
+    at(lua, 2).unwrap_or_else(|| BUILT_IN.to_string())
+}
+
+/// `file:line` of the function `level` calls up the stack, or `None` when
+/// the stack is not that deep.
+fn at(lua: &mlua::Lua, level: usize) -> Option<String> {
+    lua.inspect_stack(level, |debug| {
         let source = debug.source().short_src.unwrap_or_default();
         // chunks named by mlua show as [string "lua/example.lua"]
         let file = source
@@ -152,8 +141,6 @@ fn site(lua: &mlua::Lua) -> String {
             None => file,
         }
     })
-    // called from Rust, as the default keyboard is
-    .unwrap_or_else(|| BUILT_IN.to_string())
 }
 
 // Every name crossing the Lua/Rust boundary, in one place.
@@ -304,6 +291,32 @@ pub(crate) fn load_source(source: &str, name: &str, sample_rate: u32) -> anyhow:
     load_in(source, name, sample_rate, None, None)
 }
 
+/// The source of `relative` under `root`, as a `.lua` file or an
+/// `init.lua` in its folder. Paths not found are added to `tried`.
+fn find(
+    root: &std::path::Path,
+    relative: &std::path::Path,
+    tried: &mut String,
+) -> mlua::Result<Option<(std::path::PathBuf, String)>> {
+    let file = root.join(relative).with_extension("lua");
+    let init = root.join(relative).join("init.lua");
+    for path in [file, init] {
+        match std::fs::read_to_string(&path) {
+            Ok(source) => return Ok(Some((path, source))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tried.push_str(&format!("\n\tno file '{}'", path.display()));
+            }
+            Err(error) => {
+                return Err(mlua::Error::external(format!(
+                    "reading {}: {error}",
+                    path.display()
+                )))
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// `a.b` as the relative path `a/b`, or `None` when a part is empty or
 /// holds anything but letters, digits, `_` and `-`, so a name cannot reach
 /// outside the folder it is looked for in.
@@ -327,14 +340,14 @@ fn load_in(
     patches: Option<&std::path::Path>,
 ) -> anyhow::Result<Patch> {
     let lua = mlua::Lua::new();
-    // a patch's own requires resolve next to the patch first, then in the
-    // user's patches folder, and never next to the shell's cwd
-    let roots = dir
-        .into_iter()
-        .chain(patches)
-        .map(std::path::Path::to_path_buf)
-        .collect();
-    lua_register(&lua, roots, patches.map(std::path::Path::to_path_buf))?;
+    // a patch in the patches folder itself finds built-in copies only
+    // through the edited check, so the folder is not searched twice
+    let dir = dir.filter(|dir| Some(*dir) != patches);
+    lua_register(
+        &lua,
+        dir.map(std::path::Path::to_path_buf),
+        patches.map(std::path::Path::to_path_buf),
+    )?;
 
     // eval to a Value first: a syntax error and a wrong return type both fail
     // this call, and they deserve different messages
@@ -414,6 +427,7 @@ fn load_in(
     let mut patch = Patch {
         structure,
         tuning_diagnostics,
+        printed: sandbox::printed(&lua),
         filter_report,
         filter,
         ..patch?
