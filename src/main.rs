@@ -388,6 +388,7 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
         non_finite = snap.non_finite,
         overruns = snap.overruns,
         errors = snap.errors,
+        dropped = snap.dropped,
         peak = snap.peak,
         budget_us = snap.budget_us,
         callback_us_max = snap.callback_us_max,
