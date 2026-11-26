@@ -3,10 +3,12 @@
 //! The embedded modules run in the state's full globals instead.
 
 use mlua::chunk::{AsChunk, Chunk, ChunkMode};
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, MultiValue, Table, Value};
+
+use crate::spec::{Diagnostic, DiagnosticKind};
 
 /// Base functions kept as they are.
-const BASE: [&str; 20] = [
+const BASE: [&str; 19] = [
     "pairs",
     "ipairs",
     "type",
@@ -25,7 +27,6 @@ const BASE: [&str; 20] = [
     "rawlen",
     "next",
     "unpack",
-    "print",
     // resolves only through the searcher `lua_register` installs
     "require",
 ];
@@ -54,9 +55,40 @@ pub(super) fn environment(lua: &Lua) -> mlua::Result<Table> {
     let text = lua.create_function(load_text)?;
     env.set("load", text.clone())?;
     env.set("loadstring", text)?;
+    env.set("print", lua.create_function(print)?)?;
     env.set("_G", &env)?;
     lua.set_named_registry_value(REGISTRY, &env)?;
     Ok(env)
+}
+
+/// What `print` was passed, kept per state until [`printed`] takes it.
+#[derive(Default)]
+struct Printed(Vec<Diagnostic>);
+
+/// `print`: an `info` diagnostic at the caller's line, never stdout, which
+/// the TUI draws over. Arguments are joined by tabs, as Lua's own are.
+fn print(lua: &Lua, args: MultiValue) -> mlua::Result<()> {
+    let parts = args
+        .into_iter()
+        .map(|value| value.to_string())
+        .collect::<mlua::Result<Vec<_>>>()?;
+    let mut diagnostic = Diagnostic::new(DiagnosticKind::Print, parts.join("\t"));
+    // level 0 is this function, 1 whoever called it
+    diagnostic.at = super::at(lua, 1);
+    if lua.app_data_ref::<Printed>().is_none() {
+        lua.set_app_data(Printed::default());
+    }
+    if let Some(mut printed) = lua.app_data_mut::<Printed>() {
+        printed.0.push(diagnostic);
+    }
+    Ok(())
+}
+
+/// Everything printed in `lua` so far, in call order, leaving none behind.
+pub(super) fn printed(lua: &Lua) -> Vec<Diagnostic> {
+    lua.remove_app_data::<Printed>()
+        .map(|printed| printed.0)
+        .unwrap_or_default()
 }
 
 /// `source` compiled as a text chunk that runs in the sandbox.

@@ -1954,6 +1954,50 @@ fn a_module_from_disk_runs_in_the_sandbox() {
     load_in(patch, "test", 48000, Some(&dir), None).unwrap();
 }
 
+#[test]
+fn print_is_an_info_diagnostic_at_the_callers_line() {
+    let source = r#"
+        local synth = require("synth")
+        print("cutoff", 800)
+        return synth.instrument({})
+    "#;
+    let patch = load_source(source, "song.lua", 48000).unwrap();
+    let printed: Vec<(&str, Option<&str>)> = patch
+        .printed
+        .iter()
+        .map(|d| (d.message.as_str(), d.at.as_deref()))
+        .collect();
+    assert_eq!(printed, vec![("cutoff\t800", Some("song.lua:3"))]);
+    assert_eq!(patch.printed[0].severity(), crate::spec::Severity::Info);
+    assert!(patch.clean(), "printing is not a warning");
+}
+
+#[test]
+fn print_while_baking_names_the_line_inside_the_waveform() {
+    let source = r#"
+        local synth = require("synth")
+        local printed = false
+        local function wave(phase)
+            if not printed then printed = true; print("phase", phase) end
+            return synth.wave.sine(phase)
+        end
+        return synth.instrument({ oscillator = synth.osc({ waveforms = { wave } }) })
+    "#;
+    let patch = load_source(source, "song.lua", 48000).unwrap();
+    assert_eq!(patch.printed.len(), 1, "{:?}", patch.printed);
+    assert_eq!(patch.printed[0].at.as_deref(), Some("song.lua:5"));
+}
+
+#[test]
+fn print_uses_tostring() {
+    let source = r#"
+        print(setmetatable({}, { __tostring = function() return "custom" end }), nil, true)
+        return require("synth").instrument({})
+    "#;
+    let patch = load_source(source, "song.lua", 48000).unwrap();
+    assert_eq!(patch.printed[0].message, "custom\tnil\ttrue");
+}
+
 /// A patches folder whose `synth/wave.lua` is marked but still matches its
 /// recorded base, as an untouched copy from an older built-in does.
 fn patches_with_a_stale_copy(case: &str) -> std::path::PathBuf {
