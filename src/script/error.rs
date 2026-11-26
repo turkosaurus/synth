@@ -119,6 +119,9 @@ pub enum Error {
     #[error("tuning returned {} Hz for note {note}; must be positive and finite", hz_shown(*hz))]
     TuningHz { note: u8, hz: f64 },
 
+    #[error("{what}: {problem}")]
+    FrequencyDepth { what: String, problem: &'static str },
+
     #[error("lfo wave must return a number for every phase")]
     LfoWave {
         #[source]

@@ -46,12 +46,24 @@ pub enum InstrumentError {
     #[error("lfo wave is {value} at phase {phase}; must be finite, -1 to 1")]
     Lfo { phase: f32, value: f32 },
 
+    #[error("lfo rate is {value} Hz; must be finite, at least 0")]
+    LfoRate { value: f32 },
+
+    #[error("lfo depth is {value}; must be finite, 0 to 1")]
+    LfoDepth { value: f32 },
+
     #[error("envelope {stage} is {value} at t = {t}; must be finite, 0 to 1")]
     Envelope {
         stage: &'static str,
         t: f32,
         value: f32,
     },
+
+    #[error("envelope {stage} is {ms} ms; must be finite, at least 0")]
+    Time { stage: &'static str, ms: f64 },
+
+    #[error("voice_count is 0; must be at least 1")]
+    NoVoices,
 }
 
 /// A lone waveform, or `waves[k]` of a table, counted from 1.
@@ -107,6 +119,13 @@ impl Instrument {
                     value,
                 });
             }
+            if !(lfo.rate.is_finite() && lfo.rate >= 0.0) {
+                return Err(InstrumentError::LfoRate { value: lfo.rate });
+            }
+            // `position` is the only parameter an LFO moves, so 0 to 1
+            if outside(&[lfo.depth], 0.0..=1.0).is_some() {
+                return Err(InstrumentError::LfoDepth { value: lfo.depth });
+            }
         }
         for (stage, segment) in [
             ("attack", &attack),
@@ -120,6 +139,15 @@ impl Instrument {
                     value,
                 });
             }
+            if !(segment.ms.is_finite() && segment.ms >= 0.0) {
+                return Err(InstrumentError::Time {
+                    stage,
+                    ms: segment.ms,
+                });
+            }
+        }
+        if voice_count == 0 {
+            return Err(InstrumentError::NoVoices);
         }
         Ok(Self {
             wave,
@@ -213,7 +241,7 @@ pub struct Wavetable {
 
 /// A baked LFO: one cycle read at `rate` Hz, moving a parameter `depth`
 /// either side of its value, in that parameter's units.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Lfo {
     pub(crate) cycle: Vec<f32>,
     pub(crate) rate: f32,
@@ -453,6 +481,83 @@ mod tests {
                 "{err:?}"
             );
         }
+    }
+
+    fn lfo(rate: f32, depth: f32) -> Wavetable {
+        Wavetable {
+            position_mod: Some(Lfo {
+                cycle: vec![0.0, 1.0],
+                rate,
+                depth,
+            }),
+            ..table(vec![0.0, 1.0, 0.0, -1.0], 2)
+        }
+    }
+
+    #[test]
+    fn lfo_rate_and_depth_are_checked() {
+        assert!(build(lfo(0.0, 0.0), vec![0.0, 1.0]).is_ok());
+        assert!(build(lfo(20.0, 1.0), vec![0.0, 1.0]).is_ok());
+        for bad in [f32::NAN, f32::INFINITY, -0.1] {
+            let err = build(lfo(bad, 0.5), vec![0.0, 1.0]).err();
+            assert!(
+                matches!(err, Some(InstrumentError::LfoRate { .. })),
+                "{err:?} for {bad}"
+            );
+        }
+        for bad in [f32::NAN, f32::INFINITY, -0.1, 1.5] {
+            let err = build(lfo(1.0, bad), vec![0.0, 1.0]).err();
+            assert!(
+                matches!(err, Some(InstrumentError::LfoDepth { .. })),
+                "{err:?} for {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_time_is_checked() {
+        let timed = |ms: [f64; 3]| {
+            let segment = |ms| Segment {
+                curve: vec![0.0, 1.0],
+                ms,
+            };
+            Instrument::new(
+                vec![0.0, 1.0].into(),
+                segment(ms[0]),
+                segment(ms[1]),
+                0.5,
+                segment(ms[2]),
+                1,
+            )
+        };
+        assert!(timed([0.0, 0.0, 0.0]).is_ok());
+        for bad in [f64::NAN, f64::INFINITY, -1.0] {
+            let err = timed([1.0, 1.0, bad]).err();
+            assert!(
+                matches!(
+                    err,
+                    Some(InstrumentError::Time {
+                        stage: "release",
+                        ..
+                    })
+                ),
+                "{err:?} for {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_voices_is_refused() {
+        let err = Instrument::new(
+            vec![0.0, 1.0].into(),
+            stage(vec![0.0, 1.0]),
+            stage(vec![0.0, 1.0]),
+            0.5,
+            stage(vec![0.0, 1.0]),
+            0,
+        )
+        .err();
+        assert_eq!(err, Some(InstrumentError::NoVoices));
     }
 
     #[test]
