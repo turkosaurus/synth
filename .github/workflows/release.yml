@@ -95,23 +95,9 @@ jobs:
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
-    env:
-      # the task is bash, and mise runs file tasks with cmd on Windows;
-      # see test-platform.yml
-      MISE_WINDOWS_DEFAULT_FILE_SHELL_ARGS: bash
-      MISE_TASK_RUN_AUTO_INSTALL: false
-      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Check out
         uses: actions/checkout@v7
-
-      # mise alone and uncached, so the runner's cargo builds, not a Rust
-      # a cache restored
-      - name: Install mise
-        uses: jdx/mise-action@v5
-        with:
-          install: false
-          cache: false
 
       # cpal links the system audio API.
       # macOS and Windows ship their audio APIs;
@@ -131,8 +117,16 @@ jobs:
         with:
           name: notices
 
+      # GPL-3.0 and the dependencies' licenses travel with the binary
       - name: Package ${{ matrix.target }}
-        run: mise run ci:package ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir=target/${{ matrix.target }}/release
+          if [ "$RUNNER_OS" = Windows ]; then bin=synth.exe; else bin=synth; fi
+          mkdir pkg
+          cp "$dir/$bin" LICENSE THIRD-PARTY-NOTICES.txt pkg/
+          tar -czf synth-${{ matrix.target }}.tar.gz -C pkg .
 
       - name: Upload ${{ matrix.target }}
         uses: actions/upload-artifact@v7
@@ -143,31 +137,20 @@ jobs:
   release:
     needs: [version, build]
     runs-on: ubuntu-latest
-    env:
-      MISE_TASK_RUN_AUTO_INSTALL: false
     steps:
-      - name: Check out
-        uses: actions/checkout@v7
-
-      # mise alone, for the task below
-      - name: Install mise
-        uses: jdx/mise-action@v5
-        with:
-          install: false
-          cache: false
-
       - name: Download builds
         uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           path: dist
 
+      # one call with every asset, so a release is never seen half uploaded
       - name: Create release ${{ needs.version.outputs.tag }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
-        run: mise run ci:release-create
+        run: gh release create "$TAG" dist/* --target "$GITHUB_SHA" --generate-notes --prerelease="$PRERELEASE" --repo "$GITHUB_REPOSITORY"
 
   # the release just published, end to end: its Linux build finds it on the
   # release page by its channel, downloads, verifies, and unpacks it

@@ -169,9 +169,6 @@ fn pick<'a>(releases: &'a [Release], channel: &Channel) -> Option<&'a Release> {
 /// unless it is the installed one already.
 /// A dry run downloads, verifies, and unpacks it even then, and stops there.
 pub fn run(channel: &Channel, dry_run: bool) -> anyhow::Result<Outcome> {
-    if cfg!(windows) {
-        bail!("update cannot replace a running binary on Windows yet");
-    }
     let Some(target) = TARGET else {
         bail!("no release is built for this platform");
     };

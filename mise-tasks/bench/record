@@ -155,3 +155,6 @@ echo "benchmark saved $file" >&2
 if [ ! -t 1 ]; then
     echo "$file"
 fi
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo "file=$file" >>"$GITHUB_OUTPUT"
+fi

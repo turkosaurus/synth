@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/turkosaurus/synth/main/install.sh |
 
 ### Windows
 
-[`install.ps1`](./install.ps1) does the same from PowerShell, installing to `$env:XDG_BIN_HOME`, or `%USERPROFILE%\.local\bin`[^manager]. `synth update` does not run on Windows; run the script again to update.
+[`install.ps1`](./install.ps1) does the same from PowerShell, installing to `$env:XDG_BIN_HOME`, or `%USERPROFILE%\.local\bin`[^manager].
 
 ```powershell
 irm https://raw.githubusercontent.com/turkosaurus/synth/main/install.ps1 | iex

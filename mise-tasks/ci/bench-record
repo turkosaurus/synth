@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="bench.yml: bench:record, writing file=<result> to $GITHUB_OUTPUT"
-set -euo pipefail
-
-# the saved file's path is the last line on stdout
-file=$(mise run bench:record | tail -1)
-echo "file=$file" >>"${GITHUB_OUTPUT:-/dev/stdout}"

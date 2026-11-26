@@ -1,5 +1,6 @@
-# install.ps1 end to end: install the latest release, run it, uninstall it,
-# and fail if anything is left behind. Piped to iex, as the README runs it.
+# install.ps1 end to end: install the latest release, run it, update it,
+# uninstall it, and fail if anything is left behind.
+# Piped to iex, as the README runs it.
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingInvokeExpression', '',
     Justification = 'the README pipes install.ps1 to iex')]
@@ -25,6 +26,19 @@ $version = & $exe --version
 $version
 if ($LASTEXITCODE -ne 0 -or $version -notmatch '^synth \d') {
     Fail "$exe --version failed"
+}
+
+# the newest dev build differs from the stable one installed, so update
+# replaces the running synth.exe
+$updated = & $exe update --dev
+$updated
+if ($LASTEXITCODE -ne 0 -or $updated -notmatch '^synth .* -> ') {
+    Fail "$exe update --dev failed"
+}
+$version = & $exe --version
+$version
+if ($LASTEXITCODE -ne 0 -or $version -notmatch '^synth \S+\+') {
+    Fail "$exe --version after update is not a dev build"
 }
 
 & $exe uninstall

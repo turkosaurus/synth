@@ -83,19 +83,6 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Check out
-        uses: actions/checkout@v7
-
-      - name: Install mise
-        uses: jdx/mise-action@v5
-        with:
-          install: false
-          cache: false
-
       - name: Every platform passed
-        env:
-          MISE_TASK_RUN_AUTO_INSTALL: false
-          LINUX: ${{ needs.linux.result }}
-          MACOS: ${{ needs.macos.result }}
-          WINDOWS: ${{ needs.windows.result }}
-        run: mise run ci:test-passed "linux=$LINUX" "macos=$MACOS" "windows=$WINDOWS"
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: echo "::error title=test::a platform did not pass; see its job" && exit 1

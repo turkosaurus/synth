@@ -88,6 +88,7 @@ pub fn install() -> anyhow::Result<Installed> {
 pub fn uninstall() -> anyhow::Result<PathBuf> {
     let exe = exe()?;
     remove_running(&exe).with_context(|| format!("remove {}", exe.display()))?;
+    remove_old(&exe);
     Ok(exe)
 }
 
@@ -141,14 +142,26 @@ fn set_aside(_to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+#[cfg(not(windows))]
+fn remove_old(_exe: &Path) {}
+
 /// Windows refuses to replace a running `.exe` but lets it be renamed, so
-/// the old one moves to `synth.exe.old` first. Old copies left by earlier
-/// runs, beside it or in the temp folder, are removed here once nothing
-/// runs from them; one still running stays until a later run.
+/// the old one moves to `synth.exe.old` first.
 #[cfg(windows)]
 fn set_aside(to: &Path) -> std::io::Result<()> {
-    let old = to.with_extension("exe.old");
-    let _ = fs::remove_file(&old);
+    remove_old(to);
+    match fs::rename(to, &to.with_extension("exe.old")) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
+/// Removes old copies that earlier runs set aside, beside `exe` or in the
+/// temp folder, once nothing runs from them; one still running stays until
+/// a later run.
+#[cfg(windows)]
+fn remove_old(exe: &Path) {
+    let _ = fs::remove_file(exe.with_extension("exe.old"));
     if let Ok(entries) = fs::read_dir(env::temp_dir()) {
         for entry in entries.flatten() {
             let name = entry.file_name();
@@ -157,10 +170,6 @@ fn set_aside(to: &Path) -> std::io::Result<()> {
                 let _ = fs::remove_file(entry.path());
             }
         }
-    }
-    match fs::rename(to, &old) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        other => other,
     }
 }
 
