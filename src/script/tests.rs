@@ -2045,3 +2045,57 @@ fn a_synth_name_with_no_built_in_loads_from_the_patches_folder() {
     "#;
     load_in(patch, "test", 48000, None, Some(&patches)).unwrap();
 }
+
+#[test]
+fn a_patch_error_names_its_file_without_internal_frames() {
+    let source = "local x = 1\nerror('no tuning for this key')\nreturn {}";
+    let error = load_source(source, "e.lua", 48000).err().expect("error()");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("e.lua:2: no tuning for this key"),
+        "{message}"
+    );
+    assert!(!message.contains("[string"), "{message}");
+    assert!(!message.contains("[C]"), "{message}");
+    assert!(message.contains("e.lua:2: in main chunk"), "{message}");
+}
+
+#[test]
+fn an_error_from_an_embedded_module_keeps_only_the_patch_frames() {
+    let source = r#"local synth = require("synth")
+return synth.instrument({
+	keyboard = synth.keyboard({ layout = synth.keyboard.grid({ offest = 7 }) }),
+})"#;
+    let error = load_source(source, "g.lua", 48000).err().expect("offest");
+    let message = format!("{error:#}");
+    let frames: Vec<&str> = message
+        .lines()
+        .skip_while(|line| !line.starts_with("stack traceback:"))
+        .skip(1)
+        .collect();
+    assert_eq!(frames, ["\tg.lua:3: in main chunk"], "{message}");
+}
+
+#[test]
+fn a_traceback_of_only_internal_frames_is_dropped() {
+    let error = mlua::Error::RuntimeError(
+        "boom\nstack traceback:\n\t[C]: in ?\n\t[string \"synth.osc\"]:9: in function 'osc'"
+            .to_string(),
+    );
+    assert_eq!(error::trimmed(error).to_string(), "runtime error: boom");
+}
+
+#[test]
+fn a_required_module_is_named_by_its_path() {
+    let dir = std::env::temp_dir().join(format!("synth-at-path-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("bad.lua"), "error('inner')\n").unwrap();
+    let error = load_in("return require('bad')", "song.lua", 48000, Some(&dir), None)
+        .err()
+        .expect("inner");
+    let _ = std::fs::remove_dir_all(&dir);
+    let message = format!("{error:#}");
+    let at = format!("{}:1: inner", dir.join("bad.lua").display());
+    assert!(message.contains(&at), "{message}");
+    assert!(!message.contains("[string"), "{message}");
+}
