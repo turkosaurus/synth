@@ -193,6 +193,8 @@ mod field {
     pub(super) const WAVE: &str = "wave";
     pub(super) const RATE: &str = "rate";
     pub(super) const DEPTH: &str = "depth";
+    pub(super) const DEPTH_HZ: &str = "depth_hz";
+    pub(super) const DEPTH_OCTAVES: &str = "depth_octaves";
     pub(super) const ENVELOPE: &str = "envelope";
     pub(super) const KEYBOARD: &str = "keyboard";
     pub(super) const VOICE_COUNT: &str = "voice_count";
@@ -239,6 +241,7 @@ mod field {
     pub(super) const STAMP_KIND: &str = "kind";
     pub(super) const STAMP_AT: &str = "at";
     pub(super) const CUTOFF: &str = "cutoff";
+    pub(super) const CUTOFF_MOD: &str = "cutoff_mod";
     pub(super) const RESONANCE: &str = "resonance";
     pub(super) const GAIN: &str = "gain";
 
@@ -407,11 +410,15 @@ fn load_in(
             keys,
         ),
     };
+    let (filter, filter_report) = filter
+        .map(|spec| spec.bake(sample_rate))
+        .transpose()?
+        .unzip();
     let mut patch = Patch {
         structure,
         tuning_diagnostics,
-        filter_report: filter.as_ref().map(|spec| spec.report(sample_rate)),
-        filter: filter.map(|spec| spec.filter),
+        filter_report,
+        filter,
         ..patch?
     };
     locate(&mut patch);

@@ -77,8 +77,13 @@ impl Svf {
         self.target = hz.max(MIN_CUTOFF).min(MAX_CUTOFF * self.sample_rate);
     }
 
+    /// Glide toward `hz` moved by `octaves`, clamped as `set_cutoff` is.
+    pub(crate) fn set_cutoff_octaves(&mut self, hz: f32, octaves: f32) {
+        self.set_cutoff(hz * approx::exp2(octaves));
+    }
+
     /// The cutoff in Hz as it currently stands, partway through any glide.
-    /// Only tests read it today; #49 modulation will.
+    /// Only tests read it.
     #[cfg(test)]
     pub(crate) fn cutoff(&self) -> f32 {
         self.cutoff
