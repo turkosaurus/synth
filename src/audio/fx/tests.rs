@@ -16,6 +16,19 @@ fn tan_tracks_std() {
     }
 }
 
+#[test]
+fn exp2_tracks_std() {
+    for i in -2000..=2000 {
+        let x = i as f32 / 100.0;
+        let want = x.exp2();
+        let got = approx::exp2(x);
+        assert!(
+            (got - want).abs() <= 1e-4 * want,
+            "exp2({x}) = {got}, want {want}"
+        );
+    }
+}
+
 use core::f32::consts::SQRT_2;
 
 use super::Svf;
@@ -30,6 +43,7 @@ fn lowpass(cutoff: f32, damping: f32) -> Filter {
         cutoff,
         damping,
         root: 1.0,
+        cutoff_mod: None,
     }
 }
 
@@ -39,6 +53,7 @@ fn at(kind: Kind) -> Filter {
         cutoff: 1000.0,
         damping: SQRT_2,
         root: 1.0,
+        cutoff_mod: None,
     }
 }
 

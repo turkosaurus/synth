@@ -198,14 +198,26 @@ pub(super) const SEQUENCE: Schema = Schema {
     ],
 };
 
-/// A `synth.lfo`, as its constructor fills it. `depth` is in the units of
-/// the parameter it moves; `position` is the only one, so 0 to 1.
+/// A `synth.lfo` on `position`, as its constructor and `synth.osc` fill
+/// it. `depth` is in position's units, so 0 to 1.
 pub(super) const LFO: Schema = Schema {
     what: "lfo",
     fields: &[
         field(field::WAVE, Ty::Function, Bound::Any),
         field(field::RATE, Ty::Number, Bound::AtLeast(0.0)),
         field(field::DEPTH, Ty::Number, Bound::Between(0.0, 1.0)),
+    ],
+};
+
+/// A `synth.lfo` on a frequency such as cutoff. Exactly one depth is
+/// given, which the reader checks; past the cutoff's range it clamps.
+pub(super) const LFO_FREQUENCY: Schema = Schema {
+    what: "lfo",
+    fields: &[
+        field(field::WAVE, Ty::Function, Bound::Any),
+        field(field::RATE, Ty::Number, Bound::AtLeast(0.0)),
+        optional(field::DEPTH_HZ, Ty::Number, Bound::AtLeast(0.0)),
+        optional(field::DEPTH_OCTAVES, Ty::Number, Bound::AtLeast(0.0)),
     ],
 };
 

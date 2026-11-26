@@ -1019,8 +1019,33 @@ fn lowpass_reads_into_filter() {
             cutoff: 800.0,
             damping: std::f32::consts::SQRT_2,
             root: 1.0,
+            cutoff_mod: None,
         })
     );
+}
+
+#[test]
+fn cutoff_mod_bakes_an_lfo_in_its_unit() {
+    for (depth, unit) in [
+        ("depth_hz = 300", crate::spec::Unit::Hz),
+        ("depth_octaves = 1.5", crate::spec::Unit::Octaves),
+    ] {
+        let lfo = format!("require(\"synth.lfo\")({{ rate = 0.5, {depth} }})");
+        let patch = with_filter(&format!(
+            "filter.lowpass({{ cutoff = 800, cutoff_mod = {lfo} }})"
+        ))
+        .unwrap();
+        assert!(patch.clean());
+        let sweep = patch.filter.unwrap().cutoff_mod.unwrap();
+        assert_eq!(sweep.unit, unit);
+        assert_eq!(sweep.lfo.rate, 0.5);
+        assert!(
+            [300.0, 1.5].contains(&sweep.lfo.depth),
+            "{}",
+            sweep.lfo.depth
+        );
+        assert_eq!(rising_zero(&sweep.lfo.cycle), Some(0));
+    }
 }
 
 #[test]
@@ -1737,6 +1762,31 @@ fn one_waveform_bakes_no_lfo_and_warns_about_position_mod() {
         .diagnostics
         .iter()
         .any(|d| d.message == "osc has one waveform, so `position_mod` does nothing"));
+}
+
+#[test]
+fn osc_fills_position_mod_depth_on_a_copy() {
+    let patch = load_source(
+        r#"
+        local synth = require("synth")
+        local lfo = synth.lfo({ rate = 0.5 })
+        local osc = synth.osc({
+            waveforms = { synth.wave.sine, synth.wave.saw },
+            position_mod = lfo,
+        })
+        assert(lfo.depth == nil, "osc wrote depth onto the patch's own lfo")
+        return synth.instrument({ oscillator = osc })
+        "#,
+        "patch.lua",
+        48000,
+    )
+    .unwrap();
+    let lfo = patch.timeline.instruments[0]
+        .wave()
+        .position_mod
+        .as_ref()
+        .unwrap();
+    assert_eq!(lfo.depth, 0.25);
 }
 
 #[test]
