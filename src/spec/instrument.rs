@@ -385,7 +385,43 @@ pub struct Timeline {
 
 /// Hz per MIDI note, baked from Lua so temperament lives there and every
 /// input resolves pitch the same way.
-pub type Freqs = Vec<f32>;
+///
+/// Built only through [`Freqs::new`], so every note has a pitch that is
+/// positive and finite.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Freqs([f32; 128]);
+
+/// Why a tuning table is not safe to play.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum FreqsError {
+    #[error("note {note} is {hz} Hz; must be positive and finite")]
+    Hz { note: u8, hz: f32 },
+}
+
+impl Freqs {
+    pub fn new(hz: [f32; 128]) -> Result<Self, FreqsError> {
+        let bad = hz.iter().position(|v| !(v.is_finite() && *v > 0.0));
+        if let Some(note) = bad {
+            return Err(FreqsError::Hz {
+                note: note as u8,
+                hz: hz[note],
+            });
+        }
+        Ok(Self(hz))
+    }
+
+    /// Skips every check, so tests can play what `new` refuses.
+    #[cfg(test)]
+    pub(crate) fn unchecked(hz: [f32; 128]) -> Self {
+        Self(hz)
+    }
+
+    /// `None` above note 127.
+    pub fn hz(&self, note: u8) -> Option<f32> {
+        self.0.get(usize::from(note)).copied()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -558,6 +594,22 @@ mod tests {
         )
         .err();
         assert_eq!(err, Some(InstrumentError::NoVoices));
+    }
+
+    #[test]
+    fn every_note_needs_a_positive_finite_pitch() {
+        let freqs = Freqs::new([440.0; 128]).expect("clean");
+        assert_eq!(freqs.hz(127), Some(440.0));
+        assert_eq!(freqs.hz(128), None);
+        for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            let mut hz = [440.0; 128];
+            hz[60] = bad;
+            let err = Freqs::new(hz).err();
+            assert!(
+                matches!(err, Some(FreqsError::Hz { note: 60, .. })),
+                "{err:?} for {bad}"
+            );
+        }
     }
 
     #[test]

@@ -313,7 +313,7 @@ where
 mod tests {
     use super::super::render::Feed;
     use super::*;
-    use crate::spec::{Event, Instrument, Segment, Timeline};
+    use crate::spec::{Event, Freqs, Instrument, Segment, Timeline};
 
     fn player() -> Player {
         let flat = || Segment {
@@ -329,8 +329,8 @@ mod tests {
             1,
         )
         .unwrap();
-        let mut freqs = vec![0.0; 128];
-        freqs[1] = 1.0;
+        let mut hz = [0.0; 128];
+        hz[1] = 1.0;
         let on = Event::NoteOn {
             instrument: 0,
             note: 1,
@@ -342,7 +342,7 @@ mod tests {
                 events: vec![(0, on)],
                 total_samples: 4096,
             }),
-            freqs,
+            Freqs::unchecked(hz),
             4.0,
         )
     }

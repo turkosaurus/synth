@@ -475,7 +475,7 @@ impl Player {
                 let Some(pool) = self.pools.get_mut(instrument) else {
                     return;
                 };
-                let Some(&freq) = self.freqs.get(note as usize) else {
+                let Some(freq) = self.freqs.hz(note) else {
                     return;
                 };
                 let Some(slot) = pool.slot(note) else {
@@ -926,9 +926,13 @@ mod tests {
     // a Player whose timeline is a single note-on at sample 0
     // freqs[1] = 1.0 so step is 1/4 of the table per sample at rate 4.0
     fn freqs() -> Freqs {
-        let mut freqs = vec![0.0; 128];
-        freqs[1] = 1.0;
-        freqs
+        Freqs::unchecked(hz())
+    }
+
+    fn hz() -> [f32; 128] {
+        let mut hz = [0.0; 128];
+        hz[1] = 1.0;
+        hz
     }
 
     fn live(instruments: Vec<Instrument>, events: rtrb::Consumer<Event>) -> Feed {
@@ -1466,8 +1470,9 @@ mod tests {
             events: vec![(1, on(1)), (3, off(1)), (3, on(2)), (5, off(2)), (8, on(1))],
             total_samples: 12,
         };
-        let mut freqs = freqs();
-        freqs[2] = 2.0;
+        let mut hz = hz();
+        hz[2] = 2.0;
+        let freqs = Freqs::unchecked(hz);
 
         let mut stepped = Player::new(Feed::Timeline(timeline()), freqs.clone(), 4.0);
         let expected: Vec<f32> = (0..12).map(|_| stepped.next()).collect();

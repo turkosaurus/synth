@@ -1,10 +1,10 @@
-use super::{Diagnostic, Filter, FilterReport, Keymap, Severity, Timeline};
+use super::{Diagnostic, Filter, FilterReport, Freqs, Keymap, Severity, Timeline};
 
 /// A loaded file: a playable timeline plus one report per instrument in it.
 pub struct Patch {
     pub timeline: Timeline,
     /// hz for every midi note, baked from Lua so temperament stays there
-    pub freqs: Vec<f32>,
+    pub freqs: Freqs,
     pub(crate) keymap: Keymap,
     pub bpm: f32,
     pub(crate) division: f32,

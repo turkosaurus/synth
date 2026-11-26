@@ -18,7 +18,7 @@ use ratatui::{Frame, Terminal};
 use crate::audio::Snapshot;
 use crate::input::keyboard::{Gating, Keyboard, Kind, Stroke};
 use crate::session::{Msg, Session};
-use crate::spec::{Key, TuiConfig};
+use crate::spec::{Freqs, Key, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
 
@@ -174,7 +174,7 @@ struct View<'a> {
     snap: &'a Snapshot,
     peak: &'a Meter,
     activity: &'a Activity,
-    freqs: &'a [f32],
+    freqs: &'a Freqs,
     gating: Gating,
     help: bool,
     /// the meter's floor, from `config.lua`
@@ -456,13 +456,13 @@ fn bar(label: String, value: f32, warn: f32, danger: f32) -> Gauge<'static> {
 /// because it is modal state that is easy to forget, and `fixed` gating is
 /// yellow because it means the terminal will not report key release, so note
 /// length is not the player's choice.
-fn state(keyboard: &Keyboard, freqs: &[f32], gating: Gating) -> Table<'static> {
+fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
     let dim = Style::new().fg(Color::DarkGray);
 
     let note = match keyboard.sounding() {
         // the patch's tuning defines frequency
         Some(note) => {
-            let hz = freqs.get(note as usize).copied().unwrap_or(0.0);
+            let hz = freqs.hz(note).unwrap_or(0.0);
             (
                 format!("{} ({hz:.1} Hz)", name(note)),
                 Style::new().fg(Color::Green),
