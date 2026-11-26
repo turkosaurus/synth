@@ -1,7 +1,7 @@
--- synth/wave.lua sits beside this file, but the built-in must load
+-- synth/filter.lua sits beside this file and loads in place of the built-in
 local synth = require("synth")
-local wave = require("synth.wave")
 
-assert(wave.triangle, "the built-in wave")
+assert(require("synth.filter").shadowed, "the copy beside the patch")
+assert(synth.filter.shadowed, "the root re-exports the same copy")
 
 return synth.instrument({})

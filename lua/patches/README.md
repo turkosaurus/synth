@@ -16,14 +16,16 @@ Bootstrap for the patches folder. `synth patches` creates the directory with a s
 
 `a.b` is `a/b.lua` or `a/b/init.lua`, so `require("instrument.bass")` finds `instrument/bass.lua`. Nothing resolves from the shell's working directory or the system's Lua folders.
 
+Every name, `synth` and `synth.*` included, is looked for in the patch's folder first, so a `synth/wave.lua` beside a patch replaces the built-in for that patch.
+
 ```mermaid
 flowchart TD
-    require["require(name)"] --> synth{synth or synth.*?}
-    synth -- yes --> edited{edited copy in synth/?}
+    require["require(name)"] --> song[the patch's folder]
+    song -- not found --> builtin{a built-in name?}
+    builtin -- yes --> edited{edited copy in synth/?}
     edited -- yes --> copy[the copy]
-    edited -- no --> builtin[the built-in]
-    synth -- no --> song[the patch's folder]
-    song -- not found --> patches[the patches folder]
+    edited -- no --> embedded[the built-in]
+    builtin -- no --> patches[the patches folder]
     patches -- not found --> error[error naming every file tried]
 ```
 
