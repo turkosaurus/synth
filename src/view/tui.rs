@@ -30,7 +30,7 @@ const LABEL_WIDTH: u16 = 6;
 const INPUT_WIDTH: u16 = LABEL_WIDTH + COLUMN_GAP + VALUE_WIDTH + 2;
 const COLUMN_GAP: u16 = 2;
 const SPARK_ROWS: u16 = 2;
-const STATS_ROWS: u16 = 2 + SPARK_ROWS;
+const STATS_ROWS: u16 = 3 + SPARK_ROWS;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
@@ -195,8 +195,8 @@ fn draw(frame: &mut Frame, view: &View) {
 
     let footer = vec![Line::from("(ctrl-c) quit | (?) help")];
 
-    // stats is sized to exactly what it draws: the cpu and gain rows, the
-    // two-row sparkline, and its own borders. input takes what is left, so
+    // stats is sized to exactly what it draws: the cpu, gain, and fault
+    // rows, the two-row sparkline, and its own borders. input takes what is left, so
     // the graphs stay put while the window grows.
     let [input_area, stats_area, footer_area] = Layout::vertical([
         Constraint::Min(0),
@@ -231,10 +231,11 @@ fn draw(frame: &mut Frame, view: &View) {
     let stats_inner = stats_block.inner(stats_area);
     frame.render_widget(stats_block, stats_area);
 
-    // graph, then gain, then cpu at the very bottom: region order is what
-    // stacks them, not the order the widgets are rendered in
-    let [clip_area, peak_area, load_area] = Layout::vertical([
+    // graph, then gain, then cpu, then faults at the very bottom: region
+    // order is what stacks them, not the order the widgets are rendered in
+    let [clip_area, peak_area, load_area, fault_area] = Layout::vertical([
         Constraint::Length(SPARK_ROWS),
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
@@ -277,6 +278,15 @@ fn draw(frame: &mut Frame, view: &View) {
             0.9,
         ),
         load_area,
+    );
+    // an unplugged device or a stalled callback otherwise looks like a
+    // quiet synth
+    frame.render_widget(
+        Line::from(format!(
+            "errors {}  overruns {}  dropped {}",
+            snap.errors, snap.overruns, snap.dropped
+        )),
+        fault_area,
     );
     // peak is logarithmic, so the thresholds are dB, placed on whatever
     // floor the scale has
