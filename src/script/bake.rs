@@ -2,9 +2,9 @@ use std::ops::RangeInclusive;
 
 use tracing::{debug_span, instrument};
 
-use crate::spec::{Diagnostic, DiagnosticKind, Instrument, Lfo, Report, Segment, Wavetable};
+use crate::spec::{Diagnostic, DiagnosticKind, Instrument, Lfo, Report, Segment, Unit, Wavetable};
 
-use super::{field, schema, Error};
+use super::{field, schema, structure, Error};
 
 // points per waveform cycle: enough that every note above 23.4 Hz
 // advances at least one entry per sample, small enough that 8 KB
@@ -52,6 +52,57 @@ impl mlua::FromLua for LfoSpec {
             rate: spec_entry(&table, "lfo", field::RATE, "number")?,
             depth: spec_entry(&table, "lfo", field::DEPTH, "number")?,
         })
+    }
+}
+
+/// An LFO on a frequency, such as `cutoff_mod`: its depth carries a unit.
+pub(super) struct FrequencyLfoSpec {
+    wave: mlua::Function,
+    rate: f64,
+    depth: f64,
+    unit: Unit,
+}
+
+impl mlua::FromLua for FrequencyLfoSpec {
+    fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
+        let table = spec_table(value, "lfo")?;
+        let what = match structure::made_at(&table)? {
+            Some(at) => format!("lfo made at {at}"),
+            None => "lfo".to_string(),
+        };
+        let depth = |problem| mlua::Error::external(Error::FrequencyDepth { what, problem });
+        if !table.raw_get::<mlua::Value>(field::DEPTH)?.is_nil() {
+            return Err(depth(
+                "plain `depth` has no unit on a frequency; use `depth_hz` or `depth_octaves`",
+            ));
+        }
+        schema::LFO_FREQUENCY
+            .check(&table, None)
+            .map_err(mlua::Error::external)?;
+        let hz: Option<f64> = table.get(field::DEPTH_HZ)?;
+        let octaves: Option<f64> = table.get(field::DEPTH_OCTAVES)?;
+        let (depth, unit) = match (hz, octaves) {
+            (Some(hz), None) => (hz, Unit::Hz),
+            (None, Some(octaves)) => (octaves, Unit::Octaves),
+            (Some(_), Some(_)) => {
+                return Err(depth("give `depth_hz` or `depth_octaves`, not both"))
+            }
+            (None, None) => return Err(depth("needs `depth_hz` or `depth_octaves`")),
+        };
+        Ok(Self {
+            wave: spec_entry(&table, "lfo", field::WAVE, "function")?,
+            rate: spec_entry(&table, "lfo", field::RATE, "number")?,
+            depth,
+            unit,
+        })
+    }
+}
+
+impl FrequencyLfoSpec {
+    /// The baked LFO, its depth in `unit`, and how many points clamped.
+    pub(super) fn bake(&self) -> Result<(Lfo, Unit, usize), Error> {
+        let (lfo, count) = bake_lfo(&self.wave, self.rate, self.depth)?;
+        Ok((lfo, self.unit, count))
     }
 }
 
@@ -234,22 +285,9 @@ pub(super) fn bake_instrument(
             clamped.push(count);
         }
     }
-    // the same cycle bake an oscillator gets, rotated to start from rest
-    let position_mod = match position_mod {
-        Some(lfo) => {
-            let (mut cycle, count) = bake_cycle(&lfo.wave, |source| Error::LfoWave { source })?;
-            if let Some(start) = rising_zero(&cycle) {
-                cycle.rotate_left(start);
-            }
-            let lfo = Lfo {
-                cycle,
-                rate: lfo.rate as f32,
-                depth: lfo.depth as f32,
-            };
-            Some((lfo, count))
-        }
-        None => None,
-    };
+    let position_mod = position_mod
+        .map(|lfo| bake_lfo(&lfo.wave, lfo.rate, lfo.depth))
+        .transpose()?;
     let slopes = slopes
         .iter()
         .enumerate()
@@ -318,11 +356,8 @@ pub(super) fn bake_instrument(
     ];
     // inspect first, so its warnings describe the cycle as written
     let mut report = inspect(&instrument, sample_rate, &clamped, &curves);
-    if let Some((_, count)) = position_mod.filter(|(_, count)| *count > 0) {
-        report.diagnostics.push(Diagnostic::new(
-            DiagnosticKind::Range,
-            format!("lfo wave exceeded -1.0..1.0 at {count} points and was flattened"),
-        ));
+    if let Some((_, count)) = position_mod {
+        report.diagnostics.extend(lfo_clamped(count));
     }
     for name in unused {
         report.diagnostics.push(Diagnostic::new(
@@ -361,6 +396,31 @@ fn bake_cycle(
     let phases = (0..TABLE_SIZE).map(|i| i as f64 / TABLE_SIZE as f64);
     sample(phases, -1.0..=1.0, |phase| {
         waveform.call(phase).map_err(&error)
+    })
+}
+
+// The same cycle bake an oscillator gets, rotated to start from rest.
+// Also returns how many points clamped.
+fn bake_lfo(wave: &mlua::Function, rate: f64, depth: f64) -> Result<(Lfo, usize), Error> {
+    let (mut cycle, count) = bake_cycle(wave, |source| Error::LfoWave { source })?;
+    if let Some(start) = rising_zero(&cycle) {
+        cycle.rotate_left(start);
+    }
+    let lfo = Lfo {
+        cycle,
+        rate: rate as f32,
+        depth: depth as f32,
+    };
+    Ok((lfo, count))
+}
+
+/// The warning for an LFO wave that left -1..1, if `count` points did.
+pub(super) fn lfo_clamped(count: usize) -> Option<Diagnostic> {
+    (count > 0).then(|| {
+        Diagnostic::new(
+            DiagnosticKind::Range,
+            format!("lfo wave exceeded -1.0..1.0 at {count} points and was flattened"),
+        )
     })
 }
 
