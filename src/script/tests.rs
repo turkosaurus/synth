@@ -30,14 +30,19 @@ fn segment(ms: f64) -> crate::spec::Segment {
 }
 
 fn instrument_with(wave: Vec<f32>) -> Instrument {
-    Instrument {
-        wave: wave.into(),
-        attack: segment(2.0),
-        decay: segment(1.0),
-        sustain_level: 0.7,
-        release: segment(2.0),
-        voice_count: 1,
-    }
+    released_after(wave, 2.0)
+}
+
+fn released_after(wave: Vec<f32>, release_ms: f64) -> Instrument {
+    Instrument::new(
+        wave.into(),
+        segment(2.0),
+        segment(1.0),
+        0.7,
+        segment(release_ms),
+        1,
+    )
+    .unwrap()
 }
 
 #[test]
@@ -144,7 +149,7 @@ fn a_saw_bakes_starting_from_zero_rising() {
         })
     "#;
     let patch = load_source(source, "test", 48000).unwrap();
-    let wave = patch.timeline.instruments[0].wave.frame(0);
+    let wave = patch.timeline.instruments[0].wave().frame(0);
     assert_eq!(wave[0], 0.0);
     assert!(wave[1] > 0.0);
     assert!(wave[wave.len() - 1] < 0.0);
@@ -168,8 +173,7 @@ fn flags_weak_peak() {
 fn flags_zero_release() {
     // sustain outside 0..1 is no longer a warning here: schema::ENVELOPE
     // rejects it before anything is baked
-    let mut instrument = instrument_with(wave_from(triangle, 2048));
-    instrument.release = segment(0.0);
+    let instrument = released_after(wave_from(triangle, 2048), 0.0);
     let report = inspect(&instrument, 1000, &[0], &[]);
     assert!(report
         .diagnostics
@@ -341,13 +345,13 @@ fn with_voices(voice_count: &str) -> anyhow::Result<Patch> {
 #[test]
 fn voice_count_defaults_to_four() {
     let patch = with_voices("").unwrap();
-    assert_eq!(patch.timeline.instruments[0].voice_count, 4);
+    assert_eq!(patch.timeline.instruments[0].voice_count(), 4);
 }
 
 #[test]
 fn voice_count_reaches_the_instrument() {
     let patch = with_voices("voice_count = 8").unwrap();
-    assert_eq!(patch.timeline.instruments[0].voice_count, 8);
+    assert_eq!(patch.timeline.instruments[0].voice_count(), 8);
 }
 
 #[test]
@@ -755,8 +759,8 @@ fn baked(ctor: &str, ms: u32) -> (Vec<f32>, Vec<f32>) {
     let patch = load_source(&source, "test", 1000).unwrap();
     let instrument = &patch.timeline.instruments[0];
     (
-        levels(&instrument.attack, 1000.0, 0.0, 1.0),
-        levels(&instrument.release, 1000.0, 1.0, 0.0),
+        levels(instrument.attack(), 1000.0, 0.0, 1.0),
+        levels(instrument.release(), 1000.0, 1.0, 0.0),
     )
 }
 
@@ -816,7 +820,7 @@ fn a_curve_outside_0_to_1_is_clamped_and_named() {
         })
     "#;
     let patch = load_source(source, "test", 1000).unwrap();
-    let curve = &patch.timeline.instruments[0].attack.curve;
+    let curve = &patch.timeline.instruments[0].attack().curve;
     assert!(curve.iter().all(|&along| along == 1.0), "{curve:?}");
     let report = &patch.reports[0].1;
     assert!(
@@ -839,7 +843,7 @@ fn a_zero_length_slope_is_empty() {
 #[test]
 fn bakes_the_triangle_landmarks() {
     let patch = one_instrument(10, 48000);
-    let table = &patch.timeline.instruments[0].wave;
+    let table = &patch.timeline.instruments[0].wave();
     // one waveform is a table of one frame, until wavetables add more
     assert_eq!(table.frame_count(), 1);
     let wave = table.frame(0);
@@ -869,7 +873,7 @@ fn a_stretched_curve_matches_the_curve() {
     "#;
     let rate = 96000.0;
     let patch = load_source(source, "test", rate as u32).unwrap();
-    let attack = levels(&patch.timeline.instruments[0].attack, rate, 0.0, 1.0);
+    let attack = levels(patch.timeline.instruments[0].attack(), rate, 0.0, 1.0);
     assert_eq!(attack.len(), 192_000);
     let exact = |t: f64| (1.0 - (-3.0 * t).exp()) / (1.0 - (-3.0f64).exp());
     for (i, &level) in attack.iter().enumerate() {
@@ -886,8 +890,8 @@ fn a_curve_is_baked_once_whatever_its_length_or_rate() {
     let short = one_instrument(10, 48000);
     let long = one_instrument(2000, 96000);
     let (short, long) = (
-        &short.timeline.instruments[0].attack,
-        &long.timeline.instruments[0].attack,
+        &short.timeline.instruments[0].attack(),
+        &long.timeline.instruments[0].attack(),
     );
     assert_eq!(short.curve.len(), 1025);
     assert_eq!(short.curve, long.curve);
@@ -1585,7 +1589,7 @@ fn an_osc_table_bakes_one_frame_per_wave_each_rising_from_zero() {
         48000,
     )
     .unwrap();
-    let wave = &patch.timeline.instruments[0].wave;
+    let wave = &patch.timeline.instruments[0].wave();
     assert_eq!(wave.frame_count(), 3);
     assert_eq!(patch.reports[0].1.frames, 3);
     for k in 0..3 {
@@ -1666,7 +1670,7 @@ fn one_waveform_warns_that_slopes_and_position_do_nothing() {
         48000,
     )
     .unwrap();
-    let wave = &patch.timeline.instruments[0].wave;
+    let wave = &patch.timeline.instruments[0].wave();
     assert_eq!(wave.frame_count(), 1);
     assert_eq!(wave.blend(), (0, 0, 0.0));
     let unused: Vec<&str> = patch.reports[0]
@@ -1702,7 +1706,7 @@ fn a_position_mod_bakes_an_lfo_that_starts_from_rest() {
     )
     .unwrap();
     let lfo = patch.timeline.instruments[0]
-        .wave
+        .wave()
         .position_mod
         .as_ref()
         .unwrap();
@@ -1727,7 +1731,7 @@ fn one_waveform_bakes_no_lfo_and_warns_about_position_mod() {
         48000,
     )
     .unwrap();
-    assert!(patch.timeline.instruments[0].wave.position_mod.is_none());
+    assert!(patch.timeline.instruments[0].wave().position_mod.is_none());
     assert!(patch.reports[0]
         .1
         .diagnostics

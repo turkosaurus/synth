@@ -22,14 +22,8 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Diagnose the environment, and a patch if one is given
-    Doctor {
-        /// optional patch to lint
-        path: Option<PathBuf>,
-        /// sample rate to bake at; envelope lengths depend on it
-        #[arg(long, default_value_t = 48000)]
-        rate: u32,
-    },
+    /// Diagnose the environment, config, and built-in copies
+    Doctor,
     /// Lint a patch without touching the terminal, for scripts and CI
     Check {
         /// patch to lint
@@ -137,7 +131,7 @@ fn run() -> anyhow::Result<ExitCode> {
     tracing_init()?;
     let args = Args::parse();
     match args.command {
-        Commands::Doctor { path, rate } => {
+        Commands::Doctor => {
             view::report::environment(gating());
             println!();
             // a config that does not load is reported as the error it is
@@ -147,11 +141,6 @@ fn run() -> anyhow::Result<ExitCode> {
             if let Some(patches) = &config.patch_dir {
                 println!();
                 view::report::builtins(&script::builtins::states(patches));
-            }
-            // only patch problems fail; being in tmux is a fact, not an error
-            if let Some(path) = path {
-                println!();
-                return lint(&path, rate);
             }
         }
         Commands::Check { path, rate } => return lint(&path, rate),
@@ -411,7 +400,14 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
 
 #[cfg(test)]
 mod tests {
-    use super::editor;
+    use super::{editor, Args};
+    use clap::Parser;
+
+    #[test]
+    fn doctor_takes_no_file() {
+        assert!(Args::try_parse_from(["synth", "doctor"]).is_ok());
+        assert!(Args::try_parse_from(["synth", "doctor", "patch.lua"]).is_err());
+    }
 
     fn some(value: &str) -> Option<String> {
         Some(value.to_string())

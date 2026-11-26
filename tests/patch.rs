@@ -11,7 +11,7 @@ fn example_patch_bakes_clean() {
     // by ear, so only its structural health is worth pinning here
     assert!(patch.bpm > 0.0);
     assert!(patch.step_ms > 0.0);
-    let wave = &patch.timeline.instruments[0].wave;
+    let wave = &patch.timeline.instruments[0].wave();
     assert_eq!(wave.frame_count(), 1);
     assert_eq!(wave.frame(0).len(), 2048);
     assert!(patch.reports.iter().all(|(_, r)| r.diagnostics.is_empty()));

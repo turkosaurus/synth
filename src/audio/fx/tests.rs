@@ -246,7 +246,7 @@ fn an_lfo_plays_a_lua_waveform_baked_like_an_oscillators() {
         48000,
     )
     .unwrap();
-    let cycle = patch.timeline.instruments[0].wave.frame(0);
+    let cycle = patch.timeline.instruments[0].wave().frame(0);
     // one entry per sample, so a quarter cycle in is the triangle's peak
     let mut lfo = Lfo::new(1.0, cycle.len() as f32);
     let got: Vec<f32> = (0..cycle.len()).map(|_| lfo.next(cycle)).collect();
