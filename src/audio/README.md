@@ -3,7 +3,8 @@
 | file | purpose |
 | --- | --- |
 | [`render.rs`](./render.rs) | `Player`: what the callback runs; never allocates, locks, or blocks |
-| [`device.rs`](./device.rs) | the only place `cpal` appears; opens and streams |
+| [`device.rs`](./device.rs) | the only place `cpal` is called; opens and streams |
+| [`error.rs`](./error.rs) | `Error`: why the device would not open or stream, by variant |
 | [`fx`](./fx) | per-sample processors, `core` only |
 
 ```mermaid

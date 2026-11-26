@@ -1,4 +1,3 @@
-use anyhow::Context;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -6,6 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::debug;
 
+use super::error::Error;
 use super::render::{fill, Player, Tally};
 
 /// A running output stream; audio stops when it drops. Named here so
@@ -110,24 +110,26 @@ pub struct Output {
 /// Open the default output device, asking for `buffer_frames` per callback
 /// if given. Separated from playback so every view and command negotiates
 /// the device the same way.
-pub fn open(buffer_frames: Option<u32>) -> anyhow::Result<Output> {
+pub fn open(buffer_frames: Option<u32>) -> Result<Output, Error> {
     let device = cpal::default_host()
         .default_output_device()
-        .context("no default output device")?;
-    let config = device.default_output_config()?;
-    anyhow::ensure!(
-        matches!(
-            config.sample_format(),
-            SampleFormat::F32 | SampleFormat::I16 | SampleFormat::I32
-        ),
-        "device wants {:?}; f32, i16, and i32 are wired up",
-        config.sample_format()
-    );
-    anyhow::ensure!(
-        usize::from(config.channels()) <= SCRATCH,
-        "device has {} channels; at most {SCRATCH} are wired up",
-        config.channels()
-    );
+        .ok_or(Error::NoDevice)?;
+    let config = device
+        .default_output_config()
+        .map_err(|source| Error::Config { source })?;
+    let format = config.sample_format();
+    if !matches!(
+        format,
+        SampleFormat::F32 | SampleFormat::I16 | SampleFormat::I32
+    ) {
+        return Err(Error::Format { format });
+    }
+    if usize::from(config.channels()) > SCRATCH {
+        return Err(Error::Channels {
+            channels: config.channels(),
+            max: SCRATCH,
+        });
+    }
 
     let buffer = buffer_size(buffer_frames, config.buffer_size())?;
 
@@ -150,21 +152,20 @@ pub fn open(buffer_frames: Option<u32>) -> anyhow::Result<Output> {
 fn buffer_size(
     frames: Option<u32>,
     supported: &cpal::SupportedBufferSize,
-) -> anyhow::Result<cpal::BufferSize> {
+) -> Result<cpal::BufferSize, Error> {
     let Some(frames) = frames else {
         return Ok(cpal::BufferSize::Default);
     };
     if let cpal::SupportedBufferSize::Range { min, max } = *supported {
-        anyhow::ensure!(
-            (min..=max).contains(&frames),
-            "config.lua: `buffer_frames` is {frames}; this device takes {min} to {max}"
-        );
+        if !(min..=max).contains(&frames) {
+            return Err(Error::BufferFrames { frames, min, max });
+        }
     }
     Ok(cpal::BufferSize::Fixed(frames))
 }
 
 /// Build and start a stream that drives `player`, reporting into `stats`.
-pub fn stream(output: &Output, player: Player, stats: Arc<Stats>) -> anyhow::Result<cpal::Stream> {
+pub fn stream(output: &Output, player: Player, stats: Arc<Stats>) -> Result<cpal::Stream, Error> {
     match output.config.sample_format() {
         SampleFormat::I16 => build::<i16>(output, player, stats, convert),
         SampleFormat::I32 => build::<i32>(output, player, stats, convert),
@@ -204,7 +205,7 @@ fn build<T>(
     mut player: Player,
     stats: Arc<Stats>,
     render: fn(&mut [T], usize, &mut Player) -> Tally,
-) -> anyhow::Result<cpal::Stream>
+) -> Result<cpal::Stream, Error>
 where
     T: SizedSample + 'static,
 {
@@ -256,8 +257,11 @@ where
             },
             None,
         )
-        .with_context(|| format!("opening the output stream ({:?})", output.buffer))?;
-    stream.play()?;
+        .map_err(|source| Error::Stream {
+            buffer: output.buffer,
+            source,
+        })?;
+    stream.play().map_err(|source| Error::Play { source })?;
     Ok(stream)
 }
 
@@ -338,9 +342,14 @@ mod tests {
     fn a_size_outside_the_device_range_is_named() {
         let error = buffer_size(Some(32), &RANGE).unwrap_err();
         assert!(
-            error
-                .to_string()
-                .contains("`buffer_frames` is 32; this device takes 64 to 4096"),
+            matches!(
+                error,
+                Error::BufferFrames {
+                    frames: 32,
+                    min: 64,
+                    max: 4096
+                }
+            ),
             "{error}"
         );
     }

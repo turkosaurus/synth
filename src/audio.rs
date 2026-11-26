@@ -4,10 +4,12 @@
 //! Both play [`crate::spec`] data, which `script` bakes.
 
 mod device;
+mod error;
 mod fx;
 mod render;
 
 pub use device::{open, stream, Output, Snapshot, Stats, Stream};
+pub use error::Error;
 pub use render::{Feed, Player};
 
 /// The callback's render step, for `benches/` only: a bench links the
