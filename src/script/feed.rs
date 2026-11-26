@@ -33,7 +33,7 @@ const SINGLE_NOTE: u8 = 69;
 pub(super) fn single(
     spec: InstrumentSpec,
     sample_rate: u32,
-    freqs: Vec<f32>,
+    freqs: crate::spec::Freqs,
     keymap: crate::spec::Keymap,
 ) -> anyhow::Result<Patch> {
     let (instrument, report) = bake_instrument(spec, sample_rate)?;
@@ -86,7 +86,7 @@ pub(super) fn sequence(
     specs: &mlua::Table,
     steps: &mlua::Table,
     sample_rate: u32,
-    freqs: Vec<f32>,
+    freqs: crate::spec::Freqs,
     keymap: crate::spec::Keymap,
 ) -> anyhow::Result<Patch> {
     super::schema::SEQUENCE.check(table, None)?;

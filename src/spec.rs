@@ -19,7 +19,7 @@ pub use filter::{
     CutoffMod, Filter, FilterReport, Kind, Unit, MAX_CUTOFF, MIN_CUTOFF, MIN_DAMPING,
 };
 pub use instrument::{
-    Event, Freqs, Instrument, InstrumentError, Lfo, Segment, Timeline, Wavetable,
+    Event, Freqs, FreqsError, Instrument, InstrumentError, Lfo, Segment, Timeline, Wavetable,
 };
 pub(crate) use keymap::{Key, Keymap};
 pub(crate) use patch::Node;

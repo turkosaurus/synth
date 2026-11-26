@@ -175,6 +175,9 @@ pub enum Error {
     #[error(transparent)]
     Instrument(#[from] crate::spec::InstrumentError),
 
+    #[error(transparent)]
+    Freqs(#[from] crate::spec::FreqsError),
+
     #[error("step {step} has a note but no instrument is in effect")]
     NoInstrument { step: usize },
 
