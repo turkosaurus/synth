@@ -165,14 +165,12 @@ fn resolve(user: Option<(&str, &str)>) -> Result<Config, Error> {
 /// optional here, so a user's file is checked on its own terms and names
 /// its own mistakes.
 fn table(lua: &mlua::Lua, source: &str, name: &str) -> Result<mlua::Table, Error> {
-    let returned: mlua::Value =
-        lua.load(source)
-            .set_name(name)
-            .eval()
-            .map_err(|source| Error::Run {
-                name: name.to_string(),
-                source,
-            })?;
+    let returned: mlua::Value = super::sandbox::chunk(lua, source, name)
+        .and_then(mlua::chunk::Chunk::eval)
+        .map_err(|source| Error::Run {
+            name: name.to_string(),
+            source,
+        })?;
     let mlua::Value::Table(table) = returned else {
         return Err(Error::ReturnNotATable {
             what: name.to_string(),
@@ -339,6 +337,12 @@ mod tests {
             read(Path::new("/nonexistent/synth/config.lua")).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn a_config_runs_in_the_sandbox() {
+        let config = resolve(Some(("return { queue = os and 32 or 64 }", "test"))).unwrap();
+        assert_eq!(config.queue, 64);
     }
 
     #[test]

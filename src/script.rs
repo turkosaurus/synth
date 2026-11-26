@@ -11,6 +11,7 @@ mod error;
 mod feed;
 mod filter;
 mod keymap;
+mod sandbox;
 mod schema;
 pub mod starters;
 mod structure;
@@ -74,10 +75,8 @@ fn lua_register(
                 .as_deref()
                 .and_then(|patches| builtins::edited(patches, &name));
             if let Some((path, source)) = copy {
-                let chunk = lua
-                    .load(source)
-                    .set_name(path.display().to_string())
-                    .into_function()?;
+                let chunk =
+                    sandbox::chunk(lua, source, &path.display().to_string())?.into_function()?;
                 return Ok(mlua::Value::Function(chunk));
             }
             return Ok(match MODULES.iter().find(|(module, _)| *module == name) {
@@ -102,9 +101,7 @@ fn lua_register(
             for path in [file, init] {
                 match std::fs::read_to_string(&path) {
                     Ok(source) => {
-                        let chunk = lua
-                            .load(source)
-                            .set_name(path.display().to_string())
+                        let chunk = sandbox::chunk(lua, source, &path.display().to_string())?
                             .into_function()?;
                         return Ok(mlua::Value::Function(chunk));
                     }
@@ -341,7 +338,7 @@ fn load_in(
 
     // eval to a Value first: a syntax error and a wrong return type both fail
     // this call, and they deserve different messages
-    let returned: mlua::Value = lua.load(source).set_name(name).eval()?;
+    let returned: mlua::Value = sandbox::chunk(&lua, source, name)?.eval()?;
     let table = match returned {
         mlua::Value::Table(table) => table,
         other => {
