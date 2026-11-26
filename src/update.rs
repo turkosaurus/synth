@@ -60,12 +60,13 @@ const DIGEST_PREFIX: &str = "sha256:";
 const ASSET_PREFIX: &str = "synth-";
 const ASSET_SUFFIX: &str = ".tar.gz";
 
-/// The target this binary was built for, if the release workflow builds one
-/// and `update` can replace a running binary on it.
+/// The target this binary was built for, if the release workflow builds one.
 const TARGET: Option<&str> = if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
     Some("x86_64-unknown-linux-gnu")
 } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
     Some("aarch64-apple-darwin")
+} else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+    Some("x86_64-pc-windows-msvc")
 } else {
     None
 };
@@ -86,8 +87,12 @@ pub enum Channel {
 pub enum Outcome {
     /// The installed build is already the channel's.
     Current(String),
-    /// The binary was replaced.
-    Installed { from: String, to: String },
+    /// The binary at `path` was replaced.
+    Installed {
+        from: String,
+        to: String,
+        path: PathBuf,
+    },
     /// `--dry-run`: the build was downloaded, verified, and unpacked,
     /// and would replace `path`.
     Checked { to: String, path: PathBuf },
@@ -169,9 +174,6 @@ fn pick<'a>(releases: &'a [Release], channel: &Channel) -> Option<&'a Release> {
 /// unless it is the installed one already.
 /// A dry run downloads, verifies, and unpacks it even then, and stops there.
 pub fn run(channel: &Channel, dry_run: bool) -> anyhow::Result<Outcome> {
-    if cfg!(windows) {
-        bail!("update cannot replace a running binary on Windows yet");
-    }
     let Some(target) = TARGET else {
         bail!("no release is built for this platform");
     };
@@ -209,6 +211,7 @@ pub fn run(channel: &Channel, dry_run: bool) -> anyhow::Result<Outcome> {
     Ok(Outcome::Installed {
         from: VERSION.to_string(),
         to,
+        path: exe,
     })
 }
 
