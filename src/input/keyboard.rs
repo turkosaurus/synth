@@ -73,8 +73,8 @@ pub(crate) struct Keyboard {
 }
 
 impl Keyboard {
-    /// Sized up front: a map holds at most one entry per note key, or per
-    /// pitch, so playing never grows one.
+    /// Sized up front: a map holds at most one entry per note key in the
+    /// keymap, or one per pitch up to [`PITCHES`], so playing never grows one.
     pub(crate) fn new(keymap: Keymap, gating: Gating) -> Self {
         let keys = keymap.notes.len();
         Self {
