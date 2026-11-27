@@ -2,16 +2,15 @@
 rust = { version = "1.98", components = "clippy,rustfmt" }
 yq = "4"
 lua-language-server = "3"
-# lint:lsp asks a headless Neovim for hover and completion
-neovim = "0.12"
+neovim = "0.12" # lint:lsp - hover and completion checks
 jq = "1"
 stylua = "2"
 cargo-deny = "0.20"
 shellcheck = "0.11"
 "ubi:EmbarkStudios/cargo-about" = "0.9"
-# runs benches/instructions.rs under Valgrind; must match the gungraun crate's
-# version exactly. Valgrind itself comes from the system's package manager.
-# Linux only: Valgrind is, and releases ship no macOS or Windows assets.
+# runs benches/instructions.rs under Valgrind; 
+# must match the gungraun crate's version exactly. 
+# Valgrind itself comes from the system's package manager; Linux only.
 "github:gungraun/gungraun" = { version = "0.20.0", filter_bins = "gungraun-runner", os = ["linux"] }
 
 
