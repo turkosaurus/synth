@@ -395,7 +395,9 @@ fn bake_cycle(
 ) -> Result<(Vec<f32>, usize), Error> {
     let phases = (0..TABLE_SIZE).map(|i| i as f64 / TABLE_SIZE as f64);
     sample(phases, -1.0..=1.0, |phase| {
-        waveform.call(phase).map_err(&error)
+        waveform
+            .call(phase)
+            .map_err(|source| error(super::error::trimmed(source)))
     })
 }
 

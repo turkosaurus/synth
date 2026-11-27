@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="shellcheck on every shell file task; any finding fails"
+set -euo pipefail
+
+files=()
+while IFS= read -r file; do
+  if head -1 "$file" | grep -qE '^#!.*\b(ba)?sh\b'; then
+    files+=("$file")
+  fi
+done < <(find mise-tasks -type f ! -name '*.md' | sort)
+
+if ! shellcheck "${files[@]}"; then
+  echo "::error title=lint:shell::shellcheck found problems; see above"
+  exit 1
+fi

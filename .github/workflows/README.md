@@ -3,9 +3,9 @@
 | file | runs |
 | --- | --- |
 | [`test.yml`](./test.yml) | every push to main and every PR: Linux in full, then macOS and Windows |
-| [`test-platform.yml`](./test-platform.yml) | Rust tests and clippy on one platform; called by `test.yml` |
+| [`test-platform.yml`](./test-platform.yml) | Rust tests, update tests, and clippy on one platform; called by `test.yml` |
 | [`bench.yml`](./bench.yml) | when Rust, Lua, or Cargo files change: on each merge to main and daily, committing a result to `benches/results/`; on PRs ready for review, the PR benched once, compared with main's last result in a comment, and failing on a regression; required by main's ruleset |
-| [`release.yml`](./release.yml) | a GitHub release for every push to main: stable when Cargo.toml bumps to X.Y.Z, a prerelease otherwise |
+| [`release.yml`](./release.yml) | a GitHub release for every push to main: stable when Cargo.toml bumps to X.Y.Z, a prerelease otherwise; then `install.ps1` end to end on Windows |
 
 ```mermaid
 flowchart LR

@@ -169,7 +169,7 @@ fn table(lua: &mlua::Lua, source: &str, name: &str) -> Result<mlua::Table, Error
         .and_then(mlua::chunk::Chunk::eval)
         .map_err(|source| Error::Run {
             name: name.to_string(),
-            source,
+            source: super::error::trimmed(source),
         })?;
     let mlua::Value::Table(table) = returned else {
         return Err(Error::ReturnNotATable {
