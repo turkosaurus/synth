@@ -1,0 +1,131 @@
+[run]
+time = 2026-11-27T01:14:55Z
+commit = "43c8dd1"
+version = "0.11.4"
+dirty = false
+args = ""
+rustc = "1.98.1"
+ci = true
+
+[machine]
+cpu = "AMD EPYC 7763 64-Core Processor"
+cores = 4
+os = "Linux"
+arch = "x86_64"
+
+[time.dry.1]
+mean_ns = 12298
+low_ns = 12275
+high_ns = 12331
+frames = 512
+per_frame_ns = 24.0
+
+[time.dry.8]
+mean_ns = 61232
+low_ns = 61153
+high_ns = 61323
+frames = 512
+per_frame_ns = 119.6
+
+[time.dry.32]
+mean_ns = 226866
+low_ns = 226408
+high_ns = 227463
+frames = 512
+per_frame_ns = 443.1
+
+[time.filtered.1]
+mean_ns = 15005
+low_ns = 14994
+high_ns = 15020
+frames = 512
+per_frame_ns = 29.3
+
+[time.filtered.8]
+mean_ns = 64555
+low_ns = 64410
+high_ns = 64808
+frames = 512
+per_frame_ns = 126.1
+
+[time.filtered.32]
+mean_ns = 228948
+low_ns = 228678
+high_ns = 229282
+frames = 512
+per_frame_ns = 447.2
+
+[time.live.1]
+mean_ns = 15337
+low_ns = 15324
+high_ns = 15356
+frames = 512
+per_frame_ns = 30.0
+
+[time.live.8]
+mean_ns = 64287
+low_ns = 64207
+high_ns = 64380
+frames = 512
+per_frame_ns = 125.6
+
+[time.live.32]
+mean_ns = 233289
+low_ns = 232245
+high_ns = 234484
+frames = 512
+per_frame_ns = 455.6
+
+[instructions.dry.1]
+count = 141191
+estimated_cycles = 196429
+frames = 512
+per_frame = 275.8
+
+[instructions.dry.8]
+count = 747090
+estimated_cycles = 1024576
+frames = 512
+per_frame = 1459.2
+
+[instructions.dry.32]
+count = 2823991
+estimated_cycles = 3863515
+frames = 512
+per_frame = 5515.6
+
+[instructions.filtered.1]
+count = 169863
+estimated_cycles = 234249
+frames = 512
+per_frame = 331.8
+
+[instructions.filtered.8]
+count = 775712
+estimated_cycles = 1062392
+frames = 512
+per_frame = 1515.1
+
+[instructions.filtered.32]
+count = 2852654
+estimated_cycles = 3901420
+frames = 512
+per_frame = 5571.6
+
+[instructions.live.1]
+count = 173336
+estimated_cycles = 233248
+frames = 512
+per_frame = 338.5
+
+[instructions.live.8]
+count = 779879
+estimated_cycles = 1062479
+frames = 512
+per_frame = 1523.2
+
+[instructions.live.32]
+count = 2858357
+estimated_cycles = 3903561
+frames = 512
+per_frame = 5582.7

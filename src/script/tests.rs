@@ -2095,7 +2095,7 @@ fn a_required_module_is_named_by_its_path() {
         .expect("inner");
     let _ = std::fs::remove_dir_all(&dir);
     let message = format!("{error:#}");
-    let at = format!("{}:1: inner", dir.join("bad.lua").display());
-    assert!(message.contains(&at), "{message}");
+    // Lua cuts a long temp path to `...tail`, so only the file name is fixed
+    assert!(message.contains("bad.lua:1: inner"), "{message}");
     assert!(!message.contains("[string"), "{message}");
 }
