@@ -5,6 +5,7 @@ edition = "2021"
 # the dependencies' floor; ratatui, mlua, and comfy-table need 1.88
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
+publish = false
 
 [dependencies]
 anyhow = "1.0.104"
