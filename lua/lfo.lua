@@ -22,7 +22,7 @@ local lfo = setmetatable({}, {
 	end,
 })
 
----@class synth.Lfo
+---@class (exact) synth.Lfo
 ---@field wave? synth.Waveform its shape, one cycle per period
 ---@field rate? number cycles per second
 ---@field depth? number how far either side of the parameter's own value it moves, in that parameter's units

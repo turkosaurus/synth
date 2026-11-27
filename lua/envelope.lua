@@ -17,7 +17,7 @@ local envelope = setmetatable({}, {
 	end,
 })
 
----@class synth.Envelope
+---@class (exact) synth.Envelope
 ---@field attack? number ms
 ---@field attack_curve? synth.Curve
 ---@field decay? number ms

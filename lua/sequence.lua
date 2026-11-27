@@ -16,7 +16,7 @@ local sequence = setmetatable({}, {
 })
 
 -- `note` and `instrument` stick until a later step changes them.
----@class synth.Step
+---@class (exact) synth.Step
 ---@field note? integer MIDI note, 0 to 127
 ---@field off? boolean
 ---@field instrument? string a key of the sequence's `instruments`
@@ -24,7 +24,7 @@ local sequence = setmetatable({}, {
 ---@field velocity? integer 1 to 127
 
 -- Either a flat `steps` list, or `patterns` named and arranged by `chain`.
----@class synth.SequenceOpts
+---@class (exact) synth.SequenceOpts
 ---@field bpm? number
 ---@field division? number steps per beat; 4 = sixteenths
 ---@field instrument? string the instrument steps start with
@@ -38,7 +38,7 @@ local sequence = setmetatable({}, {
 ---@field filter? synth.Filter runs on the summed output
 
 -- What Rust reads: patterns flattened into one step list.
----@class synth.Sequence
+---@class (exact) synth.Sequence
 ---@field bpm number
 ---@field division number
 ---@field instruments table<string, synth.Instrument>

@@ -1,12 +1,12 @@
 -- Optional settings for this machine, evaluated when program starts.
 
----@class synth.ConfigTui
+---@class (exact) synth.ConfigTui
 ---@field poll? number ms between redraws and key reads
 ---@field meter_hold? number ms a peak holds before it falls
 ---@field meter_fall? number ms to fall across the whole meter
 ---@field meter_floor? number dB, the quietest level the meter shows
 
----@class synth.Config
+---@class (exact) synth.Config
 ---@field buffer_frames? integer audio callback frames (0: system default)
 ---@field queue? integer buffer size: input -> audio
 ---@field custom_dir? string custom folder

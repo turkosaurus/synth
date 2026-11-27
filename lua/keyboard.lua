@@ -21,7 +21,7 @@ local keyboard = setmetatable({}, {
 -- The octave and help keys are the layout's own, so none of them falls in
 -- its note rows. Where qwerty's spot holds a letter or a dead key, a nearby
 -- symbol key stands in.
----@class synth.Template
+---@class (exact) synth.Template
 ---@field name string
 ---@field anchor string
 ---@field rows string[]
@@ -32,7 +32,7 @@ local keyboard = setmetatable({}, {
 
 -- What Rust reads as a keyboard's `layout`: `notes` maps each character to
 -- a MIDI note.
----@class synth.Layout
+---@class (exact) synth.Layout
 ---@field name string
 ---@field notes table<string, integer>
 ---@field octave_up string[]
@@ -96,7 +96,7 @@ keyboard.templates = {
 --   7 (perfect fifth):   mandolin or violin (also good for character keyboards)
 -- Note is the MIDI note of the template's anchor key, around which all others
 -- are derived.
----@class synth.Grid
+---@class (exact) synth.Grid
 ---@field template? synth.Template
 ---@field offset? integer semitones offset between rows
 ---@field note? integer MIDI note of the template's anchor key
@@ -190,7 +190,7 @@ keyboard.dvorak = keyboard.grid({ template = keyboard.templates.dvorak })
 keyboard.colemak = keyboard.grid({ template = keyboard.templates.colemak })
 
 -- `octave_up`, `octave_down`, and `help` replace the layout's.
----@class synth.Keyboard
+---@class (exact) synth.Keyboard
 ---@field layout? synth.Layout
 ---@field stop? string[] silence everything; must not be empty
 ---@field gate? number ms; note length when key release is unreported

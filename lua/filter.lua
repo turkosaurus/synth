@@ -10,7 +10,7 @@
 --
 -- Unknown fields pass through so Rust can name a misspelling.
 
----@class synth.Filter
+---@class (exact) synth.Filter
 ---@field cutoff number Hz
 ---@field resonance? number 0 (flat) to 1 (rings hard); not on shelves
 ---@field gain? number dB; only on bell and shelves

@@ -33,7 +33,7 @@ local osc = setmetatable({}, {
 
 -- n waveforms make n - 1 transitions, spaced evenly over `position` 0 to 1.
 -- With one waveform, `slopes`, `position`, and `position_mod` do nothing.
----@class synth.Osc
+---@class (exact) synth.Osc
 ---@field waveforms? synth.Waveform[] one cycle each, in order
 ---@field slopes? synth.Curve[] transition i uses slopes[(i - 1) % #slopes + 1]; none is linear
 ---@field position? number 0 to 1: where between the first and last waveform a note sounds

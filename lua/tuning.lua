@@ -5,7 +5,7 @@
 
 local tuning = {}
 
----@class synth.TuningEqual
+---@class (exact) synth.TuningEqual
 ---@field reference_hz? number Hz of the reference note
 ---@field reference_note? integer MIDI note number; 69 is A4
 ---@field tones? number notes per octave
