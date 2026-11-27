@@ -24,12 +24,10 @@ pub(crate) use latency::{Latency, Spread, Window};
 /// translates it into one of these, so the session never names that library.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Msg {
-    /// A key, and when the view read it.
+    /// A key, and when it was read.
     Key(Stroke, Instant),
-    /// Once per frame: ends every `Fixed` note whose time is up.
+    /// Once per poll: ends every `Fixed` note whose time is up.
     Tick,
-    /// The view finished drawing a frame.
-    Drawn(Instant),
 }
 
 /// What `update` asks the session to carry out, so `update` itself touches
@@ -48,10 +46,6 @@ pub(crate) struct Model {
     pub(crate) freqs: crate::spec::Freqs,
     /// Whether the help overlay is up.
     pub(crate) help: bool,
-    pub(crate) latency: Latency,
-    /// Frames per callback asked of the device; `None` left it to the
-    /// platform.
-    pub(crate) requested: Option<u32>,
 }
 
 impl Model {
@@ -82,25 +76,133 @@ impl Model {
                 self.keyboard.tick(&mut events);
                 (ControlFlow::Continue(()), Origin::Release)
             }
-            Msg::Drawn(at) => {
-                self.latency.view.push(at);
-                return ControlFlow::Continue(());
-            }
         };
         cmds.extend(events.into_iter().map(|event| Cmd::Play(event, origin)));
         flow
+    }
+
+    pub(crate) fn glance(&self) -> Glance {
+        Glance {
+            sounding: self.keyboard.sounding(),
+            last_key: self.keyboard.last_key(),
+            octave: self.keyboard.octave(),
+            reach: self.keyboard.reach(),
+            help: self.help,
+        }
+    }
+}
+
+/// The part of the model that changes while playing, copied out so a view on
+/// another thread can draw it without sharing the keyboard.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Glance {
+    pub(crate) sounding: Option<u8>,
+    pub(crate) last_key: Option<char>,
+    /// The current shift, and whether it is the one the keyboard started at.
+    pub(crate) octave: (i32, bool),
+    /// The lowest and highest shift the octave keys can reach.
+    pub(crate) reach: (i32, i32),
+    pub(crate) help: bool,
+}
+
+/// The model and the ring producers: everything a message touches.
+///
+/// `Send` and apart from the stream, so whichever thread reads input owns it
+/// and pushes each event the moment it is read.
+pub(crate) struct Input {
+    model: Model,
+    /// The ring's producer; the consumer lives in the audio callback.
+    tx: rtrb::Producer<Event>,
+    /// One stamp per event in `tx`, pushed just before it.
+    stamps: rtrb::Producer<Stamp>,
+    stats: Arc<Stats>,
+}
+
+impl Input {
+    pub(crate) fn model(&self) -> &Model {
+        &self.model
+    }
+
+    /// Apply `msg`, then carry out what it asked for; `Break` once the
+    /// player has quit.
+    pub(crate) fn update(&mut self, msg: Msg) -> ControlFlow<()> {
+        let mut cmds = Vec::new();
+        let flow = self.model.update(msg, &mut cmds);
+        for cmd in cmds {
+            self.run(cmd);
+        }
+        flow
+    }
+
+    fn run(&mut self, cmd: Cmd) {
+        match cmd {
+            // the queue is bounded; a full queue means the audio thread has
+            // stalled, and dropping an event is better than blocking input
+            Cmd::Play(event, origin) => {
+                // checked together, so a stamp is never left without its
+                // event; nothing else pushes, so room cannot shrink after
+                if self.stamps.slots() == 0 || self.tx.slots() == 0 {
+                    self.stats.record_dropped();
+                    return;
+                }
+                let pushed = Instant::now();
+                // the stamp goes first, so the callback never pops an
+                // event whose stamp is not there yet
+                if self.stamps.push(Stamp { pushed, origin }).is_err()
+                    || self.tx.push(event).is_err()
+                {
+                    self.stats.record_dropped();
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl Input {
+    /// An input over `model` whose rings nothing reads.
+    pub(crate) fn detached(model: Model) -> Self {
+        let (tx, _) = rtrb::RingBuffer::new(16);
+        let (stamps, _, _) = audio::timing(16, 1);
+        Self {
+            model,
+            tx,
+            stamps,
+            stats: Arc::new(Stats::default()),
+        }
+    }
+}
+
+/// The view's side of timing: what the callback records, folded into
+/// windows, and the view's own draw rate.
+pub(crate) struct Timing {
+    pub(crate) latency: Latency,
+    /// Frames per callback asked of the device; `None` left it to the
+    /// platform.
+    pub(crate) requested: Option<u32>,
+    records: rtrb::Consumer<Record>,
+}
+
+impl Timing {
+    /// The view finished drawing a frame at `at`.
+    pub(crate) fn drawn(&mut self, at: Instant) {
+        self.latency.view.push(at);
+    }
+
+    /// Fold in every record the callback has pushed, as of `now`.
+    pub(crate) fn drain(&mut self, now: Instant) {
+        while let Ok(record) = self.records.pop() {
+            self.latency.record(now, record);
+        }
+        self.latency.prune(now);
     }
 }
 
 /// A patch playing live on the default output device.
 pub struct Session {
-    model: Model,
+    input: Input,
+    timing: Timing,
     pub(crate) stats: Arc<Stats>,
-    /// The ring's producer; the consumer lives in the audio callback.
-    tx: rtrb::Producer<Event>,
-    /// One stamp per event in `tx`, pushed just before it.
-    stamps: rtrb::Producer<Stamp>,
-    records: rtrb::Consumer<Record>,
     /// Kept only so the stream plays until the session drops.
     _stream: audio::Stream,
 }
@@ -137,69 +239,39 @@ impl Session {
         let stream = audio::stream(&output, player, Arc::clone(&stats), Some(recorder))?;
 
         Ok(Self {
-            model: Model {
-                keyboard: Keyboard::new(patch.keymap, gating),
-                freqs,
-                help: false,
+            input: Input {
+                model: Model {
+                    keyboard: Keyboard::new(patch.keymap, gating),
+                    freqs,
+                    help: false,
+                },
+                tx,
+                stamps,
+                stats: Arc::clone(&stats),
+            },
+            timing: Timing {
                 latency: Latency::new(config.tui.latency_window),
                 requested: output.requested(),
+                records,
             },
             stats,
-            tx,
-            stamps,
-            records,
             _stream: stream,
         })
     }
 
     pub(crate) fn model(&self) -> &Model {
-        &self.model
+        self.input.model()
     }
 
-    /// Apply `msg`, then carry out what it asked for; `Break` once the
-    /// player has quit.
-    pub(crate) fn update(&mut self, msg: Msg) -> ControlFlow<()> {
-        let mut cmds = Vec::new();
-        let flow = self.model.update(msg, &mut cmds);
-        for cmd in cmds {
-            self.run(cmd);
-        }
-        if msg == Msg::Tick {
-            let now = Instant::now();
-            while let Ok(record) = self.records.pop() {
-                self.model.latency.record(now, record);
-            }
-            self.model.latency.prune(now);
-        }
-        flow
-    }
-
-    fn run(&mut self, cmd: Cmd) {
-        match cmd {
-            // the queue is bounded; a full queue means the audio thread has
-            // stalled, and dropping an event is better than blocking the UI
-            Cmd::Play(event, origin) => {
-                // checked together, so a stamp is never left without its
-                // event; nothing else pushes, so room cannot shrink after
-                if self.stamps.slots() == 0 || self.tx.slots() == 0 {
-                    self.stats.record_dropped();
-                    return;
-                }
-                let pushed = Instant::now();
-                // the stamp goes first, so the callback never pops an
-                // event whose stamp is not there yet
-                if self.stamps.push(Stamp { pushed, origin }).is_err()
-                    || self.tx.push(event).is_err()
-                {
-                    self.stats.record_dropped();
-                }
-            }
-        }
+    /// The input side, lent to the thread that reads keys, beside the timing
+    /// and stats the view keeps.
+    pub(crate) fn split(&mut self) -> (&mut Input, &mut Timing, &Stats) {
+        (&mut self.input, &mut self.timing, &self.stats)
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -207,7 +279,7 @@ mod tests {
     use crate::input::keyboard::Kind;
     use crate::spec::{Key, Keymap};
 
-    fn model() -> Model {
+    pub(crate) fn model() -> Model {
         let keymap = Keymap {
             notes: HashMap::from([('a', 60)]),
             name: None,
@@ -227,8 +299,6 @@ mod tests {
             keyboard: Keyboard::new(keymap, Gating::Held),
             freqs: crate::spec::Freqs::unchecked([0.0; 128]),
             help: false,
-            latency: Latency::new(Duration::from_secs(5)),
-            requested: None,
         }
     }
 
@@ -276,10 +346,15 @@ mod tests {
     }
 
     #[test]
-    fn a_drawn_frame_is_counted_and_plays_nothing() {
-        let mut model = model();
-        assert_eq!(send(&mut model, Msg::Drawn(Instant::now())), vec![]);
-        assert_eq!(model.latency.view.per_second(), 1);
+    fn a_drawn_frame_is_counted() {
+        let (_, _, records) = audio::timing(1, 1);
+        let mut timing = Timing {
+            latency: Latency::new(Duration::from_secs(5)),
+            requested: None,
+            records,
+        };
+        timing.drawn(Instant::now());
+        assert_eq!(timing.latency.view.per_second(), 1);
     }
 
     #[test]
@@ -299,5 +374,24 @@ mod tests {
         assert!(quits(&mut model, key('c', true)));
         send(&mut model, key('?', false));
         assert!(quits(&mut model, key('c', true)));
+    }
+
+    #[test]
+    fn input_can_be_owned_by_another_thread() {
+        fn send<T: Send>() {}
+        send::<Input>();
+    }
+
+    #[test]
+    fn the_glance_shows_what_a_key_changed() {
+        let mut model = model();
+        let before = model.glance();
+        send(&mut model, key('a', false));
+        let after = model.glance();
+        assert_eq!(after.sounding, Some(60));
+        assert_eq!(after.last_key, Some('a'));
+        assert_ne!(before, after);
+        send(&mut model, key('?', false));
+        assert!(model.glance().help);
     }
 }

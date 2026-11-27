@@ -1,6 +1,6 @@
-//! Stage timing for live events. The UI pushes a [`Stamp`] into its own
-//! ring just before each event, and the callback pops one stamp per live
-//! event the player applied, so the two rings stay paired in order. Kept
+//! Stage timing for live events. The input side pushes a [`Stamp`] into
+//! its own ring just before each event, and the callback pops one stamp per
+//! live event the player applied, so the two rings stay paired in order. Kept
 //! out of `render` so the player and `Event` carry no wall-clock time.
 
 use std::time::{Duration, Instant};
@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 /// What put a live event in the ring.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Origin {
-    /// a key the view read at `read`
+    /// a key read at `read`
     Key { read: Instant },
     /// a `Fixed` note-off from the keyboard's tick, which no key caused,
     /// so it is paired but not recorded

@@ -1,6 +1,8 @@
 //! Drives a `Session` and draws it.
 
 use std::io::Stdout;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -15,10 +17,10 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 
-use crate::audio::Snapshot;
-use crate::input::keyboard::{Gating, Keyboard, Kind, Stroke};
-use crate::session::{Latency, Msg, Session, Spread, Window};
-use crate::spec::{Budget, Freqs, Key, TuiConfig};
+use crate::audio::{Snapshot, Stats};
+use crate::input::keyboard::{Gating, Kind, Stroke};
+use crate::session::{Glance, Input, Latency, Msg, Session, Spread, Timing, Window};
+use crate::spec::{Budget, Freqs, Key, Keymap, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
 
@@ -43,6 +45,7 @@ const LATENCY_BAR: u16 = 40;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
+    crate::terminal::require()?;
     let gating = session.model().keyboard.gating();
 
     // built before enter(), so a failure here needs no teardown.
@@ -52,13 +55,124 @@ pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
 
     // restores the terminal on every way out of here, a panic included
     let _restore = crate::terminal::enter(gating)?;
-    drive(&mut terminal, session, gating, config)
+
+    // the view's own copies of what never changes while playing,
+    // so the draw loop shares nothing with the input thread but the channel
+    let model = session.model();
+    let still = Still {
+        keymap: model.keyboard.keymap().clone(),
+        freqs: model.freqs.clone(),
+        gating,
+        glance: model.glance(),
+    };
+    let (input, timing, stats) = session.split();
+
+    // a channel rather than a lock on the keyboard: a send never waits, so a
+    // key is never held up behind a draw, and the view only ever needs the
+    // latest copy
+    let (tx, rx) = mpsc::channel();
+    let done = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let reader = std::thread::Builder::new()
+            .name("input".into())
+            .spawn_scoped(scope, || read(input, &mut Console, config.poll, &done, tx))
+            .context("spawning input thread")?;
+        let drawn = drive(&mut terminal, stats, timing, &still, rx, config);
+        done.store(true, Ordering::Relaxed);
+        let read = reader
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        drawn.and(read)
+    })
 }
 
+/// Where the input thread's keys come from.
+trait Source {
+    /// Wait up to `wait` for a key, then append every key already queued,
+    /// each with when it was read. An error ends the session: a terminal
+    /// that failed once is not retried.
+    fn keys(&mut self, wait: Duration, out: &mut Vec<(KeyEvent, Instant)>) -> anyhow::Result<()>;
+}
+
+/// The terminal, through crossterm.
+struct Console;
+
+impl Source for Console {
+    fn keys(&mut self, wait: Duration, out: &mut Vec<(KeyEvent, Instant)>) -> anyhow::Result<()> {
+        if !event::poll(wait).context("polling terminal")? {
+            return Ok(());
+        }
+        while event::poll(Duration::ZERO).context("polling terminal")? {
+            if let event::Event::Key(key) = event::read().context("reading key")? {
+                out.push((key, Instant::now()));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Read keys as they arrive and push their notes to the ring at once, then
+/// send the view a fresh `Glance` whenever one changed.
+fn read(
+    input: &mut Input,
+    source: &mut impl Source,
+    poll: Duration,
+    done: &AtomicBool,
+    tx: mpsc::Sender<Glance>,
+) -> anyhow::Result<()> {
+    let mut shown = input.model().glance();
+    let mut keys = Vec::new();
+    loop {
+        // SIGTERM and SIGHUP only set a flag; leaving here restores the
+        // terminal through the same path as the quit key
+        if crate::terminal::interrupted() || done.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
+        // poll bounds the wait so Fixed note-offs still fall due on time
+        keys.clear();
+        source.keys(poll, &mut keys)?;
+        for &(key, read) in &keys {
+            let Some(stroke) = stroke(key) else {
+                continue;
+            };
+            if input.update(Msg::Key(stroke, read)).is_break() {
+                return Ok(());
+            }
+        }
+
+        if input.update(Msg::Tick).is_break() {
+            return Ok(());
+        }
+
+        let glance = input.model().glance();
+        if glance != shown {
+            shown = glance;
+            // the view has gone, so there is no one left to play for
+            if tx.send(glance).is_err() {
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// What the view draws from that stays put while playing.
+struct Still {
+    keymap: Keymap,
+    freqs: Freqs,
+    gating: Gating,
+    /// before the first key
+    glance: Glance,
+}
+
+/// Redraw every `poll`, and at once when the input thread reports a change,
+/// until it stops.
 fn drive(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    session: &mut Session,
-    gating: Gating,
+    stats: &Stats,
+    timing: &mut Timing,
+    still: &Still,
+    rx: mpsc::Receiver<Glance>,
     config: &TuiConfig,
 ) -> anyhow::Result<()> {
     // ballistics are the view's, not the device's: the callback has no
@@ -66,17 +180,12 @@ fn drive(
     let mut peak = Meter::new(config.meter_hold, config.meter_fall);
     let mut activity = Activity::default();
     let mut last = Instant::now();
+    let mut glance = still.glance;
 
     loop {
-        // SIGTERM and SIGHUP only set a flag; leaving here restores the
-        // terminal through the same path as the quit key
-        if crate::terminal::interrupted() {
-            return Ok(());
-        }
-
         // one snapshot() per frame gauges reset,
         // so widgets must share one capture
-        let snap = session.stats.snapshot();
+        let snap = stats.snapshot();
 
         let now = Instant::now();
         let dt = now - last;
@@ -84,46 +193,34 @@ fn drive(
         peak.update(meter::scale(snap.peak, config.meter_floor_db), dt);
         activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clipped);
 
-        let model = session.model();
         // spread sorts each window, so it is taken before the draw it
         // would otherwise be counted in
-        let latency = stages(&model.latency, config);
-        let fps = model.latency.view.per_second();
+        timing.drain(now);
+        let latency = stages(&timing.latency, config);
+        let fps = timing.latency.view.per_second();
         let view = View {
-            keyboard: &model.keyboard,
+            keymap: &still.keymap,
+            glance: &glance,
             snap: &snap,
             peak: &peak,
             activity: &activity,
-            freqs: &model.freqs,
-            gating,
-            help: model.help,
+            freqs: &still.freqs,
+            gating: still.gating,
             floor_db: config.meter_floor_db,
             latency: &latency,
             fps,
-            requested: model.requested,
+            requested: timing.requested,
             config,
         };
         terminal.draw(|frame| draw(frame, &view))?;
-        let _ = session.update(Msg::Drawn(Instant::now()));
+        timing.drawn(Instant::now());
 
-        if event::poll(config.poll)? {
-            // drain immediately
-            while event::poll(Duration::ZERO)? {
-                let event::Event::Key(key) = event::read()? else {
-                    continue;
-                };
-                let read = Instant::now();
-                let Some(stroke) = stroke(key) else {
-                    continue;
-                };
-                if session.update(Msg::Key(stroke, read)).is_break() {
-                    return Ok(());
-                }
-            }
-        }
-
-        if session.update(Msg::Tick).is_break() {
-            return Ok(());
+        match rx.recv_timeout(config.poll) {
+            // only the latest copy matters
+            Ok(next) => glance = rx.try_iter().last().unwrap_or(next),
+            Err(RecvTimeoutError::Timeout) => {}
+            // quit, an interrupt, or an input error, which the caller reports
+            Err(RecvTimeoutError::Disconnected) => return Ok(()),
         }
     }
 }
@@ -189,13 +286,13 @@ fn code(key: Key) -> KeyCode {
 /// and whatever a second screen needs will land here too.
 #[derive(Clone, Copy)]
 struct View<'a> {
-    keyboard: &'a Keyboard,
+    keymap: &'a Keymap,
+    glance: &'a Glance,
     snap: &'a Snapshot,
     peak: &'a Meter,
     activity: &'a Activity,
     freqs: &'a Freqs,
     gating: Gating,
-    help: bool,
     /// the meter's floor, from `config.lua`
     floor_db: f32,
     latency: &'a [Stage],
@@ -283,13 +380,13 @@ fn status(
 
 fn draw(frame: &mut Frame, view: &View) {
     let View {
-        keyboard,
+        keymap,
+        glance,
         snap,
         peak,
         activity,
         freqs,
         gating,
-        help,
         floor_db,
         latency,
         fps,
@@ -328,7 +425,7 @@ fn draw(frame: &mut Frame, view: &View) {
     let input_block = pane().title(" input ");
     let input_inner = input_block.inner(input_area);
     frame.render_widget(input_block, input_area);
-    frame.render_widget(state(keyboard, freqs, gating), input_inner);
+    frame.render_widget(state(keymap, glance, freqs, gating), input_inner);
     // bound so its inner area can be split: the gauges and the sparkline sit
     // inside one border rather than carrying one each
     let stats_block = pane().title(" stats ");
@@ -431,8 +528,8 @@ fn draw(frame: &mut Frame, view: &View) {
     );
 
     // last, so it lands on top of everything already drawn
-    if help {
-        overlay(frame, keyboard);
+    if glance.help {
+        overlay(frame, keymap);
     }
 }
 
@@ -449,7 +546,7 @@ fn pane() -> Block<'static> {
 }
 
 /// The keymap, over the top of whatever is behind it.
-fn overlay(frame: &mut Frame, keyboard: &Keyboard) {
+fn overlay(frame: &mut Frame, keymap: &Keymap) {
     let [area] = Layout::horizontal([Constraint::Length(34)])
         .flex(Flex::Center)
         .areas(frame.area());
@@ -471,7 +568,7 @@ fn overlay(frame: &mut Frame, keyboard: &Keyboard) {
         .style(Style::new().fg(POPUP_INK).bg(POPUP_FILL))
         .title(Line::from(" keymap ").style(Style::new().add_modifier(Modifier::BOLD)))
         .title_bottom(" (/) close ");
-    frame.render_widget(bindings(keyboard).block(block), area);
+    frame.render_widget(bindings(keymap).block(block), area);
 }
 
 /// Darken the band one cell down and right of `area`, keeping the symbols
@@ -498,8 +595,7 @@ fn shadow(frame: &mut Frame, area: Rect) {
 /// A table rather than padded strings: the two columns are measured from
 /// the content, and `Flex::Center` sits the pair in the middle of whatever
 /// width the popup has instead of pinning them left.
-fn bindings(keyboard: &Keyboard) -> Table<'static> {
-    let keymap = keyboard.keymap();
+fn bindings(keymap: &Keymap) -> Table<'static> {
     let keys = |keys: &[Key]| {
         keys.iter()
             .map(|&key| code(key).to_string())
@@ -564,10 +660,10 @@ fn health(value: f32, warn: f32, danger: f32) -> Color {
 /// because it is modal state that is easy to forget, and `fixed` gating is
 /// yellow because it means the terminal will not report key release, so note
 /// length is not the player's choice.
-fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
+fn state(keymap: &Keymap, glance: &Glance, freqs: &Freqs, gating: Gating) -> Table<'static> {
     let dim = Style::new().fg(Color::DarkGray);
 
-    let note = match keyboard.sounding() {
+    let note = match glance.sounding {
         // the patch's tuning defines frequency
         Some(note) => {
             let hz = freqs.hz(note).unwrap_or(0.0);
@@ -579,8 +675,8 @@ fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
         None => ("—".to_string(), dim),
     };
 
-    let (octave, at_start) = keyboard.octave();
-    let (low, high) = keyboard.reach();
+    let (octave, at_start) = glance.octave;
+    let (low, high) = glance.reach;
     let octave = (
         format!("{octave:+}  ({low:+}..{high:+})"),
         // dim at the start, so the row lights up only once it has moved
@@ -594,17 +690,16 @@ fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
     let gating = match gating {
         Gating::Held => ("gated".to_string(), dim),
         Gating::Fixed => (
-            format!("{}ms", keyboard.keymap().gate.as_millis()),
+            format!("{}ms", keymap.gate.as_millis()),
             Style::new().fg(Color::Yellow),
         ),
     };
 
-    let char = match keyboard.last_key() {
+    let char = match glance.last_key {
         Some(ch) => (ch.to_string(), Style::new().fg(Color::Reset)),
         None => ("—".to_string(), dim),
     };
 
-    let keymap = keyboard.keymap();
     let layout = match keymap.name.as_deref() {
         Some(name) => (name.to_string(), Style::new().fg(Color::Reset)),
         // a patch supplying its own notes without a name
@@ -834,6 +929,46 @@ mod tests {
         assert_eq!(style(29), Style::new().fg(Color::Yellow));
         assert_eq!(style(24), Style::new().fg(Color::Yellow));
         assert_eq!(style(23), Style::new().fg(Color::Red));
+    }
+
+    /// Hands out each scripted result in turn, then fails.
+    struct Script(Vec<anyhow::Result<Vec<KeyEvent>>>);
+
+    impl Source for Script {
+        fn keys(&mut self, _: Duration, out: &mut Vec<(KeyEvent, Instant)>) -> anyhow::Result<()> {
+            if self.0.is_empty() {
+                anyhow::bail!("script ran out");
+            }
+            let keys = self.0.remove(0)?;
+            out.extend(keys.into_iter().map(|key| (key, Instant::now())));
+            Ok(())
+        }
+    }
+
+    fn reads(script: Script) -> anyhow::Result<()> {
+        let mut input = Input::detached(crate::session::tests::model());
+        let (tx, _rx) = mpsc::channel();
+        let mut script = script;
+        read(
+            &mut input,
+            &mut script,
+            Duration::ZERO,
+            &AtomicBool::new(false),
+            tx,
+        )
+    }
+
+    #[test]
+    fn an_input_error_ends_the_read_loop() {
+        let script = Script(vec![Ok(vec![]), Err(anyhow::anyhow!("eof"))]);
+        let err = reads(script).unwrap_err();
+        assert_eq!(err.to_string(), "eof");
+    }
+
+    #[test]
+    fn ctrl_c_ends_the_read_loop() {
+        let quit = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(reads(Script(vec![Ok(vec![quit])])).is_ok());
     }
 
     #[test]
