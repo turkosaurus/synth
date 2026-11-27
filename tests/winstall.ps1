@@ -41,6 +41,19 @@ if ($LASTEXITCODE -ne 0 -or $version -notmatch '^synth \S+\+') {
     Fail "$exe --version after update is not a dev build"
 }
 
+# the dev build may predate this release, so return to it: uninstall runs
+# the release's own code, and the dev synth.exe is set aside in turn
+$updated = & $exe update
+$updated
+if ($LASTEXITCODE -ne 0 -or $updated -notmatch '^synth .* -> ') {
+    Fail "$exe update back to stable failed"
+}
+$version = & $exe --version
+$version
+if ($LASTEXITCODE -ne 0 -or $version -notmatch '^synth [^+\s]+$') {
+    Fail "$exe --version after update back is not a stable build"
+}
+
 & $exe uninstall
 if ($LASTEXITCODE -ne 0) {
     Fail "$exe uninstall exited with $LASTEXITCODE"
