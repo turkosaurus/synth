@@ -17,6 +17,8 @@ pub mod starters;
 mod structure;
 
 use crate::spec::{Diagnostic, DiagnosticKind, Freqs, Patch};
+#[cfg(test)]
+pub(crate) use config::defaults as config_defaults;
 pub use config::{config, config_path, log_path, template as config_template};
 pub use error::Error;
 use feed::{bare, sequence, SINGLE};
@@ -249,6 +251,18 @@ mod field {
     pub(super) const METER_HOLD: &str = "meter_hold";
     pub(super) const METER_FALL: &str = "meter_fall";
     pub(super) const METER_FLOOR: &str = "meter_floor";
+    pub(super) const METER_LATENCY: &str = "meter_latency";
+    pub(super) const METER_FPS: &str = "meter_fps";
+    pub(super) const WINDOW: &str = "window";
+    pub(super) const RECORDS: &str = "records";
+    pub(super) const FLOOR: &str = "floor";
+    pub(super) const CEIL: &str = "ceil";
+    pub(super) const INPUT: &str = "input";
+    pub(super) const RENDER: &str = "render";
+    pub(super) const OUTPUT: &str = "output";
+    pub(super) const TOTAL: &str = "total";
+    pub(super) const WARN: &str = "warn";
+    pub(super) const DANGER: &str = "danger";
     pub(super) const LOADERS: &str = "loaders";
     pub(super) const CPATH: &str = "cpath";
     pub(super) const LOADED: &str = "loaded";

@@ -9,7 +9,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Flex, Layout, Rect, Spacing};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::merge::MergeStrategy;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Cell, Clear, Gauge, Paragraph, RenderDirection, Row, Sparkline, SparklineBar, Table,
 };
@@ -17,8 +17,8 @@ use ratatui::{Frame, Terminal};
 
 use crate::audio::Snapshot;
 use crate::input::keyboard::{Gating, Keyboard, Kind, Stroke};
-use crate::session::{Msg, Session};
-use crate::spec::{Freqs, Key, TuiConfig};
+use crate::session::{Latency, Msg, Session, Spread, Window};
+use crate::spec::{Budget, Freqs, Key, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
 
@@ -30,7 +30,16 @@ const LABEL_WIDTH: u16 = 6;
 const INPUT_WIDTH: u16 = LABEL_WIDTH + COLUMN_GAP + VALUE_WIDTH + 2;
 const COLUMN_GAP: u16 = 2;
 const SPARK_ROWS: u16 = 2;
-const STATS_ROWS: u16 = 3 + SPARK_ROWS;
+const METER_ROWS: u16 = 3 + SPARK_ROWS;
+/// the header and four stages
+const LATENCY_ROWS: u16 = 5;
+const STATS_ROWS: u16 = METER_ROWS + LATENCY_ROWS;
+const STAGE_WIDTH: u16 = 7;
+const NUMBER_WIDTH: u16 = 7;
+/// Below this the bar keeps only the p99 column; below the next, only
+/// numbers.
+const LATENCY_FULL: u16 = 60;
+const LATENCY_BAR: u16 = 40;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
@@ -76,6 +85,10 @@ fn drive(
         activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clipped);
 
         let model = session.model();
+        // spread sorts each window, so it is taken before the draw it
+        // would otherwise be counted in
+        let latency = stages(&model.latency, config);
+        let fps = model.latency.view.per_second();
         let view = View {
             keyboard: &model.keyboard,
             snap: &snap,
@@ -85,8 +98,13 @@ fn drive(
             gating,
             help: model.help,
             floor_db: config.meter_floor_db,
+            latency: &latency,
+            fps,
+            requested: model.requested,
+            config,
         };
         terminal.draw(|frame| draw(frame, &view))?;
+        let _ = session.update(Msg::Drawn(Instant::now()));
 
         if event::poll(config.poll)? {
             // drain immediately
@@ -94,10 +112,11 @@ fn drive(
                 let event::Event::Key(key) = event::read()? else {
                     continue;
                 };
+                let read = Instant::now();
                 let Some(stroke) = stroke(key) else {
                     continue;
                 };
-                if session.update(Msg::Key(stroke)).is_break() {
+                if session.update(Msg::Key(stroke, read)).is_break() {
                     return Ok(());
                 }
             }
@@ -179,6 +198,87 @@ struct View<'a> {
     help: bool,
     /// the meter's floor, from `config.lua`
     floor_db: f32,
+    latency: &'a [Stage],
+    /// frames drawn in the last second
+    fps: usize,
+    /// frames per callback asked of the device; `None` left it to the
+    /// platform
+    requested: Option<u32>,
+    config: &'a TuiConfig,
+}
+
+/// One latency row: a stage, its spread, and its budget.
+struct Stage {
+    name: &'static str,
+    spread: Option<Spread<Duration>>,
+    budget: Budget,
+}
+
+/// The stages in signal order, then their per-key total.
+fn stages(latency: &Latency, config: &TuiConfig) -> Vec<Stage> {
+    let stage = |name, window: &Window<Duration>, budget| Stage {
+        name,
+        spread: window.spread(),
+        budget,
+    };
+    vec![
+        stage("input", &latency.input, config.input_budget),
+        stage("render", &latency.render, config.render_budget),
+        stage("output", &latency.output, config.output_budget),
+        stage("total", &latency.total, config.total_budget),
+    ]
+}
+
+/// The buffer the device gave, and whether it differs from the one asked
+/// for. `got` is 0 before the first callback.
+fn buffer(requested: Option<u32>, got: u32) -> (String, bool) {
+    let shown = match got {
+        0 => "—".to_string(),
+        frames => frames.to_string(),
+    };
+    match requested {
+        None => (format!("buffer {shown} (default)"), false),
+        Some(asked) if got == 0 || got == asked => (format!("buffer {asked}"), false),
+        Some(asked) => (format!("buffer {shown} (asked {asked})"), true),
+    }
+}
+
+fn fps_style(fps: usize, config: &TuiConfig) -> Style {
+    match fps {
+        fps if (fps as f32) < config.fps.danger => Style::new().fg(Color::Red),
+        fps if (fps as f32) < config.fps.warn => Style::new().fg(Color::Yellow),
+        _ => Style::new(),
+    }
+}
+
+/// The one status line: fault counters, the buffer, and the view's rate.
+/// An unplugged device or a stalled callback otherwise looks like a quiet
+/// synth, so each counter takes colour once it moves.
+fn status(
+    snap: &Snapshot,
+    requested: Option<u32>,
+    fps: usize,
+    config: &TuiConfig,
+) -> Line<'static> {
+    let count = |name: &str, n: u64, colour: Color| {
+        let style = match n {
+            0 => Style::new(),
+            _ => Style::new().fg(colour),
+        };
+        Span::styled(format!("{name} {n}  "), style)
+    };
+    let (buffer, differs) = buffer(requested, snap.buffer_frames);
+    let buffer_style = match differs {
+        true => Style::new().fg(Color::Yellow),
+        false => Style::new(),
+    };
+    Line::from(vec![
+        count("errors", snap.errors, Color::Red),
+        count("overruns", snap.overruns, Color::Red),
+        count("dropped", snap.dropped, Color::Yellow),
+        Span::styled(buffer, buffer_style),
+        Span::styled(format!("  view {fps} fps"), fps_style(fps, config)),
+    ])
 }
 
 fn draw(frame: &mut Frame, view: &View) {
@@ -191,12 +291,16 @@ fn draw(frame: &mut Frame, view: &View) {
         gating,
         help,
         floor_db,
+        latency,
+        fps,
+        requested,
+        config,
     } = *view;
 
     let footer = vec![Line::from("(ctrl-c) quit | (?) help")];
 
-    // stats is sized to exactly what it draws: the cpu, gain, and fault
-    // rows, the two-row sparkline, and its own borders. input takes what is left, so
+    // stats is sized to exactly what it draws: the taller of the meters and
+    // the latency table, and its own borders. input takes what is left, so
     // the graphs stay put while the window grows.
     let [input_area, stats_area, footer_area] = Layout::vertical([
         Constraint::Min(0),
@@ -231,15 +335,23 @@ fn draw(frame: &mut Frame, view: &View) {
     let stats_inner = stats_block.inner(stats_area);
     frame.render_widget(stats_block, stats_area);
 
-    // graph, then gain, then cpu, then faults at the very bottom: region
-    // order is what stacks them, not the order the widgets are rendered in
-    let [clip_area, peak_area, load_area, fault_area] = Layout::vertical([
+    // latency, then graph, then gain, then cpu, then status at the very
+    // bottom: region order is what stacks them, not the order the widgets
+    // are rendered in
+    let [latency_area, clip_area, peak_area, load_area, status_area] = Layout::vertical([
+        Constraint::Length(LATENCY_ROWS),
         Constraint::Length(SPARK_ROWS),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
     .areas(stats_inner);
+    let scale = Scale {
+        floor_ms: config.latency_floor_ms,
+        ceil_ms: config.latency_ceil_ms,
+    };
+    latency_rows(frame, latency_area, latency, scale);
+    frame.render_widget(status(snap, requested, fps, config), status_area);
 
     frame.render_widget(
         Sparkline::default()
@@ -278,15 +390,6 @@ fn draw(frame: &mut Frame, view: &View) {
             0.9,
         ),
         load_area,
-    );
-    // an unplugged device or a stalled callback otherwise looks like a
-    // quiet synth
-    frame.render_widget(
-        Line::from(format!(
-            "errors {}  overruns {}  dropped {}",
-            snap.errors, snap.overruns, snap.dropped
-        )),
-        fault_area,
     );
     // peak is logarithmic, so the thresholds are dB, placed on whatever
     // floor the scale has
@@ -434,11 +537,7 @@ fn bindings(keyboard: &Keyboard) -> Table<'static> {
 /// bar is clamped while the caller's label keeps the true figure: an
 /// excursion reads past full instead of disappearing.
 fn bar(label: String, value: f32, warn: f32, danger: f32) -> Gauge<'static> {
-    let colour = match value {
-        value if value < warn => Color::Green,
-        value if value < danger => Color::Yellow,
-        _ => Color::Red,
-    };
+    let colour = health(value, warn, danger);
     Gauge::default()
         .label(label)
         // fg fills, bg is the empty track; one style covers both
@@ -447,6 +546,15 @@ fn bar(label: String, value: f32, warn: f32, danger: f32) -> Gauge<'static> {
         // rather than rounding away to an empty bar
         .use_unicode(true)
         .ratio(value.clamp(0.0, 1.0) as f64)
+}
+
+/// Green, then yellow at `warn`, then red at `danger`.
+fn health(value: f32, warn: f32, danger: f32) -> Color {
+    match value {
+        value if value < warn => Color::Green,
+        value if value < danger => Color::Yellow,
+        _ => Color::Red,
+    }
 }
 
 /// Live input state as a centred table.
@@ -524,6 +632,145 @@ fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
     .column_spacing(COLUMN_GAP)
 }
 
+/// A number column's header, and the value it shows.
+type Column = (&'static str, fn(&Spread<Duration>) -> Duration);
+
+/// Which number columns a latency row shows, and whether it has a bar,
+/// for the width it has.
+fn latency_columns(width: u16) -> (&'static [Column], bool) {
+    const ALL: [Column; 3] = [("p50", |s| s.p50), ("p99", |s| s.p99), ("max", |s| s.max)];
+    const P99: [Column; 1] = [("p99", |s| s.p99)];
+    match width {
+        width if width >= LATENCY_FULL => (&ALL, true),
+        width if width >= LATENCY_BAR => (&P99, true),
+        _ => (&ALL, false),
+    }
+}
+
+/// The header, then one row per stage: label, numbers in ms, and a bar on
+/// one log scale shared by every row, so bars compare across rows.
+fn latency_rows(frame: &mut Frame, area: Rect, stages: &[Stage], scale: Scale) {
+    let dim = Style::new().fg(Color::DarkGray);
+    let (columns, has_bar) = latency_columns(area.width);
+    let mut widths = vec![Constraint::Length(STAGE_WIDTH)];
+    widths.extend(columns.iter().map(|_| Constraint::Length(NUMBER_WIDTH)));
+    widths.push(Constraint::Min(0));
+    let split = |row: Rect| Layout::horizontal(widths.clone()).spacing(1).split(row);
+    let right = |text: String| Line::from(text).right_aligned();
+
+    let mut rows = area.rows();
+    let Some(header) = rows.next() else {
+        return;
+    };
+    let cells = split(header);
+    frame.render_widget(Line::from("latency").style(dim), cells[0]);
+    for ((name, _), &cell) in columns.iter().zip(&cells[1..]) {
+        frame.render_widget(right((*name).to_string()).style(dim), cell);
+    }
+    if has_bar {
+        axis(frame.buffer_mut(), cells[cells.len() - 1], dim, scale);
+    }
+
+    for (stage, row) in stages.iter().zip(rows) {
+        let cells = split(row);
+        frame.render_widget(Line::from(stage.name).style(dim), cells[0]);
+        for ((_, pick), &cell) in columns.iter().zip(&cells[1..]) {
+            let text = match &stage.spread {
+                Some(spread) => format!("{:.2}", ms(pick(spread))),
+                None => "—".to_string(),
+            };
+            frame.render_widget(right(text), cell);
+        }
+        if has_bar {
+            range(frame, cells[cells.len() - 1], stage, scale);
+        }
+    }
+}
+
+fn ms(at: Duration) -> f32 {
+    at.as_secs_f32() * 1e3
+}
+
+/// The latency bars' shared log scale, from `config.lua`.
+#[derive(Clone, Copy)]
+struct Scale {
+    floor_ms: f32,
+    ceil_ms: f32,
+}
+
+impl Scale {
+    fn at(self, ms: f32) -> f32 {
+        meter::ms_scale(ms, self.floor_ms, self.ceil_ms)
+    }
+
+    fn decades(self) -> Vec<f32> {
+        meter::decades(self.floor_ms, self.ceil_ms)
+    }
+}
+
+/// The cell `scaled` falls in across `width`.
+fn cell_at(scaled: f32, width: u16) -> u16 {
+    ((scaled * f32::from(width)) as u16).min(width.saturating_sub(1))
+}
+
+/// Decade labels across the bar column, each left out where it would run
+/// into the one before or off the end.
+fn axis(buffer: &mut ratatui::buffer::Buffer, area: Rect, style: Style, scale: Scale) {
+    let mut free = area.left();
+    let decades = scale.decades();
+    for (n, &decade) in decades.iter().enumerate() {
+        let mut label = meter::decade_label(decade);
+        if n + 1 == decades.len() {
+            label.push_str("ms");
+        }
+        let width = label.chars().count() as u16;
+        let x = (area.left() + cell_at(scale.at(decade), area.width))
+            .min(area.right().saturating_sub(width));
+        if x >= free && x + width <= area.right() {
+            buffer.set_string(x, area.top(), &label, style);
+            free = x + width + 1;
+        }
+    }
+}
+
+/// p50 as the fill, coloured by the stage's budget; then decade ticks on the
+/// empty track, a heavy p99 tick, and a light max marker, written over it
+/// the way `shadow` writes, with max winning where they share a cell.
+fn range(frame: &mut Frame, area: Rect, stage: &Stage, scale: Scale) {
+    let (warn, danger) = (scale.at(stage.budget.warn), scale.at(stage.budget.danger));
+    let p50 = stage.spread.map_or(0.0, |s| scale.at(ms(s.p50)));
+    frame.render_widget(bar(String::new(), p50, warn, danger), area);
+
+    let buffer = frame.buffer_mut();
+    let y = area.top();
+    let filled = p50 * f32::from(area.width);
+    let inner = scale
+        .decades()
+        .into_iter()
+        .filter(|&decade| decade > scale.floor_ms && decade < scale.ceil_ms);
+    for decade in inner {
+        let at = cell_at(scale.at(decade), area.width);
+        if f32::from(at) < filled {
+            continue;
+        }
+        if let Some(cell) = buffer.cell_mut((area.left() + at, y)) {
+            cell.set_symbol("·");
+        }
+    }
+
+    let Some(spread) = stage.spread else {
+        return;
+    };
+    let p99 = scale.at(ms(spread.p99));
+    let marks = [("┃", health(p99, warn, danger)), ("│", Color::Gray)];
+    for ((symbol, colour), at) in marks.into_iter().zip([p99, scale.at(ms(spread.max))]) {
+        let x = area.left() + cell_at(at, area.width);
+        if let Some(cell) = buffer.cell_mut((x, y)) {
+            cell.set_symbol(symbol).set_fg(colour);
+        }
+    }
+}
+
 fn name(note: u8) -> String {
     const NAMES: [&str; 12] = [
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
@@ -556,6 +803,37 @@ mod tests {
         for k in keys {
             assert_eq!(key(code(k)), Some(k));
         }
+    }
+
+    #[test]
+    fn an_unset_buffer_reads_as_the_default() {
+        assert_eq!(buffer(None, 256), ("buffer 256 (default)".into(), false));
+        assert_eq!(buffer(None, 0), ("buffer — (default)".into(), false));
+    }
+
+    #[test]
+    fn a_buffer_given_as_asked_shows_once() {
+        assert_eq!(buffer(Some(256), 256), ("buffer 256".into(), false));
+        assert_eq!(buffer(Some(256), 0), ("buffer 256".into(), false));
+    }
+
+    #[test]
+    fn a_buffer_other_than_asked_names_both_and_warns() {
+        assert_eq!(
+            buffer(Some(128), 512),
+            ("buffer 512 (asked 128)".into(), true)
+        );
+    }
+
+    #[test]
+    fn a_slow_view_warns_then_turns_red() {
+        let config = crate::script::config_defaults().tui;
+        let style = |fps| fps_style(fps, &config);
+        assert_eq!(style(60), Style::new());
+        assert_eq!(style(30), Style::new());
+        assert_eq!(style(29), Style::new().fg(Color::Yellow));
+        assert_eq!(style(24), Style::new().fg(Color::Yellow));
+        assert_eq!(style(23), Style::new().fg(Color::Red));
     }
 
     #[test]

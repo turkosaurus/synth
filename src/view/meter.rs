@@ -34,6 +34,34 @@ pub(crate) fn db_label(scaled: f32, floor_db: f32) -> String {
     format!("{:>5.1}", db(scaled, floor_db))
 }
 
+/// Milliseconds to a 0.0..1.0 scale position, logarithmically, from
+/// `floor_ms` to `ceil_ms` (both above 0). At or below the floor reads as
+/// empty.
+///
+/// Latency stages span four decades, and on a linear bar the ones under a
+/// millisecond would draw as nothing beside the output device.
+pub(crate) fn ms_scale(ms: f32, floor_ms: f32, ceil_ms: f32) -> f32 {
+    if ms <= floor_ms {
+        return 0.0;
+    }
+    ((ms / floor_ms).log10() / (ceil_ms / floor_ms).log10()).clamp(0.0, 1.0)
+}
+
+/// The powers of ten from `floor_ms` to `ceil_ms`, both ends included
+/// where they are one, for ticks and labels on [`ms_scale`].
+pub(crate) fn decades(floor_ms: f32, ceil_ms: f32) -> Vec<f32> {
+    // a hair of slack, so 0.01 written in Lua counts as 10^-2
+    let first = (floor_ms.log10() - 1e-4).ceil() as i32;
+    let last = (ceil_ms.log10() + 1e-4).floor() as i32;
+    (first..=last).map(|power| 10f32.powi(power)).collect()
+}
+
+/// A decade as an axis label: as many decimals as it needs, and none above 1.
+pub(crate) fn decade_label(ms: f32) -> String {
+    let decimals = (-ms.log10().round()).max(0.0) as usize;
+    format!("{ms:.decimals$}")
+}
+
 /// Frames of history kept. A wider terminal shows more of it; the oldest
 /// fall off the left edge.
 const HISTORY: usize = 240;
@@ -155,7 +183,7 @@ impl Meter {
 
 #[cfg(test)]
 mod tests {
-    use super::{Activity, Meter, STEPS};
+    use super::{decade_label, decades, ms_scale, Activity, Meter, STEPS};
     use std::time::Duration;
 
     const FLOOR_DB: f32 = -60.0;
@@ -179,6 +207,39 @@ mod tests {
     }
 
     const FRAME: Duration = Duration::from_millis(16);
+
+    #[test]
+    fn each_decade_takes_an_equal_share_of_the_ms_scale() {
+        let at = |ms| ms_scale(ms, 0.01, 100.0);
+        assert_eq!(at(0.01), 0.0);
+        assert!((at(0.1) - 0.25).abs() < 1e-6);
+        assert!((at(1.0) - 0.5).abs() < 1e-6);
+        assert!((at(10.0) - 0.75).abs() < 1e-6);
+        assert_eq!(at(100.0), 1.0);
+    }
+
+    #[test]
+    fn decades_span_the_scale() {
+        assert_eq!(decades(0.01, 100.0), [0.01, 0.1, 1.0, 10.0, 100.0]);
+        assert_eq!(decades(0.05, 30.0), [0.1, 1.0, 10.0]);
+        assert_eq!(decades(2.0, 3.0), Vec::<f32>::new());
+    }
+
+    #[test]
+    fn decades_label_with_the_decimals_they_need() {
+        let labels: Vec<String> = decades(0.001, 1000.0)
+            .into_iter()
+            .map(decade_label)
+            .collect();
+        assert_eq!(labels, ["0.001", "0.01", "0.1", "1", "10", "100", "1000"]);
+    }
+
+    #[test]
+    fn the_ms_scale_clamps_at_both_ends() {
+        assert_eq!(ms_scale(0.0, 0.01, 100.0), 0.0);
+        assert_eq!(ms_scale(-1.0, 0.01, 100.0), 0.0);
+        assert_eq!(ms_scale(1000.0, 0.01, 100.0), 1.0);
+    }
 
     #[test]
     fn full_scale_is_zero_db() {

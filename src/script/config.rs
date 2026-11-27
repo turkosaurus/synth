@@ -8,7 +8,7 @@ use std::time::Duration;
 use super::Error;
 
 use super::field;
-use crate::spec::{Config, TuiConfig};
+use crate::spec::{Budget, Config, TuiConfig};
 
 /// `config.lua` under the config directory.
 const FILE: [&str; 2] = ["synth", "config.lua"];
@@ -152,6 +152,12 @@ fn read(path: &Path) -> Result<Option<String>, Error> {
 
 /// The defaults, with `user` (source and name) laid over them. Both run in
 /// one bare Lua state: `config.lua` needs none of the `synth` modules.
+/// The built-in file's settings alone, for tests elsewhere in the crate.
+#[cfg(test)]
+pub(crate) fn defaults() -> Config {
+    resolve(None).expect("the built-in config.lua loads")
+}
+
 fn resolve(user: Option<(&str, &str)>) -> Result<Config, Error> {
     let lua = mlua::Lua::new();
     let base = table(&lua, TEMPLATE, TEMPLATE_NAME)?;
@@ -180,6 +186,17 @@ fn table(lua: &mlua::Lua, source: &str, name: &str) -> Result<mlua::Table, Error
     super::schema::CONFIG.check(&table, None)?;
     if let Some(tui) = table.get::<Option<mlua::Table>>(field::TUI)? {
         super::schema::CONFIG_TUI.check(&tui, None)?;
+        if let Some(latency) = tui.get::<Option<mlua::Table>>(field::METER_LATENCY)? {
+            super::schema::CONFIG_LATENCY.check(&latency, Some(LATENCY))?;
+            for stage in STAGES {
+                if let Some(budget) = latency.get::<Option<mlua::Table>>(stage)? {
+                    super::schema::CONFIG_BUDGET.check(&budget, Some(&stage_name(stage)))?;
+                }
+            }
+        }
+        if let Some(fps) = tui.get::<Option<mlua::Table>>(field::METER_FPS)? {
+            super::schema::CONFIG_BUDGET.check(&fps, Some(FPS))?;
+        }
     }
     Ok(table)
 }
@@ -218,11 +235,56 @@ fn custom_dir(setting: &str, dirs: &Dirs) -> Result<Option<PathBuf>, Error> {
     Ok(Some(path))
 }
 
+/// `low` and `high` from `table`, once `low` is known to be below `high`.
+/// `what` names the table in the error.
+fn ordered(
+    table: &mlua::Table,
+    what: &str,
+    low: &'static str,
+    high: &'static str,
+) -> Result<(f64, f64), Error> {
+    let (low_value, high_value): (f64, f64) = (table.get(low)?, table.get(high)?);
+    if low_value >= high_value {
+        return Err(Error::ConfigOrder {
+            what: what.to_string(),
+            low,
+            low_value,
+            high,
+            high_value,
+        });
+    }
+    Ok((low_value, high_value))
+}
+
+/// The tables under `tui` and their names, for checks and errors.
+const LATENCY: &str = "config.lua tui meter_latency";
+const FPS: &str = "config.lua tui meter_fps";
+const STAGES: [&str; 4] = [field::INPUT, field::RENDER, field::OUTPUT, field::TOTAL];
+
+fn stage_name(stage: &str) -> String {
+    format!("{LATENCY} {stage}")
+}
+
+/// A stage's budget, whose warn comes below its danger.
+fn budget(latency: &mlua::Table, stage: &str) -> Result<Budget, Error> {
+    let table: mlua::Table = latency.get(stage)?;
+    let (warn, danger) = ordered(&table, &stage_name(stage), field::WARN, field::DANGER)?;
+    Ok(Budget {
+        warn: warn as f32,
+        danger: danger as f32,
+    })
+}
+
 fn settings(table: &mlua::Table) -> Result<Config, Error> {
     let tui: mlua::Table = table.get(field::TUI)?;
     let ms = |key: &str| -> mlua::Result<Duration> {
         Ok(Duration::from_secs_f64(tui.get::<f64>(key)? / 1000.0))
     };
+    let latency: mlua::Table = tui.get(field::METER_LATENCY)?;
+    let (floor, ceil) = ordered(&latency, LATENCY, field::FLOOR, field::CEIL)?;
+    // a frame rate is better higher, so its danger comes below its warn
+    let fps: mlua::Table = tui.get(field::METER_FPS)?;
+    let (fps_danger, fps_warn) = ordered(&fps, FPS, field::DANGER, field::WARN)?;
     Ok(Config {
         // 0 asks for nothing, the same as leaving it out
         buffer_frames: table
@@ -241,6 +303,18 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
             meter_hold: ms(field::METER_HOLD)?,
             meter_fall: ms(field::METER_FALL)?,
             meter_floor_db: tui.get(field::METER_FLOOR)?,
+            latency_window: Duration::from_secs_f64(latency.get::<f64>(field::WINDOW)? / 1000.0),
+            latency_records: latency.get(field::RECORDS)?,
+            latency_floor_ms: floor as f32,
+            latency_ceil_ms: ceil as f32,
+            input_budget: budget(&latency, field::INPUT)?,
+            render_budget: budget(&latency, field::RENDER)?,
+            output_budget: budget(&latency, field::OUTPUT)?,
+            total_budget: budget(&latency, field::TOTAL)?,
+            fps: Budget {
+                warn: fps_warn as f32,
+                danger: fps_danger as f32,
+            },
         },
     })
 }
@@ -354,6 +428,16 @@ mod tests {
         assert_eq!(config.tui.meter_hold, Duration::from_millis(560));
         assert_eq!(config.tui.meter_fall, Duration::from_millis(280));
         assert_eq!(config.tui.meter_floor_db, -60.0);
+        assert_eq!(config.tui.latency_window, Duration::from_secs(5));
+        assert_eq!(config.tui.latency_records, 1024);
+        assert_eq!(config.tui.latency_floor_ms, 0.01);
+        assert_eq!(config.tui.latency_ceil_ms, 100.0);
+        let budget = |warn, danger| Budget { warn, danger };
+        assert_eq!(config.tui.input_budget, budget(1.0, 5.0));
+        assert_eq!(config.tui.render_budget, budget(5.0, 10.0));
+        assert_eq!(config.tui.output_budget, budget(10.0, 20.0));
+        assert_eq!(config.tui.total_budget, budget(10.0, 20.0));
+        assert_eq!(config.tui.fps, budget(30.0, 24.0));
     }
 
     #[test]
@@ -372,6 +456,19 @@ mod tests {
         assert_eq!(config.tui.poll, defaults.tui.poll);
         assert_eq!(config.tui.meter_hold, defaults.tui.meter_hold);
         assert_eq!(config.buffer_frames, defaults.buffer_frames);
+    }
+
+    #[test]
+    fn a_nested_budget_changes_only_what_it_sets() {
+        let config =
+            user("return { tui = { meter_latency = { render = { warn = 6 } } } }").unwrap();
+        let defaults = resolve(None).unwrap();
+        assert_eq!(config.tui.render_budget.warn, 6.0);
+        assert_eq!(
+            config.tui.render_budget.danger,
+            defaults.tui.render_budget.danger
+        );
+        assert_eq!(config.tui.latency_window, defaults.tui.latency_window);
     }
 
     #[test]
@@ -515,6 +612,42 @@ mod tests {
             (
                 "return { tui = { meter_floor = 0 } }",
                 "`meter_floor` is 0; must be below 0",
+            ),
+            (
+                "return { tui = { meter_latency = { window = 0 } } }",
+                "config.lua tui meter_latency: `window` is 0; must be above 0",
+            ),
+            (
+                "return { tui = { meter_latency = { records = 0 } } }",
+                "config.lua tui meter_latency: `records` is 0; must be 1 to 65536",
+            ),
+            (
+                "return { tui = { meter_latency = { records = 1.5 } } }",
+                "`records` must be a whole number",
+            ),
+            (
+                "return { tui = { meter_latency = { floor = 0 } } }",
+                "`floor` is 0; must be above 0",
+            ),
+            (
+                "return { tui = { meter_latency = { floor = 100 } } }",
+                "config.lua tui meter_latency: `floor` is 100, `ceil` is 100; `floor` must be below `ceil`",
+            ),
+            (
+                "return { tui = { meter_latency = { render = { warn = 10 } } } }",
+                "config.lua tui meter_latency render: `warn` is 10, `danger` is 10; `warn` must be below `danger`",
+            ),
+            (
+                "return { tui = { meter_latency = { input = { wran = 1 } } } }",
+                "config.lua tui meter_latency input: unknown field `wran`",
+            ),
+            (
+                "return { tui = { meter_fps = { danger = 30 } } }",
+                "config.lua tui meter_fps: `danger` is 30, `warn` is 30; `danger` must be below `warn`",
+            ),
+            (
+                "return { tui = { meter_latency = { windw = 1 } } }",
+                "unknown field `windw`",
             ),
             ("return { tui = { pol = 16 } }", "unknown field `pol`"),
             ("return 256", "must return a table, got integer"),

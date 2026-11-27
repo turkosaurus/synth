@@ -152,6 +152,36 @@ pub(super) const CONFIG_TUI: Schema = Schema {
         optional(field::METER_FALL, Ty::Number, Bound::Above(0.0)),
         // the meter's scale divides by it, and 0 dB is full scale
         optional(field::METER_FLOOR, Ty::Number, Bound::Below(0.0)),
+        optional(field::METER_LATENCY, Ty::Table, Bound::Any),
+        optional(field::METER_FPS, Ty::Table, Bound::Any),
+    ],
+};
+
+pub(super) const CONFIG_LATENCY: Schema = Schema {
+    what: "config.lua tui meter_latency",
+    fields: &[
+        optional(field::WINDOW, Ty::Number, Bound::Above(0.0)),
+        // one ring, allocated when the session opens; the view drains it
+        // every frame, so far fewer than the maximum are ever waiting
+        optional(field::RECORDS, Ty::Integer, Bound::Between(1.0, 65536.0)),
+        // the log scale divides by both ends; their order is checked once
+        // both are known
+        optional(field::FLOOR, Ty::Number, Bound::Above(0.0)),
+        optional(field::CEIL, Ty::Number, Bound::Above(0.0)),
+        optional(field::INPUT, Ty::Table, Bound::Any),
+        optional(field::RENDER, Ty::Table, Bound::Any),
+        optional(field::OUTPUT, Ty::Table, Bound::Any),
+        optional(field::TOTAL, Ty::Table, Bound::Any),
+    ],
+};
+
+/// A stage's budget in ms, or the view's frame rate thresholds. Their
+/// order is checked once both are known, since it differs between them.
+pub(super) const CONFIG_BUDGET: Schema = Schema {
+    what: "config.lua budget",
+    fields: &[
+        optional(field::WARN, Ty::Number, Bound::AtLeast(0.0)),
+        optional(field::DANGER, Ty::Number, Bound::AtLeast(0.0)),
     ],
 };
 
