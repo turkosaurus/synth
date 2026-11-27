@@ -15,12 +15,13 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 
-use crate::audio::Snapshot;
+use crate::audio::{OutputTee, Snapshot};
 use crate::input::keyboard::{Gating, Keyboard, Kind, Stroke};
 use crate::session::{Msg, Session};
 use crate::spec::{Freqs, Key, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
+use super::spectrum::{self, Spectrum};
 
 const POPUP_FILL: Color = Color::Yellow;
 const POPUP_INK: Color = Color::Black;
@@ -56,6 +57,7 @@ fn drive(
     // business knowing the frame rate a bar falls at
     let mut peak = Meter::new(config.meter_hold, config.meter_fall);
     let mut activity = Activity::default();
+    let mut spectrum = Spectrum::new();
     let mut last = Instant::now();
 
     loop {
@@ -74,6 +76,8 @@ fn drive(
         last = now;
         peak.update(meter::scale(snap.peak, config.meter_floor_db), dt);
         activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clipped);
+        drain(&mut session.output_tee, &mut spectrum);
+        spectrum.update().context("transforming the spectrum")?;
 
         let model = session.model();
         let view = View {
@@ -82,6 +86,8 @@ fn drive(
             peak: &peak,
             activity: &activity,
             freqs: &model.freqs,
+            spectrum: &spectrum,
+            sample_rate: model.sample_rate,
             gating,
             help: model.help,
             floor_db: config.meter_floor_db,
@@ -106,6 +112,16 @@ fn drive(
         if session.update(Msg::Tick).is_break() {
             return Ok(());
         }
+    }
+}
+
+/// Move everything the output tee holds into `spectrum`.
+fn drain(tee: &mut OutputTee, spectrum: &mut Spectrum) {
+    let channels = tee.channels;
+    let slots = tee.samples.slots();
+    if let Ok(chunk) = tee.samples.read_chunk(slots - slots % channels) {
+        // the first channel only: the callback writes one sample to all
+        spectrum.extend(chunk.into_iter().step_by(channels));
     }
 }
 
@@ -175,6 +191,8 @@ struct View<'a> {
     peak: &'a Meter,
     activity: &'a Activity,
     freqs: &'a Freqs,
+    spectrum: &'a Spectrum,
+    sample_rate: u32,
     gating: Gating,
     help: bool,
     /// the meter's floor, from `config.lua`
@@ -188,6 +206,8 @@ fn draw(frame: &mut Frame, view: &View) {
         peak,
         activity,
         freqs,
+        spectrum,
+        sample_rate,
         gating,
         help,
         floor_db,
@@ -213,6 +233,10 @@ fn draw(frame: &mut Frame, view: &View) {
             .spacing(Spacing::Overlap(1))
             .areas(input_area);
 
+    let [scope_area, spectrum_area] = Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)])
+        .spacing(Spacing::Overlap(1))
+        .areas(scope_area);
+
     frame.render_widget(
         Paragraph::new("TODO")
             .centered()
@@ -220,6 +244,7 @@ fn draw(frame: &mut Frame, view: &View) {
             .block(pane().title(" scope ")),
         scope_area,
     );
+    spectrum_pane(frame, spectrum_area, spectrum, sample_rate, floor_db);
 
     let input_block = pane().title(" input ");
     let input_inner = input_block.inner(input_area);
@@ -330,6 +355,48 @@ fn draw(frame: &mut Frame, view: &View) {
     // last, so it lands on top of everything already drawn
     if help {
         overlay(frame, keyboard);
+    }
+}
+
+/// The output's spectrum, one bar per column, labelled with the
+/// frequencies at either end of its log axis.
+fn spectrum_pane(
+    frame: &mut Frame,
+    area: Rect,
+    spectrum: &Spectrum,
+    sample_rate: u32,
+    floor_db: f32,
+) {
+    let bin = sample_rate as f32 / spectrum::SIZE as f32;
+    let nyquist = sample_rate as f32 / 2.0;
+    let block = pane()
+        .title(" spectrum ")
+        .title_bottom(Line::from(format!(" {} ", hz(bin))).left_aligned())
+        .title_bottom(Line::from(format!(" {} ", hz(nyquist))).right_aligned());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let columns = spectrum.columns(usize::from(inner.width), floor_db);
+    frame.render_widget(
+        Sparkline::default()
+            .data(
+                columns
+                    .into_iter()
+                    .map(|column| (column * meter::STEPS as f32).round() as u64),
+            )
+            // absolute, as the activity graph is: a given height is
+            // always the same level
+            .max(meter::STEPS)
+            .style(Style::new().fg(Color::Cyan)),
+        inner,
+    );
+}
+
+fn hz(hz: f32) -> String {
+    if hz < 1000.0 {
+        format!("{hz:.1} Hz")
+    } else {
+        format!("{:.1} kHz", hz / 1000.0)
     }
 }
 

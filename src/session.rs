@@ -10,7 +10,7 @@ use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::audio::{self, Feed, Player, Stats};
+use crate::audio::{self, Feed, OutputTee, Player, Stats};
 use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke};
 use crate::script;
 use crate::spec::{Config, Event};
@@ -37,6 +37,8 @@ pub(crate) struct Model {
     pub(crate) keyboard: Keyboard,
     /// The same baked table the player reads, copied for the view.
     pub(crate) freqs: crate::spec::Freqs,
+    /// The device's, in hz, which places the output tee's frames in time.
+    pub(crate) sample_rate: u32,
     /// Whether the help overlay is up.
     pub(crate) help: bool,
 }
@@ -74,10 +76,17 @@ impl Model {
     }
 }
 
+/// Frames the output tee holds: at 48 kHz about a third of a second, so a
+/// redraw that runs late still finds the newest frames rather than a ring
+/// that filled and dropped them.
+const OUTPUT_TEE_FRAMES: usize = 16_384;
+
 /// A patch playing live on the default output device.
 pub struct Session {
     model: Model,
     pub(crate) stats: Arc<Stats>,
+    /// Every frame the callback writes, for the view to drain.
+    pub(crate) output_tee: OutputTee,
     /// The ring's producer; the consumer lives in the audio callback.
     tx: rtrb::Producer<Event>,
     /// Kept only so the stream plays until the session drops.
@@ -101,6 +110,7 @@ impl Session {
 
         // the producer stays here; the consumer moves into the audio callback
         let (tx, rx) = rtrb::RingBuffer::<Event>::new(config.queue);
+        let (tee_tx, output_tee) = audio::output_tee(OUTPUT_TEE_FRAMES, output.channels);
         let player = Player::new(
             Feed::Live {
                 instruments: patch.timeline.instruments,
@@ -109,7 +119,8 @@ impl Session {
             patch.freqs,
             output.sample_rate as f32,
         )
-        .with_filter(patch.filter);
+        .with_filter(patch.filter)
+        .with_output_tee(tee_tx);
 
         let stats = Arc::new(Stats::default());
         let stream = audio::stream(&output, player, Arc::clone(&stats))?;
@@ -118,9 +129,11 @@ impl Session {
             model: Model {
                 keyboard: Keyboard::new(patch.keymap, gating),
                 freqs,
+                sample_rate: output.sample_rate,
                 help: false,
             },
             stats,
+            output_tee,
             tx,
             _stream: stream,
         })
@@ -182,6 +195,7 @@ mod tests {
         Model {
             keyboard: Keyboard::new(keymap, Gating::Held),
             freqs: crate::spec::Freqs::unchecked([0.0; 128]),
+            sample_rate: 48_000,
             help: false,
         }
     }
