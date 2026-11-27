@@ -41,6 +41,8 @@ pub struct Stats {
     budget_us: AtomicU32,
     /// the most recent callback's frames, which the driver may vary
     buffer_frames: AtomicU32,
+    /// the most recent callback's `playback - callback`
+    output_us: AtomicU32,
     callback_us_max: AtomicU32,
     load_bits: AtomicU32,
 }
@@ -92,6 +94,7 @@ impl Stats {
             peak: self.take_peak(),
             budget_us: self.budget_us(),
             buffer_frames: self.buffer_frames.load(Ordering::Relaxed),
+            output_us: self.output_us.load(Ordering::Relaxed),
             callback_us_max: self.callback_us_max.swap(0, Ordering::Relaxed),
             load: f32::from_bits(self.load_bits.swap(0, Ordering::Relaxed)),
         }
@@ -115,6 +118,9 @@ pub struct Snapshot {
     pub budget_us: u32,
     /// frames the most recent callback was handed; 0 before the first
     pub buffer_frames: u32,
+    /// the most recent callback's `playback - callback`, as the driver
+    /// reports it
+    pub output_us: u32,
     pub callback_us_max: u32,
     /// worst fraction of the deadline used, 1.0 being the deadline itself
     pub load: f32,
@@ -248,14 +254,13 @@ pub fn stream(
     }
 }
 
-/// Told how many events a render pass applied, and at which frame of the
-/// device buffer.
-type Applied<'a> = dyn FnMut(u32, u32) + 'a;
+/// Told how many events each render pass applied.
+type Applied<'a> = dyn FnMut(u32) + 'a;
 
 /// Renders straight into an f32 device buffer in one pass.
 fn direct(out: &mut [f32], channels: usize, player: &mut Player, applied: &mut Applied) -> Tally {
     let tally = fill(out, channels, player);
-    applied(tally.events, 0);
+    applied(tally.events);
     tally
 }
 
@@ -275,7 +280,7 @@ where
     for chunk in out.chunks_mut(pass) {
         let rendered = &mut scratch[..chunk.len()];
         let part = fill(rendered, channels, player);
-        applied(part.events, tally.frames);
+        applied(part.events);
         for (sample, &value) in chunk.iter_mut().zip(rendered.iter()) {
             *sample = T::from_sample(value);
         }
@@ -312,16 +317,20 @@ where
             config,
             move |out: &mut [T], info: &cpal::OutputCallbackInfo| {
                 let start = Instant::now();
+                let at = info.timestamp();
+                let output = at.playback.duration_since(at.callback);
                 let mut timing_dropped = 0;
-                let tally = render(out, channels, &mut player, &mut |events, offset| {
+                let tally = render(out, channels, &mut player, &mut |events| {
                     if let Some(recorder) = &mut recorder {
-                        timing_dropped += recorder.applied(events, offset, start);
+                        timing_dropped += recorder.applied(events, start, output);
                     }
                 });
                 if let Some(recorder) = &mut recorder {
-                    let at = info.timestamp();
-                    timing_dropped += recorder.output(at.playback.duration_since(at.callback));
+                    timing_dropped += recorder.output(output);
                 }
+                stats
+                    .output_us
+                    .store(output.as_micros() as u32, Ordering::Relaxed);
                 if timing_dropped > 0 {
                     stats
                         .timing_dropped
@@ -421,15 +430,14 @@ mod tests {
 
         let mut out = vec![0i16; expected.len()];
         let mut passes = Vec::new();
-        let got = convert(&mut out, channels, &mut player(), &mut |events, offset| {
-            passes.push((events, offset));
+        let got = convert(&mut out, channels, &mut player(), &mut |events| {
+            passes.push(events);
         });
 
         assert_eq!(got, want);
         let converted: Vec<i16> = expected.iter().map(|&s| i16::from_sample(s)).collect();
         assert_eq!(out, converted);
-        // 1023 samples per pass is 341 frames
-        assert_eq!(passes, vec![(1, 0), (0, 341), (0, 682)]);
+        assert_eq!(passes, vec![1, 0, 0]);
     }
 
     // a count, not a gauge: taking a snapshot must not reset it

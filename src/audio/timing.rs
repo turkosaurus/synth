@@ -8,9 +8,10 @@ use std::time::{Duration, Instant};
 /// What put a live event in the ring.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Origin {
-    Key,
+    /// a key the view read at `read`
+    Key { read: Instant },
     /// a `Fixed` note-off from the keyboard's tick, which no key caused
-    Tick,
+    Release,
 }
 
 /// Pushed beside each live event, before it.
@@ -23,13 +24,19 @@ pub struct Stamp {
 /// One reading from the callback, for a reader off the audio thread.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Record {
-    /// a live event as the callback applied it
-    Applied {
-        origin: Origin,
+    /// a key's event as the callback applied it
+    Key {
+        /// key read until pushed
+        input: Duration,
         /// pushed until the callback that applied it began
         wait: Duration,
-        /// frames into that callback's buffer where it landed
-        offset: u32,
+        /// that callback's `playback - callback`
+        output: Duration,
+    },
+    /// a `Fixed` note-off as the callback applied it
+    Release {
+        /// pushed until the callback that applied it began
+        wait: Duration,
     },
     /// one callback's `playback - callback`, as the driver reports it
     Output(Duration),
@@ -58,10 +65,10 @@ pub fn timing(
 }
 
 impl Recorder {
-    /// Pairs `events` stamps with the live events just applied `offset`
-    /// frames into a callback that began at `start`. Returns the records
-    /// with no room in the ring.
-    pub(super) fn applied(&mut self, events: u32, offset: u32, start: Instant) -> u64 {
+    /// Pairs `events` stamps with the live events just applied by a
+    /// callback that began at `start`, whose output latency is `output`.
+    /// Returns the records with no room in the ring.
+    pub(super) fn applied(&mut self, events: u32, start: Instant, output: Duration) -> u64 {
         let mut dropped = 0;
         for _ in 0..events {
             // popped even when its record cannot be pushed, so the next
@@ -69,10 +76,14 @@ impl Recorder {
             let Ok(stamp) = self.stamps.pop() else {
                 break;
             };
-            let record = Record::Applied {
-                origin: stamp.origin,
-                wait: start.saturating_duration_since(stamp.pushed),
-                offset,
+            let wait = start.saturating_duration_since(stamp.pushed);
+            let record = match stamp.origin {
+                Origin::Key { read } => Record::Key {
+                    input: stamp.pushed.saturating_duration_since(read),
+                    wait,
+                    output,
+                },
+                Origin::Release => Record::Release { wait },
             };
             dropped += u64::from(self.records.push(record).is_err());
         }
@@ -93,38 +104,28 @@ mod tests {
         std::iter::from_fn(|| records.pop().ok()).collect()
     }
 
+    const MS: Duration = Duration::from_millis(1);
+
     #[test]
     fn each_applied_event_takes_the_next_stamp() {
         let (mut stamps, mut recorder, mut records) = timing(4, 4);
         let start = Instant::now();
-        let early = start - Duration::from_millis(3);
-        stamps
-            .push(Stamp {
-                pushed: early,
-                origin: Origin::Key,
-            })
-            .unwrap();
-        stamps
-            .push(Stamp {
-                pushed: start,
-                origin: Origin::Tick,
-            })
-            .unwrap();
+        let pushed = start - 3 * MS;
+        let read = pushed - MS;
+        for origin in [Origin::Key { read }, Origin::Release] {
+            stamps.push(Stamp { pushed, origin }).unwrap();
+        }
 
-        assert_eq!(recorder.applied(2, 5, start), 0);
+        assert_eq!(recorder.applied(2, start, 20 * MS), 0);
         assert_eq!(
             drain(&mut records),
             vec![
-                Record::Applied {
-                    origin: Origin::Key,
-                    wait: Duration::from_millis(3),
-                    offset: 5,
+                Record::Key {
+                    input: MS,
+                    wait: 3 * MS,
+                    output: 20 * MS,
                 },
-                Record::Applied {
-                    origin: Origin::Tick,
-                    wait: Duration::ZERO,
-                    offset: 5,
-                },
+                Record::Release { wait: 3 * MS },
             ]
         );
     }
@@ -133,17 +134,17 @@ mod tests {
     fn a_full_record_ring_still_consumes_the_stamp() {
         let (mut stamps, mut recorder, mut records) = timing(4, 1);
         let start = Instant::now();
-        for origin in [Origin::Key, Origin::Tick] {
+        for _ in 0..2 {
             stamps
                 .push(Stamp {
                     pushed: start,
-                    origin,
+                    origin: Origin::Release,
                 })
                 .unwrap();
         }
-        assert_eq!(recorder.applied(2, 0, start), 1);
+        assert_eq!(recorder.applied(2, start, MS), 1);
         drain(&mut records);
-        assert_eq!(recorder.applied(1, 0, start), 0);
+        assert_eq!(recorder.applied(1, start, MS), 0);
         assert_eq!(drain(&mut records), vec![]);
     }
 }

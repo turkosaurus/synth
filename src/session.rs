@@ -39,15 +39,8 @@ pub(crate) enum Msg {
 /// no ring or device.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Cmd {
-    Play(Event, Trigger),
-}
-
-/// What caused an event, carried to the push so it can be timed.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Trigger {
-    /// a key read at this instant
-    Key(Instant),
-    Tick,
+    /// an event, and what caused it, carried to the push so it can be timed
+    Play(Event, Origin),
 }
 
 /// Everything a view reads. A view gets only `&Model`, so `update` is the
@@ -67,7 +60,7 @@ pub(crate) struct Model {
 impl Model {
     fn update(&mut self, msg: Msg, cmds: &mut Vec<Cmd>) -> ControlFlow<()> {
         let mut events = Vec::new();
-        let (flow, trigger) = match msg {
+        let (flow, origin) = match msg {
             Msg::Key(stroke, read) => {
                 // the overlay owns the keyboard while it is up: no key
                 // reaches the note grid, so nothing can be left sounding
@@ -85,19 +78,19 @@ impl Model {
                     }
                     Outcome::Continue => ControlFlow::Continue(()),
                 };
-                (flow, Trigger::Key(read))
+                (flow, Origin::Key { read })
             }
             Msg::Tick => {
                 // a no-op when Held
                 self.keyboard.tick(&mut events);
-                (ControlFlow::Continue(()), Trigger::Tick)
+                (ControlFlow::Continue(()), Origin::Release)
             }
             Msg::Drawn(took) => {
                 self.latency.draw.push(took);
                 return ControlFlow::Continue(());
             }
         };
-        cmds.extend(events.into_iter().map(|event| Cmd::Play(event, trigger)));
+        cmds.extend(events.into_iter().map(|event| Cmd::Play(event, origin)));
         flow
     }
 }
@@ -186,7 +179,7 @@ impl Session {
         match cmd {
             // the queue is bounded; a full queue means the audio thread has
             // stalled, and dropping an event is better than blocking the UI
-            Cmd::Play(event, trigger) => {
+            Cmd::Play(event, origin) => {
                 // checked together, so a stamp is never left without its
                 // event; nothing else pushes, so room cannot shrink after
                 if self.stamps.slots() == 0 || self.tx.slots() == 0 {
@@ -194,16 +187,6 @@ impl Session {
                     return;
                 }
                 let pushed = Instant::now();
-                let origin = match trigger {
-                    Trigger::Key(read) => {
-                        self.model
-                            .latency
-                            .read
-                            .push(pushed.saturating_duration_since(read));
-                        Origin::Key
-                    }
-                    Trigger::Tick => Origin::Tick,
-                };
                 // the stamp goes first, so the callback never pops an
                 // event whose stamp is not there yet
                 if self.stamps.push(Stamp { pushed, origin }).is_err()
@@ -288,7 +271,7 @@ mod tests {
                     note: 60,
                     velocity: 100,
                 },
-                Trigger::Key(read()),
+                Origin::Key { read: read() },
             )]
         );
     }

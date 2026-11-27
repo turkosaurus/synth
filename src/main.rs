@@ -402,6 +402,8 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
         peak = snap.peak,
         budget_us = snap.budget_us,
         callback_us_max = snap.callback_us_max,
+        buffer_frames = snap.buffer_frames,
+        output_us = snap.output_us,
         load = snap.load,
         "stream",
     );

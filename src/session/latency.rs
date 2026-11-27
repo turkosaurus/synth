@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use crate::audio::{Origin, Record};
+use crate::audio::Record;
 
 /// Readings each stage keeps; the oldest falls out as a new one lands.
 const WINDOW: usize = 512;
@@ -56,33 +56,32 @@ impl<T: Copy + Ord> Window<T> {
 #[derive(Default)]
 pub(crate) struct Latency {
     /// key read until its event is pushed
-    pub(crate) read: Window<Duration>,
+    pub(crate) input: Window<Duration>,
     /// pushed until the callback applied it, for key events
-    pub(crate) key_wait: Window<Duration>,
+    pub(crate) wait: Window<Duration>,
     /// the same for `Fixed` note-offs from the tick
-    pub(crate) tick_wait: Window<Duration>,
-    /// frames into the buffer where a live event landed
-    pub(crate) offset: Window<u32>,
+    pub(crate) release_wait: Window<Duration>,
     /// `playback - callback`, as the driver reports it
     pub(crate) output: Window<Duration>,
-    /// one frame's draw
+    /// per key: input, wait, and the output of the callback that applied it
+    pub(crate) total: Window<Duration>,
+    /// one frame's draw, which no key waits on
     pub(crate) draw: Window<Duration>,
 }
 
 impl Latency {
     pub(crate) fn record(&mut self, record: Record) {
         match record {
-            Record::Applied {
-                origin,
+            Record::Key {
+                input,
                 wait,
-                offset,
+                output,
             } => {
-                match origin {
-                    Origin::Key => self.key_wait.push(wait),
-                    Origin::Tick => self.tick_wait.push(wait),
-                }
-                self.offset.push(offset);
+                self.input.push(input);
+                self.wait.push(wait);
+                self.total.push(input + wait + output);
             }
+            Record::Release { wait } => self.release_wait.push(wait),
             Record::Output(latency) => self.output.push(latency),
         }
     }
@@ -124,15 +123,24 @@ mod tests {
     }
 
     #[test]
-    fn tick_events_are_kept_apart_from_keys() {
+    fn a_release_is_kept_apart_from_keys() {
         let mut latency = Latency::default();
         let wait = Duration::from_millis(2);
-        latency.record(Record::Applied {
-            origin: Origin::Tick,
-            wait,
-            offset: 0,
+        latency.record(Record::Release { wait });
+        assert_eq!(latency.wait.spread(), None);
+        assert_eq!(latency.total.spread(), None);
+        assert_eq!(latency.release_wait.spread().unwrap().max, wait);
+    }
+
+    #[test]
+    fn a_key_total_sums_its_stages() {
+        let mut latency = Latency::default();
+        let ms = Duration::from_millis(1);
+        latency.record(Record::Key {
+            input: ms,
+            wait: 2 * ms,
+            output: 20 * ms,
         });
-        assert_eq!(latency.key_wait.spread(), None);
-        assert_eq!(latency.tick_wait.spread().unwrap().max, wait);
+        assert_eq!(latency.total.spread().unwrap().max, 23 * ms);
     }
 }

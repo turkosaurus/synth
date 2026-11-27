@@ -613,7 +613,7 @@ pub(super) struct Tally {
     pub peak: f32,
     /// frames the output tee had no room for
     pub output_tee_dropped: u64,
-    /// events applied, all at the first frame when the feed is live
+    /// events applied
     pub events: u32,
 }
 

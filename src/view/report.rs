@@ -260,7 +260,8 @@ pub fn stats(snap: &Snapshot) -> String {
         timing_dropped: _,
         peak,
         budget_us,
-        buffer_frames: _,
+        buffer_frames,
+        output_us,
         callback_us_max,
         load,
     } = *snap;
@@ -268,6 +269,7 @@ pub fn stats(snap: &Snapshot) -> String {
     format!(
         "frames={frames} clipped={clipped} non_finite={non_finite} peak={peak:.3} \
          callback_max={callback_us_max}us budget={budget_us}us ({pct:.1}%) \
+         buffer={buffer_frames} output={output_us}us \
          overruns={overruns} errors={errors} dropped={dropped}"
     )
 }

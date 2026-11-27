@@ -30,10 +30,17 @@ const LABEL_WIDTH: u16 = 6;
 const INPUT_WIDTH: u16 = LABEL_WIDTH + COLUMN_GAP + VALUE_WIDTH + 2;
 const COLUMN_GAP: u16 = 2;
 const SPARK_ROWS: u16 = 2;
-const STATS_ROWS: u16 = 3 + SPARK_ROWS;
-const STAGE_WIDTH: u16 = 9;
+const METER_ROWS: u16 = 3 + SPARK_ROWS;
+const STAGE_WIDTH: u16 = 21;
 const SPREAD_WIDTH: u16 = 8;
-const LATENCY_WIDTH: u16 = STAGE_WIDTH + 3 * (SPREAD_WIDTH + 1) + 2;
+const LATENCY_WIDTH: u16 = STAGE_WIDTH + 3 * (SPREAD_WIDTH + 1);
+/// the header, the stage rows, a gap before the draw row, and the buffer
+const LATENCY_ROWS: u16 = 9;
+const STATS_ROWS: u16 = if METER_ROWS > LATENCY_ROWS {
+    METER_ROWS
+} else {
+    LATENCY_ROWS
+};
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
@@ -191,56 +198,40 @@ struct View<'a> {
     help: bool,
     /// the meter's floor, from `config.lua`
     floor_db: f32,
-    latency: &'a [Stage],
-    /// buffer asked for and got, for the latency pane's bottom edge
+    latency: &'a [Option<Stage>],
+    /// buffer asked for and got
     buffer: &'a str,
 }
 
-/// One row of the latency pane: a stage and its spread, formatted.
+/// One row of the latency table: a stage and its spread, formatted.
+/// `None` for the gap that sets the draw row apart from the chain.
 struct Stage {
     name: &'static str,
     spread: Option<Spread<String>>,
 }
 
-fn stages(latency: &Latency) -> Vec<Stage> {
-    fn ms(window: &Window<Duration>) -> Option<Spread<String>> {
+fn stages(latency: &Latency) -> Vec<Option<Stage>> {
+    let ms = |name, window: &Window<Duration>| {
         let text = |at: Duration| format!("{:.2}ms", at.as_secs_f64() * 1e3);
-        window.spread().map(|s| Spread {
-            p50: text(s.p50),
-            p99: text(s.p99),
-            max: text(s.max),
+        Some(Stage {
+            name,
+            spread: window.spread().map(|s| Spread {
+                p50: text(s.p50),
+                p99: text(s.p99),
+                max: text(s.max),
+            }),
         })
-    }
-    let frames = latency.offset.spread().map(|s| Spread {
-        p50: format!("{}fr", s.p50),
-        p99: format!("{}fr", s.p99),
-        max: format!("{}fr", s.max),
-    });
+    };
     vec![
-        Stage {
-            name: "read",
-            spread: ms(&latency.read),
-        },
-        Stage {
-            name: "wait key",
-            spread: ms(&latency.key_wait),
-        },
-        Stage {
-            name: "wait tick",
-            spread: ms(&latency.tick_wait),
-        },
-        Stage {
-            name: "offset",
-            spread: frames,
-        },
-        Stage {
-            name: "output",
-            spread: ms(&latency.output),
-        },
-        Stage {
-            name: "draw",
-            spread: ms(&latency.draw),
-        },
+        ms("input key", &latency.input),
+        ms("render wait", &latency.wait),
+        ms("render wait (release)", &latency.release_wait),
+        ms("output device", &latency.output),
+        ms("total", &latency.total),
+        // the view draws between key reads, so it is not a stage of any one
+        // key's chain
+        None,
+        ms("view draw", &latency.draw),
     ]
 }
 
@@ -250,7 +241,7 @@ fn buffer(requested: Option<u32>, got: u32) -> String {
         0 => "—".to_string(),
         frames => frames.to_string(),
     };
-    format!(" buffer asked {asked}, got {got} ")
+    format!("buffer asked {asked}, got {got}")
 }
 
 fn draw(frame: &mut Frame, view: &View) {
@@ -269,8 +260,8 @@ fn draw(frame: &mut Frame, view: &View) {
 
     let footer = vec![Line::from("(ctrl-c) quit | (?) help")];
 
-    // stats is sized to exactly what it draws: the cpu, gain, and fault
-    // rows, the two-row sparkline, and its own borders. input takes what is left, so
+    // stats is sized to exactly what it draws: the taller of the meters and
+    // the latency table, and its own borders. input takes what is left, so
     // the graphs stay put while the window grows.
     let [input_area, stats_area, footer_area] = Layout::vertical([
         Constraint::Min(0),
@@ -282,18 +273,10 @@ fn draw(frame: &mut Frame, view: &View) {
 
     // input is sized to its table; the section beside it takes the rest, so
     // widening the window grows that one and leaves the table alone
-    let [input_area, latency_area, scope_area] = Layout::horizontal([
-        Constraint::Length(INPUT_WIDTH),
-        Constraint::Length(LATENCY_WIDTH),
-        Constraint::Min(0),
-    ])
-    .spacing(Spacing::Overlap(1))
-    .areas(input_area);
-
-    let latency_block = pane().title(" latency ").title_bottom(buffer);
-    let latency_inner = latency_block.inner(latency_area);
-    frame.render_widget(latency_block, latency_area);
-    frame.render_widget(spreads(latency), latency_inner);
+    let [input_area, scope_area] =
+        Layout::horizontal([Constraint::Length(INPUT_WIDTH), Constraint::Min(0)])
+            .spacing(Spacing::Overlap(1))
+            .areas(input_area);
 
     frame.render_widget(
         Paragraph::new("TODO")
@@ -313,15 +296,29 @@ fn draw(frame: &mut Frame, view: &View) {
     let stats_inner = stats_block.inner(stats_area);
     frame.render_widget(stats_block, stats_area);
 
+    let [meters_area, latency_area] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(LATENCY_WIDTH)])
+            .spacing(COLUMN_GAP)
+            .areas(stats_inner);
+    let [spreads_area, buffer_area] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(latency_area);
+    frame.render_widget(spreads(latency), spreads_area);
+    frame.render_widget(
+        Line::from(buffer).style(Style::new().fg(Color::DarkGray)),
+        buffer_area,
+    );
+
     // graph, then gain, then cpu, then faults at the very bottom: region
-    // order is what stacks them, not the order the widgets are rendered in
-    let [clip_area, peak_area, load_area, fault_area] = Layout::vertical([
+    // order is what stacks them, not the order the widgets are rendered in.
+    // the spacer takes whatever the latency table needs beyond them.
+    let [_, clip_area, peak_area, load_area, fault_area] = Layout::vertical([
+        Constraint::Min(0),
         Constraint::Length(SPARK_ROWS),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
-    .areas(stats_inner);
+    .areas(meters_area);
 
     frame.render_widget(
         Sparkline::default()
@@ -607,7 +604,7 @@ fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
 }
 
 /// Each stage's p50, p99, and max, right-aligned so the digits line up.
-fn spreads(stages: &[Stage]) -> Table<'static> {
+fn spreads(stages: &[Option<Stage>]) -> Table<'static> {
     let dim = Style::new().fg(Color::DarkGray);
     let right = |text: String| Cell::from(Line::from(text).right_aligned());
     let header = Row::new([
@@ -618,6 +615,9 @@ fn spreads(stages: &[Stage]) -> Table<'static> {
     ])
     .style(dim);
     let rows = stages.iter().map(|stage| {
+        let Some(stage) = stage else {
+            return Row::new([Cell::from("")]);
+        };
         let name = Cell::from(stage.name).style(dim);
         match &stage.spread {
             Some(spread) => Row::new([
