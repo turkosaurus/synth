@@ -262,6 +262,17 @@ impl Wavetable {
         &mut self.frames[k * self.points..(k + 1) * self.points]
     }
 
+    /// One cycle as a note starts it: the frames either side of the table's
+    /// own `position`, blended point by point.
+    pub fn cycle(&self) -> Vec<f32> {
+        if self.frame_count() == 0 {
+            return Vec::new();
+        }
+        let (from, to, mix) = self.blend();
+        let (a, b) = (self.frame(from), self.frame(to));
+        a.iter().zip(b).map(|(a, b)| a + (b - a) * mix).collect()
+    }
+
     /// The two frames either side of the table's own `position`, and how
     /// far toward the second.
     pub(crate) fn blend(&self) -> (usize, usize, f32) {
@@ -475,6 +486,15 @@ mod tests {
             };
             assert_eq!((frame, phase), (1, 0.5), "for {bad}");
         }
+    }
+
+    #[test]
+    fn the_cycle_is_the_blend_at_the_tables_position() {
+        let mut wave = table(vec![0.0, 1.0, 0.0, -1.0, 0.0, 0.5, 0.0, -0.5], 4);
+        assert_eq!(wave.cycle(), vec![0.0, 1.0, 0.0, -1.0]);
+        wave.position = 0.5;
+        assert_eq!(wave.cycle(), vec![0.0, 0.75, 0.0, -0.75]);
+        assert!(table(Vec::new(), 4).cycle().is_empty());
     }
 
     fn swept(slopes: Vec<Vec<f32>>, position: f32, cycle: Vec<f32>) -> Wavetable {

@@ -27,7 +27,7 @@ impl Stroke {
 }
 
 /// The keyboard plays the patch's first instrument.
-const INSTRUMENT: usize = 0;
+pub(crate) const INSTRUMENT: usize = 0;
 
 /// How a note ends. Only the keyboard needs this: a terminal may not report
 /// key release, so in `Fixed` mode the poll loop schedules the note-off

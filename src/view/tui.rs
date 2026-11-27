@@ -9,7 +9,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Flex, Layout, Rect, Spacing};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::merge::MergeStrategy;
+use ratatui::symbols::Marker;
 use ratatui::text::Line;
+use ratatui::widgets::canvas::{self, Canvas};
 use ratatui::widgets::{
     Block, Cell, Clear, Gauge, Paragraph, RenderDirection, Row, Sparkline, SparklineBar, Table,
 };
@@ -82,6 +84,7 @@ fn drive(
             peak: &peak,
             activity: &activity,
             freqs: &model.freqs,
+            cycle: &model.cycle,
             gating,
             help: model.help,
             floor_db: config.meter_floor_db,
@@ -175,6 +178,7 @@ struct View<'a> {
     peak: &'a Meter,
     activity: &'a Activity,
     freqs: &'a Freqs,
+    cycle: &'a [f32],
     gating: Gating,
     help: bool,
     /// the meter's floor, from `config.lua`
@@ -188,6 +192,7 @@ fn draw(frame: &mut Frame, view: &View) {
         peak,
         activity,
         freqs,
+        cycle,
         gating,
         help,
         floor_db,
@@ -213,13 +218,7 @@ fn draw(frame: &mut Frame, view: &View) {
             .spacing(Spacing::Overlap(1))
             .areas(input_area);
 
-    frame.render_widget(
-        Paragraph::new("TODO")
-            .centered()
-            .style(Style::new().fg(Color::DarkGray))
-            .block(pane().title(" scope ")),
-        scope_area,
-    );
+    frame.render_widget(scope(cycle).block(pane().title(" scope ")), scope_area);
 
     let input_block = pane().title(" input ");
     let input_inner = input_block.inner(input_area);
@@ -331,6 +330,32 @@ fn draw(frame: &mut Frame, view: &View) {
     if help {
         overlay(frame, keyboard);
     }
+}
+
+/// One cycle, left to right.
+///
+/// The amplitude axis is fixed at -1..1 rather than fitted to the wave, so
+/// a quiet wave reads small and a clipped one as a flat top.
+fn scope(cycle: &[f32]) -> Canvas<'_, impl Fn(&mut canvas::Context) + '_> {
+    let len = cycle.len();
+    Canvas::default()
+        // 2x4 dots per cell, and a wave needs the half below zero
+        .marker(Marker::Braille)
+        .x_bounds([0.0, len as f64])
+        .y_bounds([-1.0, 1.0])
+        .paint(move |ctx| {
+            // the last segment returns to the first point, closing the period
+            for (i, &y) in cycle.iter().enumerate() {
+                let next = cycle[(i + 1) % len];
+                ctx.draw(&canvas::Line::new(
+                    i as f64,
+                    y as f64,
+                    (i + 1) as f64,
+                    next as f64,
+                    Color::Reset,
+                ));
+            }
+        })
 }
 
 /// A bordered section.
@@ -556,6 +581,30 @@ mod tests {
         for k in keys {
             assert_eq!(key(code(k)), Some(k));
         }
+    }
+
+    fn rows(cycle: &[f32]) -> Vec<String> {
+        let area = Rect::new(0, 0, 8, 4);
+        let mut buffer = ratatui::buffer::Buffer::empty(area);
+        ratatui::widgets::Widget::render(scope(cycle), area, &mut buffer);
+        (0..area.height)
+            .map(|y| (0..area.width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn a_wave_at_full_scale_draws_along_the_top_row_only() {
+        let rows = rows(&[1.0; 16]);
+        assert!(rows[0].chars().all(|ch| ch != ' '), "{rows:?}");
+        assert!(
+            rows[1..].iter().all(|row| row.trim().is_empty()),
+            "{rows:?}"
+        );
+    }
+
+    #[test]
+    fn an_empty_cycle_draws_nothing() {
+        assert!(rows(&[]).iter().all(|row| row.trim().is_empty()));
     }
 
     #[test]

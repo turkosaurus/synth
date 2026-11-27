@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::audio::{self, Feed, Player, Stats};
-use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke};
+use crate::input::keyboard::{self, Gating, Keyboard, Outcome, Stroke};
 use crate::script;
 use crate::spec::{Config, Event};
 
@@ -37,6 +37,8 @@ pub(crate) struct Model {
     pub(crate) keyboard: Keyboard,
     /// The same baked table the player reads, copied for the view.
     pub(crate) freqs: crate::spec::Freqs,
+    /// One cycle of the instrument the keyboard plays, as a note starts it.
+    pub(crate) cycle: Vec<f32>,
     /// Whether the help overlay is up.
     pub(crate) help: bool,
 }
@@ -98,6 +100,12 @@ impl Session {
         // and the player takes ownership of it.
         // 128 f32 copied once at startup.
         let freqs = patch.freqs.clone();
+        let cycle = patch
+            .timeline
+            .instruments
+            .get(keyboard::INSTRUMENT)
+            .map(|instrument| instrument.wave().cycle())
+            .unwrap_or_default();
 
         // the producer stays here; the consumer moves into the audio callback
         let (tx, rx) = rtrb::RingBuffer::<Event>::new(config.queue);
@@ -118,6 +126,7 @@ impl Session {
             model: Model {
                 keyboard: Keyboard::new(patch.keymap, gating),
                 freqs,
+                cycle,
                 help: false,
             },
             stats,
@@ -182,6 +191,7 @@ mod tests {
         Model {
             keyboard: Keyboard::new(keymap, Gating::Held),
             freqs: crate::spec::Freqs::unchecked([0.0; 128]),
+            cycle: Vec::new(),
             help: false,
         }
     }
