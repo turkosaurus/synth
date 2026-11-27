@@ -10,6 +10,7 @@
 | [`session.rs`](./session.rs) | model, msg, and cmd for a live view; wires device, patch, and ring |
 | [`view`](./view) | tui, reports, prompts |
 | [`terminal.rs`](./terminal.rs) | raw mode and key release detection |
+| [`log.rs`](./log.rs) | the live log socket, and following the log for `log` |
 | [`install.rs`](./install.rs) | `install`, `uninstall` |
 | [`update.rs`](./update.rs) | `update` from GitHub releases |
 | [`release.rs`](./release.rs) | build identity for `--version` |
@@ -23,6 +24,7 @@ flowchart LR
         custom([custom])
         play([play])
         tui([tui])
+        log_cmd([log])
     end
     subgraph binary [binary commands]
         install_cmd([install])
@@ -34,6 +36,7 @@ flowchart LR
     doctor & tui --> terminal
     play --> audio
     tui --> session --> script & audio & input
+    log_cmd --> log & view
     install_cmd & uninstall --> install
     update_cmd --> update --> install & release
     version --> release
