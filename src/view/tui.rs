@@ -9,7 +9,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Flex, Layout, Rect, Spacing};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::merge::MergeStrategy;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Cell, Clear, Gauge, Paragraph, RenderDirection, Row, Sparkline, SparklineBar, Table,
 };
@@ -31,8 +31,8 @@ const INPUT_WIDTH: u16 = LABEL_WIDTH + COLUMN_GAP + VALUE_WIDTH + 2;
 const COLUMN_GAP: u16 = 2;
 const SPARK_ROWS: u16 = 2;
 const METER_ROWS: u16 = 3 + SPARK_ROWS;
-/// the header, four stages, and the view row
-const LATENCY_ROWS: u16 = 6;
+/// the header and four stages
+const LATENCY_ROWS: u16 = 5;
 const STATS_ROWS: u16 = METER_ROWS + LATENCY_ROWS;
 const STAGE_WIDTH: u16 = 7;
 const NUMBER_WIDTH: u16 = 7;
@@ -104,7 +104,6 @@ fn drive(
         // spread sorts each window, so it is taken before the draw it
         // would otherwise be counted in
         let latency = stages(&model.latency);
-        let buffer = buffer(model.requested, snap.buffer_frames);
         let fps = model.latency.view.per_second();
         let view = View {
             keyboard: &model.keyboard,
@@ -117,7 +116,7 @@ fn drive(
             floor_db: config.meter_floor_db,
             latency: &latency,
             fps,
-            buffer: &buffer,
+            requested: model.requested,
         };
         terminal.draw(|frame| draw(frame, &view))?;
         let _ = session.update(Msg::Drawn(Instant::now()));
@@ -217,8 +216,9 @@ struct View<'a> {
     latency: &'a [Stage],
     /// frames drawn in the last second
     fps: usize,
-    /// buffer asked for and got
-    buffer: &'a str,
+    /// frames per callback asked of the device; `None` left it to the
+    /// platform
+    requested: Option<u32>,
 }
 
 /// One latency row: a stage, its spread, and its budget.
@@ -243,13 +243,46 @@ fn stages(latency: &Latency) -> Vec<Stage> {
     ]
 }
 
-fn buffer(requested: Option<u32>, got: u32) -> String {
-    let asked = requested.map_or("default".to_string(), |frames| frames.to_string());
-    let got = match got {
+/// The buffer the device gave, and whether it differs from the one asked
+/// for. `got` is 0 before the first callback.
+fn buffer(requested: Option<u32>, got: u32) -> (String, bool) {
+    let shown = match got {
         0 => "—".to_string(),
         frames => frames.to_string(),
     };
-    format!("buffer asked {asked}, got {got}")
+    match requested {
+        None => (format!("buffer {shown} (default)"), false),
+        Some(asked) if got == 0 || got == asked => (format!("buffer {asked}"), false),
+        Some(asked) => (format!("buffer {shown} (asked {asked})"), true),
+    }
+}
+
+/// The one status line: fault counters, the buffer, and the view's rate.
+/// An unplugged device or a stalled callback otherwise looks like a quiet
+/// synth, so each counter takes colour once it moves.
+fn status(snap: &Snapshot, requested: Option<u32>, fps: usize) -> Line<'static> {
+    let count = |name: &str, n: u64, colour: Color| {
+        let style = match n {
+            0 => Style::new(),
+            _ => Style::new().fg(colour),
+        };
+        Span::styled(format!("{name} {n}  "), style)
+    };
+    let (buffer, differs) = buffer(requested, snap.buffer_frames);
+    let buffer_style = match differs {
+        true => Style::new().fg(Color::Yellow),
+        false => Style::new(),
+    };
+    Line::from(vec![
+        count("errors", snap.errors, Color::Red),
+        count("overruns", snap.overruns, Color::Red),
+        count("dropped", snap.dropped, Color::Yellow),
+        Span::styled(buffer, buffer_style),
+        Span::styled(
+            format!("  view {fps} fps"),
+            Style::new().fg(Color::DarkGray),
+        ),
+    ])
 }
 
 fn draw(frame: &mut Frame, view: &View) {
@@ -264,7 +297,7 @@ fn draw(frame: &mut Frame, view: &View) {
         floor_db,
         latency,
         fps,
-        buffer,
+        requested,
     } = *view;
 
     let footer = vec![Line::from("(ctrl-c) quit | (?) help")];
@@ -305,21 +338,19 @@ fn draw(frame: &mut Frame, view: &View) {
     let stats_inner = stats_block.inner(stats_area);
     frame.render_widget(stats_block, stats_area);
 
-    // graph, then gain, then cpu, then faults, then latency: region order
-    // is what stacks them, not the order the widgets are rendered in
-    let [clip_area, peak_area, load_area, fault_area, latency_area] = Layout::vertical([
+    // latency, then graph, then gain, then cpu, then status at the very
+    // bottom: region order is what stacks them, not the order the widgets
+    // are rendered in
+    let [latency_area, clip_area, peak_area, load_area, status_area] = Layout::vertical([
+        Constraint::Length(LATENCY_ROWS),
         Constraint::Length(SPARK_ROWS),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(LATENCY_ROWS),
     ])
     .areas(stats_inner);
     latency_rows(frame, latency_area, latency);
-    frame.render_widget(
-        Line::from(format!("view {fps} fps  {buffer}")).style(Style::new().fg(Color::DarkGray)),
-        latency_area.rows().next_back().unwrap_or_default(),
-    );
+    frame.render_widget(status(snap, requested, fps), status_area);
 
     frame.render_widget(
         Sparkline::default()
@@ -358,15 +389,6 @@ fn draw(frame: &mut Frame, view: &View) {
             0.9,
         ),
         load_area,
-    );
-    // an unplugged device or a stalled callback otherwise looks like a
-    // quiet synth
-    frame.render_widget(
-        Line::from(format!(
-            "errors {}  overruns {}  dropped {}",
-            snap.errors, snap.overruns, snap.dropped
-        )),
-        fault_area,
     );
     // peak is logarithmic, so the thresholds are dB, placed on whatever
     // floor the scale has
@@ -759,6 +781,26 @@ mod tests {
         for k in keys {
             assert_eq!(key(code(k)), Some(k));
         }
+    }
+
+    #[test]
+    fn an_unset_buffer_reads_as_the_default() {
+        assert_eq!(buffer(None, 256), ("buffer 256 (default)".into(), false));
+        assert_eq!(buffer(None, 0), ("buffer — (default)".into(), false));
+    }
+
+    #[test]
+    fn a_buffer_given_as_asked_shows_once() {
+        assert_eq!(buffer(Some(256), 256), ("buffer 256".into(), false));
+        assert_eq!(buffer(Some(256), 0), ("buffer 256".into(), false));
+    }
+
+    #[test]
+    fn a_buffer_other_than_asked_names_both_and_warns() {
+        assert_eq!(
+            buffer(Some(128), 512),
+            ("buffer 512 (asked 128)".into(), true)
+        );
     }
 
     #[test]
