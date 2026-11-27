@@ -1,6 +1,6 @@
 -- A tuning of your own: any function from MIDI note to Hz. A patch uses it
 -- with
---   tuning = require("tuning.example")
+--   tuning = require("tunings.example")
 local synth = require("synth")
 
 return synth.tuning.equal({

@@ -1,5 +1,5 @@
 //! One example patch per kind, written into an empty kind folder so a new
-//! patches folder opens with something to copy. The files are the user's
+//! custom folder opens with something to copy. The files are the user's
 //! once written: a folder holding any `.lua` file gets nothing.
 
 use std::fs;
@@ -13,24 +13,24 @@ const FILE: &str = "example.lua";
 /// Every kind's starter, by the folder it goes in.
 const STARTERS: [(&str, &str); 5] = [
     (
-        "instrument",
-        include_str!("../../lua/patches/instrument/example.lua"),
+        "instruments",
+        include_str!("../../lua/custom/instruments/example.lua"),
     ),
     (
-        "effect",
-        include_str!("../../lua/patches/effect/example.lua"),
+        "effects",
+        include_str!("../../lua/custom/effects/example.lua"),
     ),
     (
-        "keyboard",
-        include_str!("../../lua/patches/keyboard/example.lua"),
+        "keyboards",
+        include_str!("../../lua/custom/keyboards/example.lua"),
     ),
     (
-        "tuning",
-        include_str!("../../lua/patches/tuning/example.lua"),
+        "tunings",
+        include_str!("../../lua/custom/tunings/example.lua"),
     ),
     (
-        "pattern",
-        include_str!("../../lua/patches/pattern/example.lua"),
+        "patterns",
+        include_str!("../../lua/custom/patterns/example.lua"),
     ),
 ];
 
@@ -42,12 +42,12 @@ fn has_lua(dir: &Path) -> bool {
     })
 }
 
-/// Creates each kind folder under `patches` and writes its starter into
+/// Creates each kind folder under `custom` and writes its starter into
 /// those holding no Lua yet. Returns what it wrote, as `kind/example.lua`.
-pub fn write(patches: &Path) -> Result<Vec<String>, Error> {
+pub fn write(custom: &Path) -> Result<Vec<String>, Error> {
     let mut wrote = Vec::new();
     for (kind, source) in STARTERS {
-        let dir = patches.join(kind);
+        let dir = custom.join(kind);
         fs::create_dir_all(&dir).map_err(|error| Error::io("create", &dir, error))?;
         if has_lua(&dir) {
             continue;
@@ -63,7 +63,7 @@ pub fn write(patches: &Path) -> Result<Vec<String>, Error> {
 mod tests {
     use super::*;
 
-    fn patches(test: &str) -> std::path::PathBuf {
+    fn custom(test: &str) -> std::path::PathBuf {
         let dir =
             std::env::temp_dir().join(format!("synth-starters-{test}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -78,23 +78,23 @@ mod tests {
 
     #[test]
     fn an_empty_folder_gets_its_starter_once() {
-        let dir = patches("once");
+        let dir = custom("once");
         assert_eq!(write(&dir).unwrap().len(), STARTERS.len());
-        assert!(dir.join("pattern").join(FILE).exists());
+        assert!(dir.join("patterns").join(FILE).exists());
         assert!(write(&dir).unwrap().is_empty(), "already there");
     }
 
     #[test]
     fn a_folder_with_a_patch_of_its_own_gets_none() {
-        let dir = patches("own");
-        fs::create_dir_all(dir.join("instrument")).unwrap();
-        fs::write(dir.join("instrument").join("bass.lua"), "return {}").unwrap();
+        let dir = custom("own");
+        fs::create_dir_all(dir.join("instruments")).unwrap();
+        fs::write(dir.join("instruments").join("bass.lua"), "return {}").unwrap();
         let wrote = write(&dir).unwrap();
-        assert!(!wrote.contains(&"instrument/example.lua".to_string()));
-        assert!(!dir.join("instrument").join(FILE).exists());
+        assert!(!wrote.contains(&"instruments/example.lua".to_string()));
+        assert!(!dir.join("instruments").join(FILE).exists());
         // a deleted starter stays deleted while the folder has other patches
-        fs::remove_file(dir.join("tuning").join(FILE)).unwrap();
-        fs::write(dir.join("tuning").join("just.lua"), "return {}").unwrap();
+        fs::remove_file(dir.join("tunings").join(FILE)).unwrap();
+        fs::write(dir.join("tunings").join("just.lua"), "return {}").unwrap();
         assert!(write(&dir).unwrap().is_empty());
     }
 }

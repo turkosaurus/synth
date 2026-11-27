@@ -203,11 +203,13 @@ pub enum Error {
         source: mlua::Error,
     },
 
-    #[error("config.lua: `patch_dir` starts with ~/, but there is no home directory")]
-    PatchDirNoHome,
+    #[error("config.lua: `custom_dir` starts with ~/, but there is no home directory")]
+    CustomDirNoHome,
 
-    #[error("config.lua: `patch_dir` is {setting:?}; must be absolute, start with ~/, or be \"\"")]
-    PatchDirRelative { setting: String },
+    #[error(
+        "config.lua: `custom_dir` is {setting:?}; must be absolute, start with ~/, or be \"\""
+    )]
+    CustomDirRelative { setting: String },
 
     #[error("{what} is not callable")]
     NotCallable { what: &'static str },
