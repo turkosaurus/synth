@@ -1,6 +1,6 @@
-//! What went wrong on a realtime thread, as plain values. Each producer
-//! pushes to its own ring, since a ring takes one producer; the one thread
-//! that formats and logs drains them all.
+//! Errors from a realtime thread, as plain values. 
+//! Each producer pushes to its own ring, since a ring takes one producer; 
+//! the formatting and logging UI thread drains them all.
 
 use std::fmt;
 use std::io;
