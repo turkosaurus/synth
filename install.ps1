@@ -102,7 +102,17 @@
         } catch {
             Fail "cannot download $asset from ${tag}: $_"
         }
-        $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+        # not Get-FileHash: Windows PowerShell autoloads it from PSModulePath,
+        # which a PowerShell 7 parent points at its own, incompatible modules
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        $stream = [IO.File]::OpenRead($archive)
+        try {
+            $sum = $sha256.ComputeHash($stream)
+        } finally {
+            $stream.Dispose()
+            $sha256.Dispose()
+        }
+        $got = [BitConverter]::ToString($sum).Replace('-', '').ToLowerInvariant()
         if ($got -ne $want) {
             Fail "$asset sha256 is $got, expected $want"
         }

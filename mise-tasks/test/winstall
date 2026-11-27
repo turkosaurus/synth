@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="install.ps1 from the latest release under both Windows PowerShells: install, run, update, uninstall"
+#MISE description="install.ps1 from the latest release under both Windows PowerShells: install, run, update to dev and back, uninstall"
 
 # Windows only, and it installs the published release, not this checkout's
 # build, so release.yml runs it once per release rather than per PR.
