@@ -116,7 +116,7 @@ const LIVE: &str = "synth::log=warn";
 // faults are always written by a command that `streams`; RUST_LOG adds
 // whatever else it names, and is the one case where a log that cannot be
 // opened stops synth. without it, other commands leave the log alone, so a
-// `synth check` does not truncate the log of a session still playing.
+// `synth check` does not trim the log of a session still playing.
 // `log` reads the file, so it never opens it for writing.
 fn tracing_init(command: &Commands) -> anyhow::Result<Option<synth::log::Listening>> {
     use tracing_subscriber::fmt::writer::MakeWriterExt;
@@ -178,8 +178,9 @@ fn tracing_init(command: &Commands) -> anyhow::Result<Option<synth::log::Listeni
 }
 
 /// `$XDG_STATE_HOME/synth/log.jsonl`, else `~/.local/state/synth/log.jsonl`,
-/// or `%APPDATA%\synth\log.jsonl` on Windows, created fresh; `None` for
-/// a command that does not `stream` unless RUST_LOG asks for a log.
+/// or `%APPDATA%\synth\log.jsonl` on Windows, trimmed and opened to
+/// append; `None` for a command that does not `stream` unless RUST_LOG
+/// asks for a log.
 fn log_file(streams: bool) -> anyhow::Result<Option<std::fs::File>> {
     if !streams && std::env::var_os("RUST_LOG").is_none() {
         return Ok(None);
@@ -189,9 +190,12 @@ fn log_file(streams: bool) -> anyhow::Result<Option<std::fs::File>> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
     }
-    std::fs::File::create(&path)
+    // a config.lua that does not load leaves the log untrimmed; the command
+    // reports that error itself
+    let trim_kb = script::config().map_or(0, |config| config.log.trim_size_kb);
+    synth::log::open(&path, trim_kb * 1024)
         .map(Some)
-        .with_context(|| format!("create {}", path.display()))
+        .with_context(|| format!("open {}", path.display()))
 }
 
 /// Starts the live log at `$XDG_RUNTIME_DIR/synth/log.sock`, or says why

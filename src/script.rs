@@ -247,6 +247,8 @@ mod field {
     pub(super) const QUEUE: &str = "queue";
     pub(super) const CUSTOM_DIR: &str = "custom_dir";
     pub(super) const TUI: &str = "tui";
+    pub(super) const LOG: &str = "log";
+    pub(super) const TRIM_SIZE_KB: &str = "trim_size_kb";
     pub(super) const POLL: &str = "poll";
     pub(super) const METER_HOLD: &str = "meter_hold";
     pub(super) const METER_FALL: &str = "meter_fall";

@@ -1,17 +1,54 @@
-//! The log's live copy: a socket carrying each event to whoever is
-//! connected, and the reader behind `synth log`.
+//! `log.jsonl` and its live copy. Every session appends to the file, and
+//! each start trims it; a socket carries each event to whoever is
+//! connected; and the reader behind `synth log` follows either.
 //!
 //! The file is the record; the socket is a view of it that never holds up
 //! the writer. A reader that falls behind loses events, never the lines
 //! it does get.
 
-use std::fs::File;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tracing_subscriber::fmt::MakeWriter;
+
+/// Open `path` to append, first trimming it to its newest `limit` bytes,
+/// cut at a line boundary. A `limit` of 0 never trims.
+pub fn open(path: &Path, limit: u64) -> io::Result<File> {
+    if limit > 0 {
+        trim(path, limit)?;
+    }
+    OpenOptions::new().create(true).append(true).open(path)
+}
+
+fn trim(path: &Path, limit: u64) -> io::Result<()> {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let len = file.metadata()?.len();
+    if len <= limit {
+        return Ok(());
+    }
+    // one byte before the cut says whether it already falls on a line start
+    file.seek(SeekFrom::Start(len - limit - 1))?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail)?;
+    drop(file);
+    fs::write(path, newest_lines(&tail))
+}
+
+/// The whole lines of `tail` after its first byte: the partial line the
+/// cut leaves is dropped, unless that first byte ends a line.
+fn newest_lines(tail: &[u8]) -> &[u8] {
+    match tail.iter().position(|&byte| byte == b'\n') {
+        Some(end) => &tail[end + 1..],
+        None => &[],
+    }
+}
 
 /// How often [`follow`] looks for more of the file.
 const POLL: Duration = Duration::from_millis(250);
@@ -202,7 +239,7 @@ pub fn follow(
 }
 
 /// Follows `path` as `tail -F` does: through its absence, and from the
-/// start again once a new session truncates it.
+/// start again once a new session trims it.
 fn tail(
     path: &Path,
     from_end: bool,
@@ -240,7 +277,7 @@ fn tail(
 }
 
 #[cfg(all(test, unix))]
-mod tests {
+mod socket_tests {
     use super::{listen, pid_path, Socket};
     use std::io::{BufRead, BufReader, Read, Write};
     use std::os::unix::net::UnixStream;
@@ -349,5 +386,64 @@ mod tests {
         assert!(path.exists(), "the holder keeps its socket");
         drop(first);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn scratch(test: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("synth-log-{test}-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir.join("log.jsonl")
+    }
+
+    #[test]
+    fn a_session_appends() {
+        let path = scratch("appends");
+        fs::write(&path, "one\n").unwrap();
+        writeln!(open(&path, 0).unwrap(), "two").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "one\ntwo\n");
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_large_log_keeps_its_newest_whole_lines() {
+        let path = scratch("trims");
+        fs::write(&path, "first\nsecond\nthird\n").unwrap();
+        // 9 bytes reach back into "second", so that line goes too
+        open(&path, 9).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "third\n");
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_cut_on_a_line_boundary_keeps_that_line() {
+        let path = scratch("boundary");
+        fs::write(&path, "first\nsecond\n").unwrap();
+        open(&path, 7).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second\n");
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_log_within_the_limit_or_unlimited_is_untouched() {
+        let path = scratch("untouched");
+        fs::write(&path, "first\nsecond\n").unwrap();
+        open(&path, 13).unwrap();
+        open(&path, 0).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first\nsecond\n");
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_missing_log_is_created() {
+        let path = scratch("missing");
+        let _ = fs::remove_file(&path);
+        open(&path, 9).unwrap();
+        assert!(path.exists());
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 }

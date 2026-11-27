@@ -23,11 +23,15 @@
 ---@field meter_fps? synth.ConfigBudget frames per second; the view warns below these
 ---@field faults? integer faults each thread queues for the view, allocated once at start
 
+---@class synth.ConfigLog
+---@field trim_size_kb? integer KiB; at start, a larger log.jsonl keeps only its newest lines up to this (0: never trim)
+
 ---@class synth.Config
 ---@field buffer_frames? integer audio callback frames (0: system default)
 ---@field queue? integer buffer size: input -> audio
 ---@field custom_dir? string custom folder
 ---@field tui? synth.ConfigTui
+---@field log? synth.ConfigLog
 local config = {
 	buffer_frames = 0, -- audio callback frames (0: system default)
 	queue = 256, -- buffer size: input -> audio
@@ -49,6 +53,9 @@ local config = {
 		},
 		meter_fps = { warn = 30, danger = 24 },
 		faults = 64, -- faults each thread queues for the view, allocated once at start
+	},
+	log = {
+		trim_size_kb = 1024, -- KiB; at start, a larger log.jsonl keeps only its newest lines up to this (0: never trim)
 	},
 }
 

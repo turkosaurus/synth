@@ -16,6 +16,16 @@ pub struct Config {
     /// is no home directory to put the default in.
     pub custom_dir: Option<PathBuf>,
     pub tui: TuiConfig,
+    pub log: LogConfig,
+}
+
+/// How `log.jsonl` is kept between sessions.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct LogConfig {
+    /// At start, a log larger than this many KiB keeps only its newest
+    /// lines that fit; 0 never trims.
+    pub trim_size_kb: u64,
 }
 
 /// How the terminal view runs and draws.
