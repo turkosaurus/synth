@@ -46,6 +46,9 @@ pub struct TuiConfig {
     /// Frames per second below which the view's rate turns yellow, then
     /// red; `danger` is below `warn`, since a higher rate is better.
     pub fps: Budget,
+    /// Faults each producing thread can push before the view drains them;
+    /// each ring is allocated once, when the stream opens.
+    pub faults: usize,
 }
 
 /// Where a reading turns yellow, then red: ms for a latency stage, where

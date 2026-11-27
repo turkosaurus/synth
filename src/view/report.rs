@@ -89,6 +89,7 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
                 "fps",
                 format!("warn below {}, red below {}", tui.fps.warn, tui.fps.danger),
             ),
+            ("faults", tui.faults.to_string()),
         ],
         false,
     );
@@ -273,6 +274,7 @@ pub fn stats(snap: &Snapshot) -> String {
         dropped,
         output_tee_dropped: _,
         timing_dropped: _,
+        input_errors: _,
         peak,
         budget_us,
         buffer_frames,

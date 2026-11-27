@@ -253,6 +253,7 @@ mod field {
     pub(super) const METER_FLOOR: &str = "meter_floor";
     pub(super) const METER_LATENCY: &str = "meter_latency";
     pub(super) const METER_FPS: &str = "meter_fps";
+    pub(super) const FAULTS: &str = "faults";
     pub(super) const WINDOW: &str = "window";
     pub(super) const RECORDS: &str = "records";
     pub(super) const FLOOR: &str = "floor";

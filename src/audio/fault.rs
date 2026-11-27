@@ -4,12 +4,9 @@
 
 use std::fmt;
 use std::io;
+use std::time::Instant;
 
 use tracing::warn;
-
-/// Faults each ring holds before the reader drains it. A full ring loses
-/// the record, never the count, which `Stats` keeps apart.
-const CAPACITY: usize = 64;
 
 /// One fault, copied out of the thread it happened on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,47 +61,81 @@ impl fmt::Display for Fault {
     }
 }
 
-/// The reading end of every fault ring, for the thread that logs them.
-pub struct Faults {
-    rings: Vec<rtrb::Consumer<Fault>>,
-    last: Option<Fault>,
+/// A fault and when it was pushed, so faults from different rings can be
+/// put back in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stamped {
+    pub at: Instant,
+    pub fault: Fault,
 }
 
-impl Default for Faults {
-    fn default() -> Self {
-        Self::new()
+/// One producer's end of a fault ring.
+pub struct Reporter(rtrb::Producer<Stamped>);
+
+impl Reporter {
+    /// Push `fault`, stamped now. A full ring loses the record, never the
+    /// count, which `Stats` keeps apart.
+    pub fn push(&mut self, fault: Fault) {
+        let _ = self.0.push(Stamped {
+            at: Instant::now(),
+            fault,
+        });
+    }
+
+    /// Faults that fit before the ring is full.
+    pub fn slots(&self) -> usize {
+        self.0.slots()
     }
 }
 
+/// The reading end of every fault ring, for the thread that logs them.
+pub struct Faults {
+    capacity: usize,
+    rings: Vec<rtrb::Consumer<Stamped>>,
+    /// faults from every ring, sorted before they are logged
+    drained: Vec<Stamped>,
+    last: Option<Stamped>,
+}
+
 impl Faults {
-    pub fn new() -> Self {
+    /// Each ring made by [`Faults::ring`] holds `capacity` faults.
+    pub fn new(capacity: usize) -> Self {
         Self {
+            capacity,
             rings: Vec::new(),
+            drained: Vec::new(),
             last: None,
         }
     }
 
     /// A new ring for one producer, read by [`Faults::drain`].
-    pub fn ring(&mut self) -> rtrb::Producer<Fault> {
-        let (tx, rx) = rtrb::RingBuffer::new(CAPACITY);
+    pub fn ring(&mut self) -> Reporter {
+        let (tx, rx) = rtrb::RingBuffer::new(self.capacity);
         self.rings.push(rx);
-        tx
+        Reporter(tx)
     }
 
-    /// Log every fault waiting in every ring. Rings are drained in turn, so
-    /// faults from two producers are not in the order they happened.
+    /// Log every fault waiting in every ring, oldest first.
     pub fn drain(&mut self) {
         for ring in &mut self.rings {
-            while let Ok(fault) = ring.pop() {
-                warn!("{fault}");
-                self.last = Some(fault);
+            while let Ok(stamped) = ring.pop() {
+                self.drained.push(stamped);
+            }
+        }
+        self.drained.sort_by_key(|stamped| stamped.at);
+        for stamped in self.drained.drain(..) {
+            warn!("{}", stamped.fault);
+            // a fault stamped before one already shown may be pushed after
+            // that one was drained
+            if self.last.is_none_or(|last| last.at <= stamped.at) {
+                self.last = Some(stamped);
             }
         }
     }
 
     /// The most recent fault drained.
     pub fn last(&self) -> Option<Fault> {
-        self.last
+        self.last.map(|stamped| stamped.fault)
     }
 }
 
@@ -138,21 +169,43 @@ mod tests {
         }
     }
 
+    // the later ring is drained first, so only the stamps can put the
+    // underrun last
     #[test]
-    fn drain_reads_every_ring_and_keeps_the_latest() {
-        let mut faults = Faults::new();
+    fn drain_orders_every_ring_by_time() {
+        let mut faults = Faults::new(4);
         let mut audio = faults.ring();
         let mut input = faults.ring();
-        audio.push(Fault::Stream(StreamKind::Underrun)).unwrap();
-        input.push(Fault::Dropped).unwrap();
+        input.push(Fault::Dropped);
+        audio.push(Fault::Stream(StreamKind::Underrun));
+        faults.drain();
+        assert_eq!(faults.last(), Some(Fault::Stream(StreamKind::Underrun)));
+        assert!(faults.rings.iter().all(rtrb::Consumer::is_empty));
+    }
+
+    #[test]
+    fn a_fault_stamped_earlier_does_not_replace_the_last() {
+        let mut faults = Faults::new(4);
+        let mut audio = faults.ring();
+        let mut input = faults.ring();
+        let early = Instant::now();
+        audio.push(Fault::Dropped);
+        faults.drain();
+        input
+            .0
+            .push(Stamped {
+                at: early,
+                fault: Fault::Stream(StreamKind::Underrun),
+            })
+            .unwrap();
         faults.drain();
         assert_eq!(faults.last(), Some(Fault::Dropped));
-        assert!(faults.rings.iter().all(rtrb::Consumer::is_empty));
     }
 
     #[test]
     fn a_fault_is_plain_data() {
         fn copy<T: Copy + Send>() {}
         copy::<Fault>();
+        copy::<Stamped>();
     }
 }

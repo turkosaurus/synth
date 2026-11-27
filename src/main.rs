@@ -404,7 +404,7 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
     let seconds = player.total_samples() as f64 / sample_rate as f64;
 
     let stats = Arc::new(audio::Stats::default());
-    let mut faults = audio::Faults::new();
+    let mut faults = audio::Faults::new(config.tui.faults);
     let _stream = audio::stream(&output, player, Arc::clone(&stats), None, &mut faults)?;
 
     // stdout carries only data, so these lines never mix into a pipe

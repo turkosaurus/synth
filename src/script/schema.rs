@@ -154,6 +154,9 @@ pub(super) const CONFIG_TUI: Schema = Schema {
         optional(field::METER_FLOOR, Ty::Number, Bound::Below(0.0)),
         optional(field::METER_LATENCY, Ty::Table, Bound::Any),
         optional(field::METER_FPS, Ty::Table, Bound::Any),
+        // one ring per producing thread, allocated when the stream opens;
+        // a full ring loses the record, never the count
+        optional(field::FAULTS, Ty::Integer, Bound::Between(1.0, 65536.0)),
     ],
 };
 

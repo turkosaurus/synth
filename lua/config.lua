@@ -21,6 +21,7 @@
 ---@field meter_floor? number dB, the quietest level the meter shows
 ---@field meter_latency? synth.ConfigLatency
 ---@field meter_fps? synth.ConfigBudget frames per second; the view warns below these
+---@field faults? integer faults each thread queues for the view, allocated once at start
 
 ---@class synth.Config
 ---@field buffer_frames? integer audio callback frames (0: system default)
@@ -47,6 +48,7 @@ local config = {
 			total = { warn = 10, danger = 20 },
 		},
 		meter_fps = { warn = 30, danger = 24 },
+		faults = 64, -- faults each thread queues for the view, allocated once at start
 	},
 }
 
