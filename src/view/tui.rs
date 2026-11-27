@@ -144,7 +144,7 @@ fn read(
         // poll bounds the wait so Fixed note-offs still fall due on time
         keys.clear();
         if let Err(error) = source.keys(poll, &mut keys) {
-            input.fault(Fault::Input(io_kind(&error)));
+            input.read_failed(io_kind(&error));
             return Err(error);
         }
         for &(key, read) in &keys {
@@ -381,13 +381,14 @@ fn fps_style(fps: usize, config: &TuiConfig) -> Style {
     }
 }
 
-/// The status counter a fault is counted in, if the line shows one.
-fn counter(fault: Fault) -> Option<&'static str> {
+/// The status counter a fault is counted in.
+fn counter(fault: Fault) -> &'static str {
     match fault {
-        Fault::Stream(_) => Some("errors"),
-        Fault::Overrun { .. } => Some("overruns"),
-        Fault::Dropped => Some("dropped"),
-        Fault::TeeDropped { .. } | Fault::Input(_) => None,
+        Fault::Stream(_) => "errors",
+        Fault::Overrun { .. } => "overruns",
+        Fault::Dropped => "dropped",
+        Fault::TeeDropped { .. } => "tee dropped",
+        Fault::Input(_) => "input errors",
     }
 }
 
@@ -408,7 +409,7 @@ fn status(
             _ => Style::new().fg(colour),
         };
         let text = match fault {
-            Some(fault) if counter(fault) == Some(name) => format!("{name} {n} (last: {fault})  "),
+            Some(fault) if counter(fault) == name => format!("{name} {n} (last: {fault})  "),
             _ => format!("{name} {n}  "),
         };
         Span::styled(text, style)
@@ -422,6 +423,8 @@ fn status(
         count("errors", snap.errors, Color::Red),
         count("overruns", snap.overruns, Color::Red),
         count("dropped", snap.dropped, Color::Yellow),
+        count("tee dropped", snap.output_tee_dropped, Color::Yellow),
+        count("input errors", snap.input_errors, Color::Yellow),
         Span::styled(buffer, buffer_style),
         Span::styled(format!("  view {fps} fps"), fps_style(fps, config)),
     ])
@@ -1024,6 +1027,31 @@ mod tests {
         );
         let line = status(&snap, None, None, 60, &config).to_string();
         assert!(line.starts_with("errors 1  overruns 0  "), "{line}");
+    }
+
+    #[test]
+    fn tee_drops_and_input_errors_have_counts_that_warn() {
+        let config = crate::script::config_defaults().tui;
+        let snap = Snapshot {
+            output_tee_dropped: 3,
+            ..Snapshot::default()
+        };
+        let tee = Fault::TeeDropped { frames: 3 };
+        let line = status(&snap, Some(tee), None, 60, &config);
+        let span = |name: &str| {
+            line.spans
+                .iter()
+                .find(|span| span.content.starts_with(name))
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            span("tee dropped").content,
+            "tee dropped 3 (last: output tee dropped 3 frames)  "
+        );
+        assert_eq!(span("tee dropped").style, Style::new().fg(Color::Yellow));
+        assert_eq!(span("input errors").content, "input errors 0  ");
+        assert_eq!(span("input errors").style, Style::new());
     }
 
     #[test]

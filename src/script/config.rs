@@ -338,6 +338,7 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
                 warn: fps_warn as f32,
                 danger: fps_danger as f32,
             },
+            faults: tui.get(field::FAULTS)?,
         },
     })
 }
@@ -466,6 +467,7 @@ mod tests {
         assert_eq!(config.tui.meter_floor_db, -60.0);
         assert_eq!(config.tui.latency_window, Duration::from_secs(5));
         assert_eq!(config.tui.latency_records, 1024);
+        assert_eq!(config.tui.faults, 64);
         assert_eq!(config.tui.latency_floor_ms, 0.01);
         assert_eq!(config.tui.latency_ceil_ms, 100.0);
         let budget = |warn, danger| Budget { warn, danger };
@@ -656,6 +658,10 @@ mod tests {
             (
                 "return { tui = { meter_latency = { records = 0 } } }",
                 "config.lua tui meter_latency: `records` is 0; must be 1 to 65536",
+            ),
+            (
+                "return { tui = { faults = 0 } }",
+                "config.lua tui: `faults` is 0; must be 1 to 65536",
             ),
             (
                 "return { tui = { meter_latency = { records = 1.5 } } }",

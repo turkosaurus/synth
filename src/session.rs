@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::audio::{self, Fault, Faults, Feed, Origin, Player, Record, Stamp, Stats};
+use crate::audio::{self, Fault, Faults, Feed, Origin, Player, Record, Reporter, Stamp, Stats};
 use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke, PITCHES};
 use crate::script;
 use crate::spec::{Config, Event};
@@ -126,7 +126,7 @@ pub(crate) struct Input {
     /// One stamp per event in `tx`, pushed just before it.
     stamps: rtrb::Producer<Stamp>,
     stats: Arc<Stats>,
-    faults: rtrb::Producer<Fault>,
+    faults: Reporter,
     events: Vec<Event>,
     cmds: Vec<Cmd>,
 }
@@ -137,7 +137,7 @@ impl Input {
         tx: rtrb::Producer<Event>,
         stamps: rtrb::Producer<Stamp>,
         stats: Arc<Stats>,
-        faults: rtrb::Producer<Fault>,
+        faults: Reporter,
     ) -> Self {
         Self {
             model,
@@ -166,9 +166,11 @@ impl Input {
         flow
     }
 
-    /// Report `fault` to the view. A full ring loses it.
-    pub(crate) fn fault(&mut self, fault: Fault) {
-        let _ = self.faults.push(fault);
+    /// Count a failed read of input, which ends the session, and report
+    /// its kind to the view.
+    pub(crate) fn read_failed(&mut self, kind: std::io::ErrorKind) {
+        self.stats.record_input_error();
+        self.faults.push(Fault::Input(kind));
     }
 
     fn run(&mut self, cmd: Cmd) {
@@ -196,7 +198,7 @@ impl Input {
 
     fn dropped(&mut self) {
         self.stats.record_dropped();
-        self.fault(Fault::Dropped);
+        self.faults.push(Fault::Dropped);
     }
 }
 
@@ -211,7 +213,7 @@ impl Input {
             tx,
             stamps,
             Arc::new(Stats::default()),
-            Faults::new().ring(),
+            Faults::new(1).ring(),
         )
     }
 }
@@ -280,7 +282,7 @@ impl Session {
 
         let (stamps, recorder, records) = audio::timing(config.queue, config.tui.latency_records);
         let stats = Arc::new(Stats::default());
-        let mut faults = Faults::new();
+        let mut faults = Faults::new(config.tui.faults);
         let stream = audio::stream(
             &output,
             player,
@@ -449,7 +451,7 @@ pub(crate) mod tests {
     fn never_allocates(model: Model) {
         let (tx, _events) = rtrb::RingBuffer::new(1);
         let (stamps, _, _) = audio::timing(1, 1);
-        let mut faults = Faults::new();
+        let mut faults = Faults::new(1);
         let stats = Arc::new(Stats::default());
         let mut input = Input::new(model, tx, stamps, Arc::clone(&stats), faults.ring());
         let release = Msg::Key(
