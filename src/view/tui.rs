@@ -9,7 +9,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Flex, Layout, Rect, Spacing};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::merge::MergeStrategy;
+use ratatui::symbols::Marker;
 use ratatui::text::Line;
+use ratatui::widgets::canvas::{self, Canvas, Line as Segment};
 use ratatui::widgets::{
     Block, Cell, Clear, Gauge, Paragraph, RenderDirection, Row, Sparkline, SparklineBar, Table,
 };
@@ -21,6 +23,7 @@ use crate::session::{Msg, Session};
 use crate::spec::{Freqs, Key, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
+use super::scope::Scope;
 
 const POPUP_FILL: Color = Color::Yellow;
 const POPUP_INK: Color = Color::Black;
@@ -31,6 +34,9 @@ const INPUT_WIDTH: u16 = LABEL_WIDTH + COLUMN_GAP + VALUE_WIDTH + 2;
 const COLUMN_GAP: u16 = 2;
 const SPARK_ROWS: u16 = 2;
 const STATS_ROWS: u16 = 3 + SPARK_ROWS;
+/// Output the scope keeps, in seconds: `scope::CYCLES` and one more to
+/// find a trigger in, down to about 12 Hz.
+const SCOPE_SECONDS: f32 = 0.25;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
@@ -56,6 +62,7 @@ fn drive(
     // business knowing the frame rate a bar falls at
     let mut peak = Meter::new(config.meter_hold, config.meter_fall);
     let mut activity = Activity::default();
+    let mut scope = Scope::new((session.model().sample_rate * SCOPE_SECONDS) as usize);
     let mut last = Instant::now();
 
     loop {
@@ -75,8 +82,16 @@ fn drive(
         peak.update(meter::scale(snap.peak, config.meter_floor_db), dt);
         activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clipped);
 
+        scope.read(&mut session.output_tee);
         let model = session.model();
+        scope.tune(
+            model
+                .keyboard
+                .sounding()
+                .and_then(|note| model.freqs.hz(note)),
+        );
         let view = View {
+            wave: scope.window(model.sample_rate),
             keyboard: &model.keyboard,
             snap: &snap,
             peak: &peak,
@@ -175,6 +190,8 @@ struct View<'a> {
     peak: &'a Meter,
     activity: &'a Activity,
     freqs: &'a Freqs,
+    /// the scope's window, oldest first
+    wave: &'a [f32],
     gating: Gating,
     help: bool,
     /// the meter's floor, from `config.lua`
@@ -188,6 +205,7 @@ fn draw(frame: &mut Frame, view: &View) {
         peak,
         activity,
         freqs,
+        wave,
         gating,
         help,
         floor_db,
@@ -214,10 +232,7 @@ fn draw(frame: &mut Frame, view: &View) {
             .areas(input_area);
 
     frame.render_widget(
-        Paragraph::new("TODO")
-            .centered()
-            .style(Style::new().fg(Color::DarkGray))
-            .block(pane().title(" scope ")),
+        oscilloscope(wave).block(pane().title(" scope ")),
         scope_area,
     );
 
@@ -331,6 +346,35 @@ fn draw(frame: &mut Frame, view: &View) {
     if help {
         overlay(frame, keyboard);
     }
+}
+
+/// `wave` across the whole width on a fixed -1..1 axis, so clipping reads as
+/// a flat top rather than being scaled away. Braille gives each cell 2x4
+/// dots, and joining samples keeps a high pitch from drawing as dots.
+fn oscilloscope(wave: &[f32]) -> Canvas<'_, impl Fn(&mut canvas::Context) + '_> {
+    Canvas::default()
+        .marker(Marker::Braille)
+        .x_bounds([0.0, wave.len().saturating_sub(1).max(1) as f64])
+        .y_bounds([-1.0, 1.0])
+        .paint(move |ctx| {
+            ctx.draw(&Segment::new(
+                0.0,
+                0.0,
+                wave.len() as f64,
+                0.0,
+                Color::DarkGray,
+            ));
+            ctx.layer();
+            for (x, pair) in wave.windows(2).enumerate() {
+                ctx.draw(&Segment::new(
+                    x as f64,
+                    f64::from(pair[0]),
+                    x as f64 + 1.0,
+                    f64::from(pair[1]),
+                    Color::Green,
+                ));
+            }
+        })
 }
 
 /// A bordered section.
@@ -556,6 +600,27 @@ mod tests {
         for k in keys {
             assert_eq!(key(code(k)), Some(k));
         }
+    }
+
+    fn top_row(wave: &[f32]) -> String {
+        let area = Rect::new(0, 0, 24, 16);
+        let mut buffer = ratatui::buffer::Buffer::empty(area);
+        ratatui::widgets::Widget::render(oscilloscope(wave), area, &mut buffer);
+        (0..area.width)
+            .map(|x| buffer[(x, 0)].symbol().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn clipping_draws_a_flat_top() {
+        let sine = |gain: f32| -> Vec<f32> {
+            (0..96)
+                .map(|i| (gain * (std::f32::consts::TAU * i as f32 / 96.0).sin()).clamp(-1.0, 1.0))
+                .collect()
+        };
+        let lit = |row: String| row.chars().filter(|c| *c != ' ' && *c != '⠀').count();
+        let (clean, clipped) = (top_row(&sine(1.0)), top_row(&sine(4.0)));
+        assert!(lit(clipped) > 2 * lit(clean));
     }
 
     #[test]
