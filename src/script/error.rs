@@ -239,8 +239,57 @@ impl From<mlua::Error> for Error {
                 return inner.clone();
             }
         }
-        Error::Lua(error)
+        Error::Lua(trimmed(error))
     }
+}
+
+/// `error` with its traceback cut to frames in user Lua: a frame in C or
+/// in an embedded module names nothing a patch author can change.
+pub(super) fn trimmed(error: mlua::Error) -> mlua::Error {
+    match error {
+        mlua::Error::RuntimeError(message) => mlua::Error::RuntimeError(trim(&message)),
+        mlua::Error::CallbackError { traceback, cause } => mlua::Error::CallbackError {
+            traceback: trim(&traceback),
+            cause: std::sync::Arc::new(trimmed((*cause).clone())),
+        },
+        mlua::Error::WithContext { context, cause } => mlua::Error::WithContext {
+            context,
+            cause: std::sync::Arc::new(trimmed((*cause).clone())),
+        },
+        other => other,
+    }
+}
+
+const TRACEBACK: &str = "stack traceback:";
+
+/// `text` with internal frames dropped from its traceback, and the
+/// traceback dropped whole when no frame is left.
+fn trim(text: &str) -> String {
+    let (head, frames) = match text.strip_prefix(TRACEBACK) {
+        Some(frames) => ("", frames),
+        None => match text.split_once(&format!("\n{TRACEBACK}")) {
+            Some(split) => split,
+            None => return text.to_string(),
+        },
+    };
+    let kept: Vec<&str> = frames
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !internal(line.trim_start()))
+        .collect();
+    if kept.is_empty() {
+        return head.to_string();
+    }
+    let sep = if head.is_empty() { "" } else { "\n" };
+    format!("{head}{sep}{TRACEBACK}\n{}", kept.join("\n"))
+}
+
+/// Whether a traceback frame is in C (Rust callbacks included) or in an
+/// embedded module.
+fn internal(frame: &str) -> bool {
+    frame.starts_with("[C]")
+        || super::MODULES
+            .iter()
+            .any(|(module, _)| frame.starts_with(&format!("[string \"{module}\"]")))
 }
 
 /// `an envelope`, `a keyboard`.

@@ -1,0 +1,3 @@
+# bash stops at the carriage return a Windows checkout with core.autocrlf adds
+*.sh text eol=lf
+mise-tasks/** text eol=lf
