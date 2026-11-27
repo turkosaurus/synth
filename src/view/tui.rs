@@ -21,6 +21,7 @@ use crate::session::{Msg, Session};
 use crate::spec::{Freqs, Key, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
+use super::scope::Scopes;
 
 const POPUP_FILL: Color = Color::Yellow;
 const POPUP_INK: Color = Color::Black;
@@ -31,6 +32,9 @@ const INPUT_WIDTH: u16 = LABEL_WIDTH + COLUMN_GAP + VALUE_WIDTH + 2;
 const COLUMN_GAP: u16 = 2;
 const SPARK_ROWS: u16 = 2;
 const STATS_ROWS: u16 = 3 + SPARK_ROWS;
+/// Output the scope keeps: two cycles and one more to find a trigger
+/// in, down to about 12 Hz.
+const SCOPE_SECONDS: f32 = 0.25;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
@@ -56,6 +60,11 @@ fn drive(
     // business knowing the frame rate a bar falls at
     let mut peak = Meter::new(config.meter_hold, config.meter_fall);
     let mut activity = Activity::default();
+    let mut scopes = Scopes::new(
+        &session.output_tee,
+        session.model().sample_rate,
+        SCOPE_SECONDS,
+    );
     let mut last = Instant::now();
 
     loop {
@@ -76,7 +85,14 @@ fn drive(
         activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clipped);
 
         let model = session.model();
+        let hz = model
+            .keyboard
+            .sounding()
+            .and_then(|note| model.freqs.hz(note));
+        scopes.update(&mut session.output_tee, hz);
+        let model = session.model();
         let view = View {
+            scopes: &scopes,
             keyboard: &model.keyboard,
             snap: &snap,
             peak: &peak,
@@ -175,6 +191,7 @@ struct View<'a> {
     peak: &'a Meter,
     activity: &'a Activity,
     freqs: &'a Freqs,
+    scopes: &'a Scopes,
     gating: Gating,
     help: bool,
     /// the meter's floor, from `config.lua`
@@ -188,6 +205,7 @@ fn draw(frame: &mut Frame, view: &View) {
         peak,
         activity,
         freqs,
+        scopes,
         gating,
         help,
         floor_db,
@@ -213,13 +231,18 @@ fn draw(frame: &mut Frame, view: &View) {
             .spacing(Spacing::Overlap(1))
             .areas(input_area);
 
-    frame.render_widget(
-        Paragraph::new("TODO")
-            .centered()
-            .style(Style::new().fg(Color::DarkGray))
-            .block(pane().title(" scope ")),
-        scope_area,
+    let [scope_area, spectrum_area] = Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)])
+        .spacing(Spacing::Overlap(1))
+        .areas(scope_area);
+    let scope_block = pane().title(" scope ");
+    let spectrum_block = pane().title(" spectrum ");
+    let (scope_inner, spectrum_inner) = (
+        scope_block.inner(scope_area),
+        spectrum_block.inner(spectrum_area),
     );
+    frame.render_widget(scope_block, scope_area);
+    frame.render_widget(spectrum_block, spectrum_area);
+    scopes.draw(frame.buffer_mut(), scope_inner, spectrum_inner);
 
     let input_block = pane().title(" input ");
     let input_inner = input_block.inner(input_area);

@@ -1,6 +1,6 @@
 [package]
 name = "synth"
-version = "0.15.0"
+version = "0.15.1"
 edition = "2021"
 # the dependencies' floor; ratatui, mlua, and comfy-table need 1.88
 rust-version = "1.88"
@@ -44,6 +44,18 @@ default-features = false
 version = "3.5.2"
 default-features = false
 features = ["rustls"]
+
+# the scope and spectrum; its lib is named `scope`
+[dependencies.scope-tui]
+version = "=0.3.5"
+default-features = false
+features = ["tui"]
+
+# scope-tui draws with ratatui 0.29, whose chart cannot render into a 0.30
+# frame, so its charts render here and are copied cell by cell
+[dependencies.ratatui_029]
+package = "ratatui"
+version = "0.29"
 
 [dependencies.tracing-subscriber]
 version = "0.3.23"
