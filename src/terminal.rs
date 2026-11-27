@@ -4,7 +4,7 @@ use crossterm::{
     event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
     execute, terminal,
 };
-use std::io;
+use std::io::{self, IsTerminal};
 use std::panic;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Once, OnceLock};
@@ -28,6 +28,17 @@ static ENTERED: AtomicU8 = AtomicU8::new(0);
 const RAW: u8 = 1;
 const ALTERNATE: u8 = 1 << 1;
 const ENHANCED: u8 = 1 << 2;
+
+/// An error unless stdin and stdout are both terminals. Without one there
+/// is no key to wait for, and the view would redraw into nothing forever.
+pub fn require() -> io::Result<()> {
+    if io::stdin().is_terminal() && io::stdout().is_terminal() {
+        return Ok(());
+    }
+    Err(io::Error::other(
+        "synth tui needs a terminal on stdin and stdout",
+    ))
+}
 
 /// Whether a termination signal has arrived, or a panic has restored the
 /// terminal under the view. False on a platform with no signal handler

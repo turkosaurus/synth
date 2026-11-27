@@ -158,6 +158,21 @@ impl Input {
     }
 }
 
+#[cfg(test)]
+impl Input {
+    /// An input over `model` whose rings nothing reads.
+    pub(crate) fn detached(model: Model) -> Self {
+        let (tx, _) = rtrb::RingBuffer::new(16);
+        let (stamps, _, _) = audio::timing(16, 1);
+        Self {
+            model,
+            tx,
+            stamps,
+            stats: Arc::new(Stats::default()),
+        }
+    }
+}
+
 /// The view's side of timing: what the callback records, folded into
 /// windows, and the view's own draw rate.
 pub(crate) struct Timing {
@@ -256,7 +271,7 @@ impl Session {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -264,7 +279,7 @@ mod tests {
     use crate::input::keyboard::Kind;
     use crate::spec::{Key, Keymap};
 
-    fn model() -> Model {
+    pub(crate) fn model() -> Model {
         let keymap = Keymap {
             notes: HashMap::from([('a', 60)]),
             name: None,

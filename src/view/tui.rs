@@ -45,6 +45,7 @@ const LATENCY_BAR: u16 = 40;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
+    crate::terminal::require()?;
     let gating = session.model().keyboard.gating();
 
     // built before enter(), so a failure here needs no teardown.
@@ -74,7 +75,7 @@ pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
     std::thread::scope(|scope| {
         let reader = std::thread::Builder::new()
             .name("input".into())
-            .spawn_scoped(scope, || read(input, config.poll, &done, tx))
+            .spawn_scoped(scope, || read(input, &mut Console, config.poll, &done, tx))
             .context("spawning input thread")?;
         let drawn = drive(&mut terminal, stats, timing, &still, rx, config);
         done.store(true, Ordering::Relaxed);
@@ -85,15 +86,42 @@ pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
     })
 }
 
+/// Where the input thread's keys come from.
+trait Source {
+    /// Wait up to `wait` for a key, then append every key already queued,
+    /// each with when it was read. An error ends the session: a terminal
+    /// that failed once is not retried.
+    fn keys(&mut self, wait: Duration, out: &mut Vec<(KeyEvent, Instant)>) -> anyhow::Result<()>;
+}
+
+/// The terminal, through crossterm.
+struct Console;
+
+impl Source for Console {
+    fn keys(&mut self, wait: Duration, out: &mut Vec<(KeyEvent, Instant)>) -> anyhow::Result<()> {
+        if !event::poll(wait).context("polling terminal")? {
+            return Ok(());
+        }
+        while event::poll(Duration::ZERO).context("polling terminal")? {
+            if let event::Event::Key(key) = event::read().context("reading key")? {
+                out.push((key, Instant::now()));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Read keys as they arrive and push their notes to the ring at once, then
 /// send the view a fresh `Glance` whenever one changed.
 fn read(
     input: &mut Input,
+    source: &mut impl Source,
     poll: Duration,
     done: &AtomicBool,
     tx: mpsc::Sender<Glance>,
 ) -> anyhow::Result<()> {
     let mut shown = input.model().glance();
+    let mut keys = Vec::new();
     loop {
         // SIGTERM and SIGHUP only set a flag; leaving here restores the
         // terminal through the same path as the quit key
@@ -102,18 +130,14 @@ fn read(
         }
 
         // poll bounds the wait so Fixed note-offs still fall due on time
-        if event::poll(poll).context("polling terminal")? {
-            while event::poll(Duration::ZERO).context("polling terminal")? {
-                let event::Event::Key(key) = event::read().context("reading key")? else {
-                    continue;
-                };
-                let read = Instant::now();
-                let Some(stroke) = stroke(key) else {
-                    continue;
-                };
-                if input.update(Msg::Key(stroke, read)).is_break() {
-                    return Ok(());
-                }
+        keys.clear();
+        source.keys(poll, &mut keys)?;
+        for &(key, read) in &keys {
+            let Some(stroke) = stroke(key) else {
+                continue;
+            };
+            if input.update(Msg::Key(stroke, read)).is_break() {
+                return Ok(());
             }
         }
 
@@ -905,6 +929,46 @@ mod tests {
         assert_eq!(style(29), Style::new().fg(Color::Yellow));
         assert_eq!(style(24), Style::new().fg(Color::Yellow));
         assert_eq!(style(23), Style::new().fg(Color::Red));
+    }
+
+    /// Hands out each scripted result in turn, then fails.
+    struct Script(Vec<anyhow::Result<Vec<KeyEvent>>>);
+
+    impl Source for Script {
+        fn keys(&mut self, _: Duration, out: &mut Vec<(KeyEvent, Instant)>) -> anyhow::Result<()> {
+            if self.0.is_empty() {
+                anyhow::bail!("script ran out");
+            }
+            let keys = self.0.remove(0)?;
+            out.extend(keys.into_iter().map(|key| (key, Instant::now())));
+            Ok(())
+        }
+    }
+
+    fn reads(script: Script) -> anyhow::Result<()> {
+        let mut input = Input::detached(crate::session::tests::model());
+        let (tx, _rx) = mpsc::channel();
+        let mut script = script;
+        read(
+            &mut input,
+            &mut script,
+            Duration::ZERO,
+            &AtomicBool::new(false),
+            tx,
+        )
+    }
+
+    #[test]
+    fn an_input_error_ends_the_read_loop() {
+        let script = Script(vec![Ok(vec![]), Err(anyhow::anyhow!("eof"))]);
+        let err = reads(script).unwrap_err();
+        assert_eq!(err.to_string(), "eof");
+    }
+
+    #[test]
+    fn ctrl_c_ends_the_read_loop() {
+        let quit = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(reads(Script(vec![Ok(vec![quit])])).is_ok());
     }
 
     #[test]

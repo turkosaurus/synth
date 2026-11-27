@@ -146,6 +146,7 @@ fn run() -> anyhow::Result<ExitCode> {
         Commands::Check { path, rate } => return lint(&path, rate),
         Commands::Play { path } => play(&path, &script::config()?)?,
         Commands::Tui { path } => {
+            synth::terminal::require()?;
             let config = script::config()?;
             let mut session = Session::open(path.as_deref(), gating(), &config)?;
             view::tui::run(&mut session, &config.tui)?;
