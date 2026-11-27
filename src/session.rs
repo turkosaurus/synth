@@ -144,7 +144,7 @@ impl Session {
                 keyboard: Keyboard::new(patch.keymap, gating),
                 freqs,
                 help: false,
-                latency: Latency::default(),
+                latency: Latency::new(config.tui.latency_window),
                 requested: output.requested(),
             },
             stats,
@@ -168,9 +168,11 @@ impl Session {
             self.run(cmd);
         }
         if msg == Msg::Tick {
+            let now = Instant::now();
             while let Ok(record) = self.records.pop() {
-                self.model.latency.record(record);
+                self.model.latency.record(now, record);
             }
+            self.model.latency.prune(now);
         }
         flow
     }
@@ -228,7 +230,7 @@ mod tests {
             keyboard: Keyboard::new(keymap, Gating::Held),
             freqs: crate::spec::Freqs::unchecked([0.0; 128]),
             help: false,
-            latency: Latency::default(),
+            latency: Latency::new(Duration::from_secs(5)),
             requested: None,
         }
     }

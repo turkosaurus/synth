@@ -1,25 +1,17 @@
-//! In-process stage timings as the session keeps them for a view: the
-//! latest readings of each stage, and their spread.
+//! In-process stage timings as the session keeps them for a view: each
+//! stage's readings from the last span of time, and their spread.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::audio::Record;
 
-/// Readings each stage keeps; the oldest falls out as a new one lands.
-const WINDOW: usize = 512;
-
-/// The latest [`WINDOW`] readings of one stage.
+/// One stage's readings from the last `span`, each with when it landed.
+/// Bounded by time rather than count, so every stage covers the same span
+/// and one that stops reporting empties.
 pub(crate) struct Window<T> {
-    values: VecDeque<T>,
-}
-
-impl<T> Default for Window<T> {
-    fn default() -> Self {
-        Self {
-            values: VecDeque::with_capacity(WINDOW),
-        }
-    }
+    span: Duration,
+    values: VecDeque<(Instant, T)>,
 }
 
 /// Where a window's readings fall, by nearest rank.
@@ -31,16 +23,32 @@ pub(crate) struct Spread<T> {
 }
 
 impl<T: Copy + Ord> Window<T> {
-    pub(crate) fn push(&mut self, value: T) {
-        if self.values.len() == WINDOW {
-            self.values.pop_front();
+    pub(crate) fn new(span: Duration) -> Self {
+        Self {
+            span,
+            values: VecDeque::new(),
         }
-        self.values.push_back(value);
     }
 
-    /// `None` before the first reading.
+    pub(crate) fn push(&mut self, at: Instant, value: T) {
+        self.values.push_back((at, value));
+        self.prune(at);
+    }
+
+    /// Drops the readings older than the span before `now`.
+    pub(crate) fn prune(&mut self, now: Instant) {
+        while self
+            .values
+            .front()
+            .is_some_and(|&(at, _)| now.saturating_duration_since(at) > self.span)
+        {
+            self.values.pop_front();
+        }
+    }
+
+    /// `None` when the window holds no readings.
     pub(crate) fn spread(&self) -> Option<Spread<T>> {
-        let mut sorted: Vec<T> = self.values.iter().copied().collect();
+        let mut sorted: Vec<T> = self.values.iter().map(|&(_, value)| value).collect();
         sorted.sort_unstable();
         let max = *sorted.last()?;
         let rank = |p: usize| sorted[(sorted.len() * p).div_ceil(100) - 1];
@@ -53,7 +61,6 @@ impl<T: Copy + Ord> Window<T> {
 }
 
 /// Every stage a live session times, in signal order.
-#[derive(Default)]
 pub(crate) struct Latency {
     /// key read until its event is pushed
     pub(crate) input: Window<Duration>,
@@ -69,18 +76,42 @@ pub(crate) struct Latency {
 }
 
 impl Latency {
-    pub(crate) fn record(&mut self, record: Record) {
+    /// Every stage keeps the readings from the last `span`.
+    pub(crate) fn new(span: Duration) -> Self {
+        Self {
+            input: Window::new(span),
+            render: Window::new(span),
+            output: Window::new(span),
+            total: Window::new(span),
+            view: Rate::default(),
+        }
+    }
+
+    /// Folds in `record`, as read at `at`.
+    pub(crate) fn record(&mut self, at: Instant, record: Record) {
         match record {
             Record::Key {
                 input,
                 wait,
                 output,
             } => {
-                self.input.push(input);
-                self.render.push(wait);
-                self.total.push(input + wait + output);
+                self.input.push(at, input);
+                self.render.push(at, wait);
+                self.total.push(at, input + wait + output);
             }
-            Record::Output(latency) => self.output.push(latency),
+            Record::Output(latency) => self.output.push(at, latency),
+        }
+    }
+
+    /// Drops every stage's readings older than its span before `now`.
+    pub(crate) fn prune(&mut self, now: Instant) {
+        for window in [
+            &mut self.input,
+            &mut self.render,
+            &mut self.output,
+            &mut self.total,
+        ] {
+            window.prune(now);
         }
     }
 }
@@ -112,16 +143,19 @@ impl Rate {
 mod tests {
     use super::*;
 
+    const MS: Duration = Duration::from_millis(1);
+
     #[test]
     fn an_empty_window_has_no_spread() {
-        assert_eq!(Window::<u32>::default().spread(), None);
+        assert_eq!(Window::<u32>::new(MS).spread(), None);
     }
 
     #[test]
     fn spread_ranks_the_window() {
-        let mut window = Window::default();
+        let mut window = Window::new(Duration::from_secs(1));
+        let now = Instant::now();
         for value in (1..=100).rev() {
-            window.push(value);
+            window.push(now, value);
         }
         assert_eq!(
             window.spread(),
@@ -134,13 +168,24 @@ mod tests {
     }
 
     #[test]
-    fn the_oldest_reading_falls_out() {
-        let mut window = Window::default();
-        window.push(1000);
-        for _ in 0..WINDOW {
-            window.push(1);
-        }
+    fn a_reading_older_than_the_span_falls_out() {
+        let mut window = Window::new(100 * MS);
+        let start = Instant::now();
+        window.push(start, 1000);
+        window.push(start + 50 * MS, 1);
+        window.prune(start + 100 * MS);
+        assert_eq!(window.spread().unwrap().max, 1000);
+        window.prune(start + 101 * MS);
         assert_eq!(window.spread().unwrap().max, 1);
+    }
+
+    #[test]
+    fn an_idle_window_empties() {
+        let mut window = Window::new(100 * MS);
+        let start = Instant::now();
+        window.push(start, 1);
+        window.prune(start + 200 * MS);
+        assert_eq!(window.spread(), None);
     }
 
     #[test]
@@ -155,13 +200,15 @@ mod tests {
 
     #[test]
     fn a_key_total_sums_its_stages() {
-        let mut latency = Latency::default();
-        let ms = Duration::from_millis(1);
-        latency.record(Record::Key {
-            input: ms,
-            wait: 2 * ms,
-            output: 20 * ms,
-        });
-        assert_eq!(latency.total.spread().unwrap().max, 23 * ms);
+        let mut latency = Latency::new(Duration::from_secs(1));
+        latency.record(
+            Instant::now(),
+            Record::Key {
+                input: MS,
+                wait: 2 * MS,
+                output: 20 * MS,
+            },
+        );
+        assert_eq!(latency.total.spread().unwrap().max, 23 * MS);
     }
 }

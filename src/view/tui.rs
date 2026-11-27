@@ -18,7 +18,7 @@ use ratatui::{Frame, Terminal};
 use crate::audio::Snapshot;
 use crate::input::keyboard::{Gating, Keyboard, Kind, Stroke};
 use crate::session::{Latency, Msg, Session, Spread, Window};
-use crate::spec::{Freqs, Key, TuiConfig};
+use crate::spec::{Budget, Freqs, Key, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
 
@@ -40,25 +40,6 @@ const NUMBER_WIDTH: u16 = 7;
 /// numbers.
 const LATENCY_FULL: u16 = 60;
 const LATENCY_BAR: u16 = 40;
-/// The latency bars' shared log scale.
-const LATENCY_FLOOR_MS: f32 = 0.01;
-const LATENCY_CEIL_MS: f32 = 100.0;
-/// Each decade of the scale, and its axis label.
-const DECADES: [(f32, &str); 5] = [
-    (0.01, "0.01"),
-    (0.1, "0.1"),
-    (1.0, "1"),
-    (10.0, "10"),
-    (100.0, "100ms"),
-];
-/// Where each stage's colour turns yellow, then red.
-const INPUT_BUDGET_MS: (f32, f32) = (1.0, 5.0);
-const RENDER_BUDGET_MS: (f32, f32) = (5.0, 10.0);
-const OUTPUT_BUDGET_MS: (f32, f32) = (10.0, 20.0);
-const TOTAL_BUDGET_MS: (f32, f32) = (10.0, 20.0);
-/// Below these the view's frame rate turns yellow, then red.
-const FPS_WARN: usize = 30;
-const FPS_DANGER: usize = 24;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
@@ -106,7 +87,7 @@ fn drive(
         let model = session.model();
         // spread sorts each window, so it is taken before the draw it
         // would otherwise be counted in
-        let latency = stages(&model.latency);
+        let latency = stages(&model.latency, config);
         let fps = model.latency.view.per_second();
         let view = View {
             keyboard: &model.keyboard,
@@ -120,6 +101,7 @@ fn drive(
             latency: &latency,
             fps,
             requested: model.requested,
+            config,
         };
         terminal.draw(|frame| draw(frame, &view))?;
         let _ = session.update(Msg::Drawn(Instant::now()));
@@ -222,27 +204,28 @@ struct View<'a> {
     /// frames per callback asked of the device; `None` left it to the
     /// platform
     requested: Option<u32>,
+    config: &'a TuiConfig,
 }
 
 /// One latency row: a stage, its spread, and its budget.
 struct Stage {
     name: &'static str,
     spread: Option<Spread<Duration>>,
-    budget_ms: (f32, f32),
+    budget: Budget,
 }
 
 /// The stages in signal order, then their per-key total.
-fn stages(latency: &Latency) -> Vec<Stage> {
-    let stage = |name, window: &Window<Duration>, budget_ms| Stage {
+fn stages(latency: &Latency, config: &TuiConfig) -> Vec<Stage> {
+    let stage = |name, window: &Window<Duration>, budget| Stage {
         name,
         spread: window.spread(),
-        budget_ms,
+        budget,
     };
     vec![
-        stage("input", &latency.input, INPUT_BUDGET_MS),
-        stage("render", &latency.render, RENDER_BUDGET_MS),
-        stage("output", &latency.output, OUTPUT_BUDGET_MS),
-        stage("total", &latency.total, TOTAL_BUDGET_MS),
+        stage("input", &latency.input, config.input_budget),
+        stage("render", &latency.render, config.render_budget),
+        stage("output", &latency.output, config.output_budget),
+        stage("total", &latency.total, config.total_budget),
     ]
 }
 
@@ -260,10 +243,10 @@ fn buffer(requested: Option<u32>, got: u32) -> (String, bool) {
     }
 }
 
-fn fps_style(fps: usize) -> Style {
+fn fps_style(fps: usize, config: &TuiConfig) -> Style {
     match fps {
-        fps if fps < FPS_DANGER => Style::new().fg(Color::Red),
-        fps if fps < FPS_WARN => Style::new().fg(Color::Yellow),
+        fps if fps < config.fps_danger as usize => Style::new().fg(Color::Red),
+        fps if fps < config.fps_warn as usize => Style::new().fg(Color::Yellow),
         _ => Style::new(),
     }
 }
@@ -271,7 +254,12 @@ fn fps_style(fps: usize) -> Style {
 /// The one status line: fault counters, the buffer, and the view's rate.
 /// An unplugged device or a stalled callback otherwise looks like a quiet
 /// synth, so each counter takes colour once it moves.
-fn status(snap: &Snapshot, requested: Option<u32>, fps: usize) -> Line<'static> {
+fn status(
+    snap: &Snapshot,
+    requested: Option<u32>,
+    fps: usize,
+    config: &TuiConfig,
+) -> Line<'static> {
     let count = |name: &str, n: u64, colour: Color| {
         let style = match n {
             0 => Style::new(),
@@ -289,7 +277,7 @@ fn status(snap: &Snapshot, requested: Option<u32>, fps: usize) -> Line<'static> 
         count("overruns", snap.overruns, Color::Red),
         count("dropped", snap.dropped, Color::Yellow),
         Span::styled(buffer, buffer_style),
-        Span::styled(format!("  view {fps} fps"), fps_style(fps)),
+        Span::styled(format!("  view {fps} fps"), fps_style(fps, config)),
     ])
 }
 
@@ -306,6 +294,7 @@ fn draw(frame: &mut Frame, view: &View) {
         latency,
         fps,
         requested,
+        config,
     } = *view;
 
     let footer = vec![Line::from("(ctrl-c) quit | (?) help")];
@@ -357,8 +346,12 @@ fn draw(frame: &mut Frame, view: &View) {
         Constraint::Length(1),
     ])
     .areas(stats_inner);
-    latency_rows(frame, latency_area, latency);
-    frame.render_widget(status(snap, requested, fps), status_area);
+    let scale = Scale {
+        floor_ms: config.latency_floor_ms,
+        ceil_ms: config.latency_ceil_ms,
+    };
+    latency_rows(frame, latency_area, latency, scale);
+    frame.render_widget(status(snap, requested, fps, config), status_area);
 
     frame.render_widget(
         Sparkline::default()
@@ -656,7 +649,7 @@ fn latency_columns(width: u16) -> (&'static [Column], bool) {
 
 /// The header, then one row per stage: label, numbers in ms, and a bar on
 /// one log scale shared by every row, so bars compare across rows.
-fn latency_rows(frame: &mut Frame, area: Rect, stages: &[Stage]) {
+fn latency_rows(frame: &mut Frame, area: Rect, stages: &[Stage], scale: Scale) {
     let dim = Style::new().fg(Color::DarkGray);
     let (columns, has_bar) = latency_columns(area.width);
     let mut widths = vec![Constraint::Length(STAGE_WIDTH)];
@@ -675,7 +668,7 @@ fn latency_rows(frame: &mut Frame, area: Rect, stages: &[Stage]) {
         frame.render_widget(right((*name).to_string()).style(dim), cell);
     }
     if has_bar {
-        axis(frame.buffer_mut(), cells[cells.len() - 1], dim);
+        axis(frame.buffer_mut(), cells[cells.len() - 1], dim, scale);
     }
 
     for (stage, row) in stages.iter().zip(rows) {
@@ -689,7 +682,7 @@ fn latency_rows(frame: &mut Frame, area: Rect, stages: &[Stage]) {
             frame.render_widget(right(text), cell);
         }
         if has_bar {
-            range(frame, cells[cells.len() - 1], stage);
+            range(frame, cells[cells.len() - 1], stage, scale);
         }
     }
 }
@@ -698,8 +691,21 @@ fn ms(at: Duration) -> f32 {
     at.as_secs_f32() * 1e3
 }
 
-fn on_scale(ms: f32) -> f32 {
-    meter::ms_scale(ms, LATENCY_FLOOR_MS, LATENCY_CEIL_MS)
+/// The latency bars' shared log scale, from `config.lua`.
+#[derive(Clone, Copy)]
+struct Scale {
+    floor_ms: f32,
+    ceil_ms: f32,
+}
+
+impl Scale {
+    fn at(self, ms: f32) -> f32 {
+        meter::ms_scale(ms, self.floor_ms, self.ceil_ms)
+    }
+
+    fn decades(self) -> Vec<f32> {
+        meter::decades(self.floor_ms, self.ceil_ms)
+    }
 }
 
 /// The cell `scaled` falls in across `width`.
@@ -709,14 +715,19 @@ fn cell_at(scaled: f32, width: u16) -> u16 {
 
 /// Decade labels across the bar column, each left out where it would run
 /// into the one before or off the end.
-fn axis(buffer: &mut ratatui::buffer::Buffer, area: Rect, style: Style) {
+fn axis(buffer: &mut ratatui::buffer::Buffer, area: Rect, style: Style, scale: Scale) {
     let mut free = area.left();
-    for (decade, label) in DECADES {
+    let decades = scale.decades();
+    for (n, &decade) in decades.iter().enumerate() {
+        let mut label = meter::decade_label(decade);
+        if n + 1 == decades.len() {
+            label.push_str("ms");
+        }
         let width = label.chars().count() as u16;
-        let x = (area.left() + cell_at(on_scale(decade), area.width))
+        let x = (area.left() + cell_at(scale.at(decade), area.width))
             .min(area.right().saturating_sub(width));
         if x >= free && x + width <= area.right() {
-            buffer.set_string(x, area.top(), label, style);
+            buffer.set_string(x, area.top(), &label, style);
             free = x + width + 1;
         }
     }
@@ -725,17 +736,23 @@ fn axis(buffer: &mut ratatui::buffer::Buffer, area: Rect, style: Style) {
 /// p50 as the fill, coloured by the stage's budget; then decade ticks on the
 /// empty track, a heavy p99 tick, and a light max marker, written over it
 /// the way `shadow` writes, with max winning where they share a cell.
-fn range(frame: &mut Frame, area: Rect, stage: &Stage) {
-    let (warn, danger) = stage.budget_ms;
-    let (warn, danger) = (on_scale(warn), on_scale(danger));
-    let p50 = stage.spread.map_or(0.0, |s| on_scale(ms(s.p50)));
+fn range(frame: &mut Frame, area: Rect, stage: &Stage, scale: Scale) {
+    let (warn, danger) = (
+        scale.at(stage.budget.warn_ms),
+        scale.at(stage.budget.danger_ms),
+    );
+    let p50 = stage.spread.map_or(0.0, |s| scale.at(ms(s.p50)));
     frame.render_widget(bar(String::new(), p50, warn, danger), area);
 
     let buffer = frame.buffer_mut();
     let y = area.top();
     let filled = p50 * f32::from(area.width);
-    for (decade, _) in &DECADES[1..DECADES.len() - 1] {
-        let at = cell_at(on_scale(*decade), area.width);
+    let inner = scale
+        .decades()
+        .into_iter()
+        .filter(|&decade| decade > scale.floor_ms && decade < scale.ceil_ms);
+    for decade in inner {
+        let at = cell_at(scale.at(decade), area.width);
         if f32::from(at) < filled {
             continue;
         }
@@ -747,9 +764,9 @@ fn range(frame: &mut Frame, area: Rect, stage: &Stage) {
     let Some(spread) = stage.spread else {
         return;
     };
-    let p99 = on_scale(ms(spread.p99));
+    let p99 = scale.at(ms(spread.p99));
     let marks = [("┃", health(p99, warn, danger)), ("│", Color::Gray)];
-    for ((symbol, colour), at) in marks.into_iter().zip([p99, on_scale(ms(spread.max))]) {
+    for ((symbol, colour), at) in marks.into_iter().zip([p99, scale.at(ms(spread.max))]) {
         let x = area.left() + cell_at(at, area.width);
         if let Some(cell) = buffer.cell_mut((x, y)) {
             cell.set_symbol(symbol).set_fg(colour);
@@ -813,11 +830,13 @@ mod tests {
 
     #[test]
     fn a_slow_view_warns_then_turns_red() {
-        assert_eq!(fps_style(60), Style::new());
-        assert_eq!(fps_style(30), Style::new());
-        assert_eq!(fps_style(29), Style::new().fg(Color::Yellow));
-        assert_eq!(fps_style(24), Style::new().fg(Color::Yellow));
-        assert_eq!(fps_style(23), Style::new().fg(Color::Red));
+        let config = crate::script::config_defaults().tui;
+        let style = |fps| fps_style(fps, &config);
+        assert_eq!(style(60), Style::new());
+        assert_eq!(style(30), Style::new());
+        assert_eq!(style(29), Style::new().fg(Color::Yellow));
+        assert_eq!(style(24), Style::new().fg(Color::Yellow));
+        assert_eq!(style(23), Style::new().fg(Color::Red));
     }
 
     #[test]
