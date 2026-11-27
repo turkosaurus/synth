@@ -91,7 +91,7 @@ fn lua_register(
             };
         }
         if let Some((path, source)) = found {
-            let chunk = sandbox::chunk(lua, source, &path.display().to_string())?;
+            let chunk = sandbox::chunk(lua, source, &format!("@{}", path.display()))?;
             return Ok(mlua::Value::Function(chunk.into_function()?));
         }
         Ok(match embedded {
@@ -129,13 +129,20 @@ fn site(lua: &mlua::Lua) -> String {
 /// the stack is not that deep.
 fn at(lua: &mlua::Lua, level: usize) -> Option<String> {
     lua.inspect_stack(level, |debug| {
-        let source = debug.source().short_src.unwrap_or_default();
-        // chunks named by mlua show as [string "lua/example.lua"]
-        let file = source
-            .strip_prefix("[string \"")
-            .and_then(|rest| rest.strip_suffix("\"]"))
-            .unwrap_or(&source)
-            .to_string();
+        let source = debug.source();
+        // `short_src` cuts a long path short; `source` keeps all of it
+        let file = match source.source.as_deref().and_then(|s| s.strip_prefix('@')) {
+            Some(path) => path.to_string(),
+            None => {
+                let short = source.short_src.unwrap_or_default();
+                // embedded modules show as [string "synth.instrument"]
+                short
+                    .strip_prefix("[string \"")
+                    .and_then(|rest| rest.strip_suffix("\"]"))
+                    .unwrap_or(&short)
+                    .to_string()
+            }
+        };
         match debug.current_line() {
             Some(line) => format!("{file}:{line}"),
             None => file,
@@ -351,7 +358,11 @@ fn load_in(
 
     // eval to a Value first: a syntax error and a wrong return type both fail
     // this call, and they deserve different messages
-    let returned: mlua::Value = sandbox::chunk(&lua, source, name)?.eval()?;
+    // `@` makes Lua show the name as a file: `e.lua:2:`, not
+    // `[string "e.lua"]:2:`
+    let returned: mlua::Value = sandbox::chunk(&lua, source, &format!("@{name}"))?
+        .eval()
+        .map_err(Error::from)?;
     let table = match returned {
         mlua::Value::Table(table) => table,
         other => {
@@ -447,9 +458,10 @@ fn tune(to_hz: &mlua::Function, sample_rate: u32) -> Result<(Freqs, Vec<Diagnost
     let (sampled, _) = bake::sample(notes, 0.0..=f64::from(f32::MAX), |x| {
         // an integer, not 69.0, so `math.type` and `tostring` see a note
         let note = x as u8;
-        let hz: f64 = to_hz
-            .call(note)
-            .map_err(|source| Error::TuningCall { note, source })?;
+        let hz: f64 = to_hz.call(note).map_err(|source| Error::TuningCall {
+            note,
+            source: error::trimmed(source),
+        })?;
         // checked after narrowing, so a value too large for f32 is caught
         let narrowed = hz as f32;
         if !(narrowed.is_finite() && narrowed > 0.0) {

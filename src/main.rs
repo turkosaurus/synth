@@ -375,7 +375,8 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
     let stats = Arc::new(audio::Stats::default());
     let _stream = audio::stream(&output, player, Arc::clone(&stats))?;
 
-    println!("{notes} events · {seconds:.1}s · {sample_rate} Hz · {channels} ch");
+    // stdout carries only data, so these lines never mix into a pipe
+    eprintln!("{notes} events · {seconds:.1}s · {sample_rate} Hz · {channels} ch");
     std::thread::sleep(Duration::from_secs_f64(seconds) + Duration::from_millis(300));
 
     // structured fields rather than a preformatted string, so the log is
@@ -395,7 +396,7 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
         load = snap.load,
         "stream",
     );
-    println!("{}", view::report::stats(&snap));
+    eprintln!("{}", view::report::stats(&snap));
     Ok(())
 }
 
