@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 pub enum Origin {
     /// a key the view read at `read`
     Key { read: Instant },
-    /// a `Fixed` note-off from the keyboard's tick, which no key caused
+    /// a `Fixed` note-off from the keyboard's tick, which no key caused,
+    /// so it is paired but not recorded
     Release,
 }
 
@@ -32,11 +33,6 @@ pub enum Record {
         wait: Duration,
         /// that callback's `playback - callback`
         output: Duration,
-    },
-    /// a `Fixed` note-off as the callback applied it
-    Release {
-        /// pushed until the callback that applied it began
-        wait: Duration,
     },
     /// one callback's `playback - callback`, as the driver reports it
     Output(Duration),
@@ -76,14 +72,13 @@ impl Recorder {
             let Ok(stamp) = self.stamps.pop() else {
                 break;
             };
-            let wait = start.saturating_duration_since(stamp.pushed);
-            let record = match stamp.origin {
-                Origin::Key { read } => Record::Key {
-                    input: stamp.pushed.saturating_duration_since(read),
-                    wait,
-                    output,
-                },
-                Origin::Release => Record::Release { wait },
+            let Origin::Key { read } = stamp.origin else {
+                continue;
+            };
+            let record = Record::Key {
+                input: stamp.pushed.saturating_duration_since(read),
+                wait: start.saturating_duration_since(stamp.pushed),
+                output,
             };
             dropped += u64::from(self.records.push(record).is_err());
         }
@@ -119,15 +114,13 @@ mod tests {
         assert_eq!(recorder.applied(2, start, 20 * MS), 0);
         assert_eq!(
             drain(&mut records),
-            vec![
-                Record::Key {
-                    input: MS,
-                    wait: 3 * MS,
-                    output: 20 * MS,
-                },
-                Record::Release { wait: 3 * MS },
-            ]
+            vec![Record::Key {
+                input: MS,
+                wait: 3 * MS,
+                output: 20 * MS,
+            }]
         );
+        assert_eq!(stamps.slots(), 4);
     }
 
     #[test]
@@ -138,7 +131,7 @@ mod tests {
             stamps
                 .push(Stamp {
                     pushed: start,
-                    origin: Origin::Release,
+                    origin: Origin::Key { read: start },
                 })
                 .unwrap();
         }

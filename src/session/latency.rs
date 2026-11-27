@@ -2,7 +2,7 @@
 //! latest readings of each stage, and their spread.
 
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::audio::Record;
 
@@ -52,21 +52,20 @@ impl<T: Copy + Ord> Window<T> {
     }
 }
 
-/// Every stage a live session times.
+/// Every stage a live session times, in signal order.
 #[derive(Default)]
 pub(crate) struct Latency {
     /// key read until its event is pushed
     pub(crate) input: Window<Duration>,
-    /// pushed until the callback applied it, for key events
-    pub(crate) wait: Window<Duration>,
-    /// the same for `Fixed` note-offs from the tick
-    pub(crate) release_wait: Window<Duration>,
+    /// pushed until the callback applied it
+    pub(crate) render: Window<Duration>,
     /// `playback - callback`, as the driver reports it
     pub(crate) output: Window<Duration>,
-    /// per key: input, wait, and the output of the callback that applied it
+    /// per key: input, render, and the output of the callback that
+    /// applied it
     pub(crate) total: Window<Duration>,
-    /// one frame's draw, which no key waits on
-    pub(crate) draw: Window<Duration>,
+    /// draws in the last second, which no key waits on
+    pub(crate) view: Rate,
 }
 
 impl Latency {
@@ -78,12 +77,34 @@ impl Latency {
                 output,
             } => {
                 self.input.push(input);
-                self.wait.push(wait);
+                self.render.push(wait);
                 self.total.push(input + wait + output);
             }
-            Record::Release { wait } => self.release_wait.push(wait),
             Record::Output(latency) => self.output.push(latency),
         }
+    }
+}
+
+/// Events in the last second.
+#[derive(Default)]
+pub(crate) struct Rate {
+    at: VecDeque<Instant>,
+}
+
+impl Rate {
+    pub(crate) fn push(&mut self, at: Instant) {
+        while self
+            .at
+            .front()
+            .is_some_and(|&first| at.duration_since(first) >= Duration::from_secs(1))
+        {
+            self.at.pop_front();
+        }
+        self.at.push_back(at);
+    }
+
+    pub(crate) fn per_second(&self) -> usize {
+        self.at.len()
     }
 }
 
@@ -123,13 +144,13 @@ mod tests {
     }
 
     #[test]
-    fn a_release_is_kept_apart_from_keys() {
-        let mut latency = Latency::default();
-        let wait = Duration::from_millis(2);
-        latency.record(Record::Release { wait });
-        assert_eq!(latency.wait.spread(), None);
-        assert_eq!(latency.total.spread(), None);
-        assert_eq!(latency.release_wait.spread().unwrap().max, wait);
+    fn a_rate_counts_only_the_last_second() {
+        let mut rate = Rate::default();
+        let start = Instant::now();
+        for ms in [0, 500, 999, 1000, 1500] {
+            rate.push(start + Duration::from_millis(ms));
+        }
+        assert_eq!(rate.per_second(), 3);
     }
 
     #[test]

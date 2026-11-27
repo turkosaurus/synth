@@ -31,16 +31,31 @@ const INPUT_WIDTH: u16 = LABEL_WIDTH + COLUMN_GAP + VALUE_WIDTH + 2;
 const COLUMN_GAP: u16 = 2;
 const SPARK_ROWS: u16 = 2;
 const METER_ROWS: u16 = 3 + SPARK_ROWS;
-const STAGE_WIDTH: u16 = 21;
-const SPREAD_WIDTH: u16 = 8;
-const LATENCY_WIDTH: u16 = STAGE_WIDTH + 3 * (SPREAD_WIDTH + 1);
-/// the header, the stage rows, a gap before the draw row, and the buffer
-const LATENCY_ROWS: u16 = 9;
-const STATS_ROWS: u16 = if METER_ROWS > LATENCY_ROWS {
-    METER_ROWS
-} else {
-    LATENCY_ROWS
-};
+/// the header, four stages, and the view row
+const LATENCY_ROWS: u16 = 6;
+const STATS_ROWS: u16 = METER_ROWS + LATENCY_ROWS;
+const STAGE_WIDTH: u16 = 7;
+const NUMBER_WIDTH: u16 = 7;
+/// Below this the bar keeps only the p99 column; below the next, only
+/// numbers.
+const LATENCY_FULL: u16 = 60;
+const LATENCY_BAR: u16 = 40;
+/// The latency bars' shared log scale.
+const LATENCY_FLOOR_MS: f32 = 0.01;
+const LATENCY_CEIL_MS: f32 = 100.0;
+/// Each decade of the scale, and its axis label.
+const DECADES: [(f32, &str); 5] = [
+    (0.01, "0.01"),
+    (0.1, "0.1"),
+    (1.0, "1"),
+    (10.0, "10"),
+    (100.0, "100ms"),
+];
+/// Where each stage's colour turns yellow, then red.
+const INPUT_BUDGET_MS: (f32, f32) = (1.0, 5.0);
+const RENDER_BUDGET_MS: (f32, f32) = (5.0, 10.0);
+const OUTPUT_BUDGET_MS: (f32, f32) = (10.0, 20.0);
+const TOTAL_BUDGET_MS: (f32, f32) = (10.0, 20.0);
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
@@ -90,6 +105,7 @@ fn drive(
         // would otherwise be counted in
         let latency = stages(&model.latency);
         let buffer = buffer(model.requested, snap.buffer_frames);
+        let fps = model.latency.view.per_second();
         let view = View {
             keyboard: &model.keyboard,
             snap: &snap,
@@ -100,11 +116,11 @@ fn drive(
             help: model.help,
             floor_db: config.meter_floor_db,
             latency: &latency,
+            fps,
             buffer: &buffer,
         };
-        let drawing = Instant::now();
         terminal.draw(|frame| draw(frame, &view))?;
-        let _ = session.update(Msg::Drawn(drawing.elapsed()));
+        let _ = session.update(Msg::Drawn(Instant::now()));
 
         if event::poll(config.poll)? {
             // drain immediately
@@ -198,40 +214,32 @@ struct View<'a> {
     help: bool,
     /// the meter's floor, from `config.lua`
     floor_db: f32,
-    latency: &'a [Option<Stage>],
+    latency: &'a [Stage],
+    /// frames drawn in the last second
+    fps: usize,
     /// buffer asked for and got
     buffer: &'a str,
 }
 
-/// One row of the latency table: a stage and its spread, formatted.
-/// `None` for the gap that sets the draw row apart from the chain.
+/// One latency row: a stage, its spread, and its budget.
 struct Stage {
     name: &'static str,
-    spread: Option<Spread<String>>,
+    spread: Option<Spread<Duration>>,
+    budget_ms: (f32, f32),
 }
 
-fn stages(latency: &Latency) -> Vec<Option<Stage>> {
-    let ms = |name, window: &Window<Duration>| {
-        let text = |at: Duration| format!("{:.2}ms", at.as_secs_f64() * 1e3);
-        Some(Stage {
-            name,
-            spread: window.spread().map(|s| Spread {
-                p50: text(s.p50),
-                p99: text(s.p99),
-                max: text(s.max),
-            }),
-        })
+/// The stages in signal order, then their per-key total.
+fn stages(latency: &Latency) -> Vec<Stage> {
+    let stage = |name, window: &Window<Duration>, budget_ms| Stage {
+        name,
+        spread: window.spread(),
+        budget_ms,
     };
     vec![
-        ms("input key", &latency.input),
-        ms("render wait", &latency.wait),
-        ms("render wait (release)", &latency.release_wait),
-        ms("output device", &latency.output),
-        ms("total", &latency.total),
-        // the view draws between key reads, so it is not a stage of any one
-        // key's chain
-        None,
-        ms("view draw", &latency.draw),
+        stage("input", &latency.input, INPUT_BUDGET_MS),
+        stage("render", &latency.render, RENDER_BUDGET_MS),
+        stage("output", &latency.output, OUTPUT_BUDGET_MS),
+        stage("total", &latency.total, TOTAL_BUDGET_MS),
     ]
 }
 
@@ -255,6 +263,7 @@ fn draw(frame: &mut Frame, view: &View) {
         help,
         floor_db,
         latency,
+        fps,
         buffer,
     } = *view;
 
@@ -296,29 +305,21 @@ fn draw(frame: &mut Frame, view: &View) {
     let stats_inner = stats_block.inner(stats_area);
     frame.render_widget(stats_block, stats_area);
 
-    let [meters_area, latency_area] =
-        Layout::horizontal([Constraint::Min(0), Constraint::Length(LATENCY_WIDTH)])
-            .spacing(COLUMN_GAP)
-            .areas(stats_inner);
-    let [spreads_area, buffer_area] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(latency_area);
-    frame.render_widget(spreads(latency), spreads_area);
-    frame.render_widget(
-        Line::from(buffer).style(Style::new().fg(Color::DarkGray)),
-        buffer_area,
-    );
-
-    // graph, then gain, then cpu, then faults at the very bottom: region
-    // order is what stacks them, not the order the widgets are rendered in.
-    // the spacer takes whatever the latency table needs beyond them.
-    let [_, clip_area, peak_area, load_area, fault_area] = Layout::vertical([
-        Constraint::Min(0),
+    // graph, then gain, then cpu, then faults, then latency: region order
+    // is what stacks them, not the order the widgets are rendered in
+    let [clip_area, peak_area, load_area, fault_area, latency_area] = Layout::vertical([
         Constraint::Length(SPARK_ROWS),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
+        Constraint::Length(LATENCY_ROWS),
     ])
-    .areas(meters_area);
+    .areas(stats_inner);
+    latency_rows(frame, latency_area, latency);
+    frame.render_widget(
+        Line::from(format!("view {fps} fps  {buffer}")).style(Style::new().fg(Color::DarkGray)),
+        latency_area.rows().next_back().unwrap_or_default(),
+    );
 
     frame.render_widget(
         Sparkline::default()
@@ -513,11 +514,7 @@ fn bindings(keyboard: &Keyboard) -> Table<'static> {
 /// bar is clamped while the caller's label keeps the true figure: an
 /// excursion reads past full instead of disappearing.
 fn bar(label: String, value: f32, warn: f32, danger: f32) -> Gauge<'static> {
-    let colour = match value {
-        value if value < warn => Color::Green,
-        value if value < danger => Color::Yellow,
-        _ => Color::Red,
-    };
+    let colour = health(value, warn, danger);
     Gauge::default()
         .label(label)
         // fg fills, bg is the empty track; one style covers both
@@ -526,6 +523,15 @@ fn bar(label: String, value: f32, warn: f32, danger: f32) -> Gauge<'static> {
         // rather than rounding away to an empty bar
         .use_unicode(true)
         .ratio(value.clamp(0.0, 1.0) as f64)
+}
+
+/// Green, then yellow at `warn`, then red at `danger`.
+fn health(value: f32, warn: f32, danger: f32) -> Color {
+    match value {
+        value if value < warn => Color::Green,
+        value if value < danger => Color::Yellow,
+        _ => Color::Red,
+    }
 }
 
 /// Live input state as a centred table.
@@ -603,48 +609,122 @@ fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
     .column_spacing(COLUMN_GAP)
 }
 
-/// Each stage's p50, p99, and max, right-aligned so the digits line up.
-fn spreads(stages: &[Option<Stage>]) -> Table<'static> {
+/// A number column's header, and the value it shows.
+type Column = (&'static str, fn(&Spread<Duration>) -> Duration);
+
+/// Which number columns a latency row shows, and whether it has a bar,
+/// for the width it has.
+fn latency_columns(width: u16) -> (&'static [Column], bool) {
+    const ALL: [Column; 3] = [("p50", |s| s.p50), ("p99", |s| s.p99), ("max", |s| s.max)];
+    const P99: [Column; 1] = [("p99", |s| s.p99)];
+    match width {
+        width if width >= LATENCY_FULL => (&ALL, true),
+        width if width >= LATENCY_BAR => (&P99, true),
+        _ => (&ALL, false),
+    }
+}
+
+/// The header, then one row per stage: label, numbers in ms, and a bar on
+/// one log scale shared by every row, so bars compare across rows.
+fn latency_rows(frame: &mut Frame, area: Rect, stages: &[Stage]) {
     let dim = Style::new().fg(Color::DarkGray);
-    let right = |text: String| Cell::from(Line::from(text).right_aligned());
-    let header = Row::new([
-        Cell::from(""),
-        right("p50".to_string()),
-        right("p99".to_string()),
-        right("max".to_string()),
-    ])
-    .style(dim);
-    let rows = stages.iter().map(|stage| {
-        let Some(stage) = stage else {
-            return Row::new([Cell::from("")]);
-        };
-        let name = Cell::from(stage.name).style(dim);
-        match &stage.spread {
-            Some(spread) => Row::new([
-                name,
-                right(spread.p50.clone()),
-                right(spread.p99.clone()),
-                right(spread.max.clone()),
-            ]),
-            None => Row::new([
-                name,
-                right("—".to_string()).style(dim),
-                right("—".to_string()).style(dim),
-                right("—".to_string()).style(dim),
-            ]),
+    let (columns, has_bar) = latency_columns(area.width);
+    let mut widths = vec![Constraint::Length(STAGE_WIDTH)];
+    widths.extend(columns.iter().map(|_| Constraint::Length(NUMBER_WIDTH)));
+    widths.push(Constraint::Min(0));
+    let split = |row: Rect| Layout::horizontal(widths.clone()).spacing(1).split(row);
+    let right = |text: String| Line::from(text).right_aligned();
+
+    let mut rows = area.rows();
+    let Some(header) = rows.next() else {
+        return;
+    };
+    let cells = split(header);
+    frame.render_widget(Line::from("latency").style(dim), cells[0]);
+    for ((name, _), &cell) in columns.iter().zip(&cells[1..]) {
+        frame.render_widget(right((*name).to_string()).style(dim), cell);
+    }
+    if has_bar {
+        axis(frame.buffer_mut(), cells[cells.len() - 1], dim);
+    }
+
+    for (stage, row) in stages.iter().zip(rows) {
+        let cells = split(row);
+        frame.render_widget(Line::from(stage.name).style(dim), cells[0]);
+        for ((_, pick), &cell) in columns.iter().zip(&cells[1..]) {
+            let text = match &stage.spread {
+                Some(spread) => format!("{:.2}", ms(pick(spread))),
+                None => "—".to_string(),
+            };
+            frame.render_widget(right(text), cell);
         }
-    });
-    Table::new(
-        rows,
-        [
-            Constraint::Length(STAGE_WIDTH),
-            Constraint::Length(SPREAD_WIDTH),
-            Constraint::Length(SPREAD_WIDTH),
-            Constraint::Length(SPREAD_WIDTH),
-        ],
-    )
-    .header(header)
-    .column_spacing(1)
+        if has_bar {
+            range(frame, cells[cells.len() - 1], stage);
+        }
+    }
+}
+
+fn ms(at: Duration) -> f32 {
+    at.as_secs_f32() * 1e3
+}
+
+fn on_scale(ms: f32) -> f32 {
+    meter::ms_scale(ms, LATENCY_FLOOR_MS, LATENCY_CEIL_MS)
+}
+
+/// The cell `scaled` falls in across `width`.
+fn cell_at(scaled: f32, width: u16) -> u16 {
+    ((scaled * f32::from(width)) as u16).min(width.saturating_sub(1))
+}
+
+/// Decade labels across the bar column, each left out where it would run
+/// into the one before or off the end.
+fn axis(buffer: &mut ratatui::buffer::Buffer, area: Rect, style: Style) {
+    let mut free = area.left();
+    for (decade, label) in DECADES {
+        let width = label.chars().count() as u16;
+        let x = (area.left() + cell_at(on_scale(decade), area.width))
+            .min(area.right().saturating_sub(width));
+        if x >= free && x + width <= area.right() {
+            buffer.set_string(x, area.top(), label, style);
+            free = x + width + 1;
+        }
+    }
+}
+
+/// p50 as the fill, coloured by the stage's budget; then decade ticks on the
+/// empty track, a heavy p99 tick, and a light max marker, written over it
+/// the way `shadow` writes, with max winning where they share a cell.
+fn range(frame: &mut Frame, area: Rect, stage: &Stage) {
+    let (warn, danger) = stage.budget_ms;
+    let (warn, danger) = (on_scale(warn), on_scale(danger));
+    let p50 = stage.spread.map_or(0.0, |s| on_scale(ms(s.p50)));
+    frame.render_widget(bar(String::new(), p50, warn, danger), area);
+
+    let buffer = frame.buffer_mut();
+    let y = area.top();
+    let filled = p50 * f32::from(area.width);
+    for (decade, _) in &DECADES[1..DECADES.len() - 1] {
+        let at = cell_at(on_scale(*decade), area.width);
+        if f32::from(at) < filled {
+            continue;
+        }
+        if let Some(cell) = buffer.cell_mut((area.left() + at, y)) {
+            cell.set_symbol("·");
+        }
+    }
+
+    let Some(spread) = stage.spread else {
+        return;
+    };
+    let p99 = on_scale(ms(spread.p99));
+    let marks = [("┃", health(p99, warn, danger)), ("│", Color::Gray)];
+    for ((symbol, colour), at) in marks.into_iter().zip([p99, on_scale(ms(spread.max))]) {
+        let x = area.left() + cell_at(at, area.width);
+        if let Some(cell) = buffer.cell_mut((x, y)) {
+            cell.set_symbol(symbol).set_fg(colour);
+        }
+    }
 }
 
 fn name(note: u8) -> String {

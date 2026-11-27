@@ -11,7 +11,7 @@ mod latency;
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::audio::{self, Feed, Origin, Player, Record, Stamp, Stats};
 use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke};
@@ -31,8 +31,8 @@ pub(crate) enum Msg {
     Key(Stroke, Instant),
     /// Once per frame: ends every `Fixed` note whose time is up.
     Tick,
-    /// How long the view took to draw a frame.
-    Drawn(Duration),
+    /// The view finished drawing a frame.
+    Drawn(Instant),
 }
 
 /// What `update` asks the session to carry out, so `update` itself touches
@@ -85,8 +85,8 @@ impl Model {
                 self.keyboard.tick(&mut events);
                 (ControlFlow::Continue(()), Origin::Release)
             }
-            Msg::Drawn(took) => {
-                self.latency.draw.push(took);
+            Msg::Drawn(at) => {
+                self.latency.view.push(at);
                 return ControlFlow::Continue(());
             }
         };
@@ -277,11 +277,10 @@ mod tests {
     }
 
     #[test]
-    fn a_drawn_frame_is_timed_and_plays_nothing() {
+    fn a_drawn_frame_is_counted_and_plays_nothing() {
         let mut model = model();
-        let took = Duration::from_millis(3);
-        assert_eq!(send(&mut model, Msg::Drawn(took)), vec![]);
-        assert_eq!(model.latency.draw.spread().unwrap().max, took);
+        assert_eq!(send(&mut model, Msg::Drawn(Instant::now())), vec![]);
+        assert_eq!(model.latency.view.per_second(), 1);
     }
 
     #[test]
