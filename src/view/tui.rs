@@ -2,7 +2,7 @@
 
 use std::io::Stdout;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::thread::Thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -17,7 +17,7 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 
-use crate::audio::{Snapshot, Stats};
+use crate::audio::{Fault, Faults, Snapshot, Stats};
 use crate::input::keyboard::{Gating, Kind, Stroke};
 use crate::session::{Glance, Input, Latency, Msg, Session, Spread, Timing, Window};
 use crate::spec::{Budget, Freqs, Key, Keymap, TuiConfig};
@@ -42,6 +42,10 @@ const NUMBER_WIDTH: u16 = 7;
 /// numbers.
 const LATENCY_FULL: u16 = 60;
 const LATENCY_BAR: u16 = 40;
+/// Glances the input thread can hand over before the view takes them.
+const GLANCES: usize = 4;
+/// Keys taken from the terminal per read; any more wait for the next.
+const KEYS: usize = 64;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
@@ -57,7 +61,7 @@ pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
     let _restore = crate::terminal::enter(gating)?;
 
     // the view's own copies of what never changes while playing,
-    // so the draw loop shares nothing with the input thread but the channel
+    // so the draw loop shares nothing with the input thread but the ring
     let model = session.model();
     let still = Still {
         keymap: model.keyboard.keymap().clone(),
@@ -65,19 +69,24 @@ pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
         gating,
         glance: model.glance(),
     };
-    let (input, timing, stats) = session.split();
+    let (input, timing, stats, faults) = session.split();
 
-    // a channel rather than a lock on the keyboard: a send never waits, so a
+    // a ring rather than a lock on the keyboard: a push never waits, so a
     // key is never held up behind a draw, and the view only ever needs the
-    // latest copy
-    let (tx, rx) = mpsc::channel();
+    // latest copy. unpark wakes the view to draw it at once.
+    let (tx, rx) = rtrb::RingBuffer::new(GLANCES);
+    let view = std::thread::current();
     let done = AtomicBool::new(false);
     std::thread::scope(|scope| {
         let reader = std::thread::Builder::new()
             .name("input".into())
-            .spawn_scoped(scope, || read(input, &mut Console, config.poll, &done, tx))
+            .spawn_scoped(scope, || {
+                let read = read(input, &mut Console, config.poll, &done, tx, &view);
+                view.unpark();
+                read
+            })
             .context("spawning input thread")?;
-        let drawn = drive(&mut terminal, stats, timing, &still, rx, config);
+        let drawn = drive(&mut terminal, stats, timing, faults, &still, rx, config);
         done.store(true, Ordering::Relaxed);
         let read = reader
             .join()
@@ -88,9 +97,9 @@ pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
 
 /// Where the input thread's keys come from.
 trait Source {
-    /// Wait up to `wait` for a key, then append every key already queued,
-    /// each with when it was read. An error ends the session: a terminal
-    /// that failed once is not retried.
+    /// Wait up to `wait` for a key, then append keys already queued, each
+    /// with when it was read, while `out` has spare capacity. An error ends
+    /// the session: a terminal that failed once is not retried.
     fn keys(&mut self, wait: Duration, out: &mut Vec<(KeyEvent, Instant)>) -> anyhow::Result<()>;
 }
 
@@ -102,7 +111,9 @@ impl Source for Console {
         if !event::poll(wait).context("polling terminal")? {
             return Ok(());
         }
-        while event::poll(Duration::ZERO).context("polling terminal")? {
+        while out.len() < out.capacity()
+            && event::poll(Duration::ZERO).context("polling terminal")?
+        {
             if let event::Event::Key(key) = event::read().context("reading key")? {
                 out.push((key, Instant::now()));
             }
@@ -112,16 +123,17 @@ impl Source for Console {
 }
 
 /// Read keys as they arrive and push their notes to the ring at once, then
-/// send the view a fresh `Glance` whenever one changed.
+/// hand the view a fresh `Glance` whenever one changed, waking `view`.
 fn read(
     input: &mut Input,
     source: &mut impl Source,
     poll: Duration,
     done: &AtomicBool,
-    tx: mpsc::Sender<Glance>,
+    mut tx: rtrb::Producer<Glance>,
+    view: &Thread,
 ) -> anyhow::Result<()> {
     let mut shown = input.model().glance();
-    let mut keys = Vec::new();
+    let mut keys = Vec::with_capacity(KEYS);
     loop {
         // SIGTERM and SIGHUP only set a flag; leaving here restores the
         // terminal through the same path as the quit key
@@ -131,7 +143,10 @@ fn read(
 
         // poll bounds the wait so Fixed note-offs still fall due on time
         keys.clear();
-        source.keys(poll, &mut keys)?;
+        if let Err(error) = source.keys(poll, &mut keys) {
+            input.fault(Fault::Input(io_kind(&error)));
+            return Err(error);
+        }
         for &(key, read) in &keys {
             let Some(stroke) = stroke(key) else {
                 continue;
@@ -145,15 +160,23 @@ fn read(
             return Ok(());
         }
 
+        // the view has gone, so there is no one left to play for
+        if tx.is_abandoned() {
+            return Ok(());
+        }
         let glance = input.model().glance();
-        if glance != shown {
+        // a full ring is offered the same glance again next poll
+        if glance != shown && tx.push(glance).is_ok() {
             shown = glance;
-            // the view has gone, so there is no one left to play for
-            if tx.send(glance).is_err() {
-                return Ok(());
-            }
+            view.unpark();
         }
     }
+}
+
+fn io_kind(error: &anyhow::Error) -> std::io::ErrorKind {
+    error
+        .downcast_ref::<std::io::Error>()
+        .map_or(std::io::ErrorKind::Other, std::io::Error::kind)
 }
 
 /// What the view draws from that stays put while playing.
@@ -171,8 +194,9 @@ fn drive(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     stats: &Stats,
     timing: &mut Timing,
+    faults: &mut Faults,
     still: &Still,
-    rx: mpsc::Receiver<Glance>,
+    mut rx: rtrb::Consumer<Glance>,
     config: &TuiConfig,
 ) -> anyhow::Result<()> {
     // ballistics are the view's, not the device's: the callback has no
@@ -196,12 +220,14 @@ fn drive(
         // spread sorts each window, so it is taken before the draw it
         // would otherwise be counted in
         timing.drain(now);
+        faults.drain();
         let latency = stages(&timing.latency, config);
         let fps = timing.latency.view.per_second();
         let view = View {
             keymap: &still.keymap,
             glance: &glance,
             snap: &snap,
+            fault: faults.last(),
             peak: &peak,
             activity: &activity,
             freqs: &still.freqs,
@@ -215,12 +241,17 @@ fn drive(
         terminal.draw(|frame| draw(frame, &view))?;
         timing.drawn(Instant::now());
 
-        match rx.recv_timeout(config.poll) {
-            // only the latest copy matters
-            Ok(next) => glance = rx.try_iter().last().unwrap_or(next),
-            Err(RecvTimeoutError::Timeout) => {}
-            // quit, an interrupt, or an input error, which the caller reports
-            Err(RecvTimeoutError::Disconnected) => return Ok(()),
+        // woken early by a glance, or by the input thread ending
+        std::thread::park_timeout(config.poll);
+        // only the latest copy matters
+        while let Ok(next) = rx.pop() {
+            glance = next;
+        }
+        // quit, an interrupt, or an input error, which the caller reports;
+        // drained once more for a fault the input thread pushed on its way out
+        if rx.is_abandoned() {
+            faults.drain();
+            return Ok(());
         }
     }
 }
@@ -289,6 +320,8 @@ struct View<'a> {
     keymap: &'a Keymap,
     glance: &'a Glance,
     snap: &'a Snapshot,
+    /// the latest fault, shown beside its count
+    fault: Option<Fault>,
     peak: &'a Meter,
     activity: &'a Activity,
     freqs: &'a Freqs,
@@ -348,11 +381,23 @@ fn fps_style(fps: usize, config: &TuiConfig) -> Style {
     }
 }
 
-/// The one status line: fault counters, the buffer, and the view's rate.
-/// An unplugged device or a stalled callback otherwise looks like a quiet
-/// synth, so each counter takes colour once it moves.
+/// The status counter a fault is counted in, if the line shows one.
+fn counter(fault: Fault) -> Option<&'static str> {
+    match fault {
+        Fault::Stream(_) => Some("errors"),
+        Fault::Overrun { .. } => Some("overruns"),
+        Fault::Dropped => Some("dropped"),
+        Fault::TeeDropped { .. } | Fault::Input(_) => None,
+    }
+}
+
+/// The one status line: fault counters, the latest fault beside its own,
+/// the buffer, and the view's rate. An unplugged device or a stalled
+/// callback otherwise looks like a quiet synth, so each counter takes
+/// colour once it moves.
 fn status(
     snap: &Snapshot,
+    fault: Option<Fault>,
     requested: Option<u32>,
     fps: usize,
     config: &TuiConfig,
@@ -362,7 +407,11 @@ fn status(
             0 => Style::new(),
             _ => Style::new().fg(colour),
         };
-        Span::styled(format!("{name} {n}  "), style)
+        let text = match fault {
+            Some(fault) if counter(fault) == Some(name) => format!("{name} {n} (last: {fault})  "),
+            _ => format!("{name} {n}  "),
+        };
+        Span::styled(text, style)
     };
     let (buffer, differs) = buffer(requested, snap.buffer_frames);
     let buffer_style = match differs {
@@ -383,6 +432,7 @@ fn draw(frame: &mut Frame, view: &View) {
         keymap,
         glance,
         snap,
+        fault,
         peak,
         activity,
         freqs,
@@ -448,7 +498,7 @@ fn draw(frame: &mut Frame, view: &View) {
         ceil_ms: config.latency_ceil_ms,
     };
     latency_rows(frame, latency_area, latency, scale);
-    frame.render_widget(status(snap, requested, fps, config), status_area);
+    frame.render_widget(status(snap, fault, requested, fps, config), status_area);
 
     frame.render_widget(
         Sparkline::default()
@@ -947,7 +997,7 @@ mod tests {
 
     fn reads(script: Script) -> anyhow::Result<()> {
         let mut input = Input::detached(crate::session::tests::model());
-        let (tx, _rx) = mpsc::channel();
+        let (tx, _rx) = rtrb::RingBuffer::new(GLANCES);
         let mut script = script;
         read(
             &mut input,
@@ -955,7 +1005,33 @@ mod tests {
             Duration::ZERO,
             &AtomicBool::new(false),
             tx,
+            &std::thread::current(),
         )
+    }
+
+    #[test]
+    fn the_latest_fault_shows_beside_its_count() {
+        let config = crate::script::config_defaults().tui;
+        let snap = Snapshot {
+            errors: 1,
+            ..Snapshot::default()
+        };
+        let underrun = Fault::Stream(crate::audio::StreamKind::Underrun);
+        let line = status(&snap, Some(underrun), None, 60, &config).to_string();
+        assert!(
+            line.starts_with("errors 1 (last: underrun)  overruns 0  "),
+            "{line}"
+        );
+        let line = status(&snap, None, None, 60, &config).to_string();
+        assert!(line.starts_with("errors 1  overruns 0  "), "{line}");
+    }
+
+    #[test]
+    fn an_input_error_keeps_its_kind() {
+        let error = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))
+            .context("reading key");
+        assert_eq!(io_kind(&error), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(io_kind(&anyhow::anyhow!("eof")), std::io::ErrorKind::Other);
     }
 
     #[test]

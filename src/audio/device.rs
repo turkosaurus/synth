@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::debug;
 
+use super::fault::{Fault, Faults, StreamKind};
 use super::render::{fill, Player, Tally};
 use super::timing::Recorder;
 
@@ -25,8 +26,7 @@ pub struct Stats {
     /// callbacks that ran past their deadline, which is the count that
     /// corresponds to something audible
     overruns: AtomicU64,
-    /// errors the driver reported, counted rather than logged because the
-    /// error callback may run on the audio thread
+    /// errors the driver reported; each kind goes to a fault ring as well
     errors: AtomicU64,
     /// events the UI thread could not push because the ring was full
     dropped: AtomicU64,
@@ -239,18 +239,22 @@ fn buffer_size(
     Ok(cpal::BufferSize::Fixed(frames))
 }
 
-/// Build and start a stream that drives `player`, reporting into `stats`,
-/// and into `recorder` when one is given.
+/// Build and start a stream that drives `player`, reporting into `stats`
+/// and `faults`, and into `recorder` when one is given.
 pub fn stream(
     output: &Output,
     player: Player,
     stats: Arc<Stats>,
     recorder: Option<Recorder>,
+    faults: &mut Faults,
 ) -> Result<cpal::Stream, Error> {
+    // cpal may call the error handler on a thread other than the
+    // callback's, so each gets its own ring
+    let rings = (faults.ring(), faults.ring());
     match output.config.sample_format() {
-        SampleFormat::I16 => build::<i16>(output, player, stats, recorder, convert),
-        SampleFormat::I32 => build::<i32>(output, player, stats, recorder, convert),
-        _ => build::<f32>(output, player, stats, recorder, direct),
+        SampleFormat::I16 => build::<i16>(output, player, stats, recorder, rings, convert),
+        SampleFormat::I32 => build::<i32>(output, player, stats, recorder, rings, convert),
+        _ => build::<f32>(output, player, stats, recorder, rings, direct),
     }
 }
 
@@ -294,11 +298,81 @@ where
     tally
 }
 
+/// Count one callback's `tally` into `stats`, given the `used_us` it took,
+/// and push a fault for each thing that went wrong.
+fn account(
+    stats: &Stats,
+    faults: &mut rtrb::Producer<Fault>,
+    tally: &Tally,
+    used_us: u32,
+    sample_rate: u32,
+) {
+    // accumulated in `fill`, then written once per callback rather than
+    // once per sample
+    stats
+        .frames
+        .fetch_add(tally.frames as u64, Ordering::Relaxed);
+    stats.clipped.fetch_add(tally.clipped, Ordering::Relaxed);
+    stats
+        .non_finite
+        .fetch_add(tally.non_finite, Ordering::Relaxed);
+    stats.record_peak(tally.peak);
+    stats
+        .output_tee_dropped
+        .fetch_add(tally.output_tee_dropped, Ordering::Relaxed);
+    if tally.output_tee_dropped > 0 {
+        let _ = faults.push(Fault::TeeDropped {
+            frames: tally.output_tee_dropped,
+        });
+    }
+
+    stats.callback_us_max.fetch_max(used_us, Ordering::Relaxed);
+    stats.buffer_frames.store(tally.frames, Ordering::Relaxed);
+
+    // the deadline comes from this callback's own frame count. the driver
+    // may vary the buffer, so a ratio of two independent maxima would
+    // describe no callback that ever ran.
+    let budget_us = tally.frames as f32 / sample_rate as f32 * 1e6;
+    if budget_us > 0.0 {
+        stats.budget_us.store(budget_us as u32, Ordering::Relaxed);
+        stats.record_load(used_us as f32 / budget_us);
+        if used_us as f32 > budget_us {
+            stats.overruns.fetch_add(1, Ordering::Relaxed);
+            let _ = faults.push(Fault::Overrun {
+                used_us,
+                budget_us: budget_us as u32,
+            });
+        }
+    }
+}
+
+/// Count a stream error and push its kind; the driver's message stays
+/// behind, since reading it means formatting.
+fn stream_error(stats: &Stats, faults: &mut rtrb::Producer<Fault>, error: &cpal::Error) {
+    stats.errors.fetch_add(1, Ordering::Relaxed);
+    let _ = faults.push(Fault::Stream(stream_kind(error.kind())));
+}
+
+fn stream_kind(kind: cpal::ErrorKind) -> StreamKind {
+    use cpal::ErrorKind as Cpal;
+    match kind {
+        Cpal::Xrun => StreamKind::Underrun,
+        Cpal::DeviceNotAvailable => StreamKind::DeviceGone,
+        Cpal::DeviceChanged => StreamKind::DeviceChanged,
+        Cpal::DeviceBusy => StreamKind::DeviceBusy,
+        Cpal::StreamInvalidated => StreamKind::Invalidated,
+        Cpal::RealtimeDenied => StreamKind::RealtimeDenied,
+        Cpal::BackendError => StreamKind::Backend,
+        _ => StreamKind::Other,
+    }
+}
+
 fn build<T>(
     output: &Output,
     mut player: Player,
     stats: Arc<Stats>,
     mut recorder: Option<Recorder>,
+    (mut faults, mut error_faults): (rtrb::Producer<Fault>, rtrb::Producer<Fault>),
     render: fn(&mut [T], usize, &mut Player, &mut Applied) -> Tally,
 ) -> Result<cpal::Stream, Error>
 where
@@ -306,7 +380,7 @@ where
 {
     let channels = output.channels;
     let sample_rate = output.sample_rate;
-    let faults = Arc::clone(&stats);
+    let error_stats = Arc::clone(&stats);
     let config = cpal::StreamConfig {
         buffer_size: output.buffer,
         ..output.config.config()
@@ -337,41 +411,12 @@ where
                         .fetch_add(timing_dropped, Ordering::Relaxed);
                 }
 
-                // accumulated in `fill`, then written once per callback rather
-                // than once per sample
-                stats
-                    .frames
-                    .fetch_add(tally.frames as u64, Ordering::Relaxed);
-                stats.clipped.fetch_add(tally.clipped, Ordering::Relaxed);
-                stats
-                    .non_finite
-                    .fetch_add(tally.non_finite, Ordering::Relaxed);
-                stats.record_peak(tally.peak);
-                stats
-                    .output_tee_dropped
-                    .fetch_add(tally.output_tee_dropped, Ordering::Relaxed);
-
                 let used_us = start.elapsed().as_micros() as u32;
-                stats.callback_us_max.fetch_max(used_us, Ordering::Relaxed);
-                stats.buffer_frames.store(tally.frames, Ordering::Relaxed);
-
-                // the deadline comes from this callback's own frame count. the
-                // driver may vary the buffer, so a ratio of two independent
-                // maxima would describe no callback that ever ran.
-                let budget_us = tally.frames as f32 / sample_rate as f32 * 1e6;
-                if budget_us > 0.0 {
-                    stats.budget_us.store(budget_us as u32, Ordering::Relaxed);
-                    stats.record_load(used_us as f32 / budget_us);
-                    if used_us as f32 > budget_us {
-                        stats.overruns.fetch_add(1, Ordering::Relaxed);
-                    }
-                }
+                account(&stats, &mut faults, &tally, used_us, sample_rate);
             },
-            // counted, not printed: the tui owns the screen, and this callback
-            // may run on the audio thread, where formatting is not allowed
-            move |_| {
-                faults.errors.fetch_add(1, Ordering::Relaxed);
-            },
+            // counted and kept as a kind, not printed: the tui owns the
+            // screen, and this may run on the audio thread
+            move |error| stream_error(&error_stats, &mut error_faults, &error),
             None,
         )
         .map_err(|source| Error::Stream {
@@ -448,6 +493,64 @@ mod tests {
         stats.record_dropped();
         assert_eq!(stats.snapshot().dropped, 2);
         assert_eq!(stats.snapshot().dropped, 2);
+    }
+
+    fn overrun() -> Tally {
+        Tally {
+            frames: 48,
+            output_tee_dropped: 2,
+            ..Tally::default()
+        }
+    }
+
+    #[test]
+    fn an_overrun_and_a_full_output_tee_are_faults() {
+        let stats = Stats::default();
+        let mut faults = Faults::new();
+        let mut tx = faults.ring();
+        // 48 frames at 48 kHz is a 1000 µs deadline
+        account(&stats, &mut tx, &overrun(), 1500, 48_000);
+        faults.drain();
+        assert_eq!(
+            faults.last(),
+            Some(Fault::Overrun {
+                used_us: 1500,
+                budget_us: 1000
+            })
+        );
+        assert_eq!(stats.snapshot().overruns, 1);
+    }
+
+    #[test]
+    fn a_stream_error_keeps_its_kind() {
+        let stats = Stats::default();
+        let mut faults = Faults::new();
+        let mut tx = faults.ring();
+        stream_error(&stats, &mut tx, &cpal::Error::new(cpal::ErrorKind::Xrun));
+        faults.drain();
+        assert_eq!(faults.last(), Some(Fault::Stream(StreamKind::Underrun)));
+        assert_eq!(stats.snapshot().errors, 1);
+    }
+
+    // a full ring loses the record, and the count still moves
+    #[test]
+    fn faults_never_allocate_whether_the_ring_has_room_or_is_full() {
+        let stats = Stats::default();
+        let mut faults = Faults::new();
+        let mut tx = faults.ring();
+        let tally = overrun();
+        let error = cpal::Error::new(cpal::ErrorKind::Xrun);
+        let room = tx.slots();
+        let info = allocation_counter::measure(|| {
+            for _ in 0..room {
+                account(&stats, &mut tx, &tally, 1500, 48_000);
+                stream_error(&stats, &mut tx, &error);
+            }
+        });
+        assert_eq!(info.count_total, 0);
+        assert_eq!(tx.slots(), 0);
+        assert_eq!(stats.snapshot().overruns, room as u64);
+        assert_eq!(stats.snapshot().errors, room as u64);
     }
 
     const RANGE: cpal::SupportedBufferSize =

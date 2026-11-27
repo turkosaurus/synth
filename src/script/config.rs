@@ -135,7 +135,7 @@ pub fn config_path() -> Option<PathBuf> {
     Dirs::current().config().map(|dir| under(dir, &FILE))
 }
 
-/// Where the debug log goes: `synth/synth.log` under the state directory.
+/// Where the log goes: `synth/synth.log` under the state directory.
 /// `None` when the environment names none.
 pub fn log_path() -> Option<PathBuf> {
     Dirs::current().state().map(|dir| under(dir, &LOG))

@@ -106,30 +106,51 @@ fn main() -> ExitCode {
     }
 }
 
-// never to sdtout to avoid collisions with the TUI; only when RUST_LOG is set
-fn tracing_init() -> anyhow::Result<()> {
-    if std::env::var_os("RUST_LOG").is_none() {
-        return Ok(());
-    }
-    let path = script::log_path()
-        .context("no log directory: set XDG_STATE_HOME or HOME, or APPDATA on Windows")?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    }
-    let file =
-        std::fs::File::create(&path).with_context(|| format!("create {}", path.display()))?;
+// never to stdout to avoid collisions with the TUI
+const FAULTS: &str = "synth::audio::fault=warn";
+
+// faults are always written by a command that `streams`; RUST_LOG adds
+// whatever else it names, and is the one case where a log that cannot be
+// opened stops synth. without it, other commands leave the log alone, so a
+// `synth check` does not truncate the log of a session still playing.
+fn tracing_init(streams: bool) -> anyhow::Result<()> {
+    let filter = match tracing_subscriber::EnvFilter::try_from_default_env() {
+        Ok(env) => env.add_directive(FAULTS.parse().context("fault log directive")?),
+        Err(_) if !streams => return Ok(()),
+        Err(_) => tracing_subscriber::EnvFilter::new(FAULTS),
+    };
+    let file = match log_file() {
+        Ok(file) => file,
+        Err(e) if std::env::var_os("RUST_LOG").is_none() => {
+            eprintln!("warning: faults go unlogged: {e:#}");
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
     tracing_subscriber::fmt()
         .with_writer(file)
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(filter)
         .with_span_events(FmtSpan::CLOSE)
         .with_ansi(false)
         .init();
     Ok(())
 }
 
+fn log_file() -> anyhow::Result<std::fs::File> {
+    let path = script::log_path()
+        .context("no log directory: set XDG_STATE_HOME or HOME, or APPDATA on Windows")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    }
+    std::fs::File::create(&path).with_context(|| format!("create {}", path.display()))
+}
+
 fn run() -> anyhow::Result<ExitCode> {
-    tracing_init()?;
     let args = Args::parse();
+    tracing_init(matches!(
+        args.command,
+        Commands::Play { .. } | Commands::Tui { .. }
+    ))?;
     match args.command {
         Commands::Doctor => {
             view::report::environment(gating());
@@ -383,11 +404,14 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
     let seconds = player.total_samples() as f64 / sample_rate as f64;
 
     let stats = Arc::new(audio::Stats::default());
-    let _stream = audio::stream(&output, player, Arc::clone(&stats), None)?;
+    let mut faults = audio::Faults::new();
+    let _stream = audio::stream(&output, player, Arc::clone(&stats), None, &mut faults)?;
 
     // stdout carries only data, so these lines never mix into a pipe
     eprintln!("{notes} events · {seconds:.1}s · {sample_rate} Hz · {channels} ch");
     std::thread::sleep(Duration::from_secs_f64(seconds) + Duration::from_millis(300));
+
+    faults.drain();
 
     // structured fields rather than a preformatted string, so the log is
     // queryable per counter. one snapshot feeds both the log and the print,
