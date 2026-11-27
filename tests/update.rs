@@ -54,8 +54,15 @@ fn update_replaces_itself() {
     let out = synth(&["update", "--dev"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
+    // a build from before the rename has no `custom`; its sync fails with a
+    // warning, and the update still succeeds
+    let knows_custom = synth(&["custom", "--path"]).status.success();
     let _ = fs::remove_dir_all(&dir);
     assert!(out.status.success(), "{stderr}");
     assert!(stdout.contains(" -> "), "{stdout}");
-    assert!(!stderr.contains("custom --sync"), "{stderr}");
+    if knows_custom {
+        assert!(!stderr.contains("custom --sync"), "{stderr}");
+    } else {
+        assert!(stderr.contains("custom --sync exited with"), "{stderr}");
+    }
 }
