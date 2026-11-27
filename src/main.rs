@@ -32,7 +32,7 @@ enum Commands {
         #[arg(long, default_value_t = 48000)]
         rate: u32,
     },
-    /// Play a patch or sequence through the default output device
+    /// Play a sequence through the default output device
     Play { path: PathBuf },
     /// Play live from the keyboard; without a path, the default instrument
     Tui { path: Option<PathBuf> },
@@ -363,6 +363,15 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
     let (sample_rate, channels) = (output.sample_rate, output.channels);
 
     let patch = script::load(path, sample_rate, config.custom_dir.as_deref())?;
+    // only a sequence has a bpm
+    if patch.bpm <= 0.0 {
+        anyhow::bail!(
+            "{} is an instrument, not a sequence: play it with `synth tui {}`, \
+             or put it in a sequence",
+            path.display(),
+            path.display(),
+        );
+    }
     let notes = patch.timeline.events.len();
     let player = audio::Player::new(
         audio::Feed::Timeline(patch.timeline),

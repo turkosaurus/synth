@@ -1,5 +1,4 @@
 use anyhow::Context;
-use std::time::Duration;
 
 use super::bake::{bake_instrument, InstrumentSpec};
 use super::{field, Error};
@@ -25,42 +24,20 @@ struct Step {
 /// at the root of the patch rather than under `instruments`.
 pub(super) const SINGLE: &str = "(single note)";
 
-const SINGLE_HOLD: Duration = Duration::from_millis(1200);
-
-/// A4, for a bare instrument file with no sequence to say otherwise
-const SINGLE_NOTE: u8 = 69;
-
-pub(super) fn single(
+/// A bare instrument file: one instrument for the keyboard, and no events.
+pub(super) fn bare(
     spec: InstrumentSpec,
     sample_rate: u32,
     freqs: crate::spec::Freqs,
     keymap: crate::spec::Keymap,
 ) -> anyhow::Result<Patch> {
     let (instrument, report) = bake_instrument(spec, sample_rate)?;
-    let tail = instrument.release().samples(f64::from(sample_rate)) as u64;
-    let hold = (SINGLE_HOLD.as_secs_f64() * sample_rate as f64) as u64;
 
     Ok(Patch {
         timeline: crate::spec::Timeline {
             instruments: vec![instrument],
-            events: vec![
-                (
-                    0,
-                    crate::spec::Event::NoteOn {
-                        instrument: 0,
-                        note: SINGLE_NOTE,
-                        velocity: 127,
-                    },
-                ),
-                (
-                    hold,
-                    crate::spec::Event::NoteOff {
-                        instrument: 0,
-                        note: SINGLE_NOTE,
-                    },
-                ),
-            ],
-            total_samples: hold + tail,
+            events: Vec::new(),
+            total_samples: 0,
         },
         freqs,
         keymap,
