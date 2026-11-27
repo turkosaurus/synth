@@ -9,12 +9,12 @@
 ---@class synth.Config
 ---@field buffer_frames? integer audio callback frames (0: system default)
 ---@field queue? integer buffer size: input -> audio
----@field patch_dir? string custom patches folder
+---@field custom_dir? string custom folder
 ---@field tui? synth.ConfigTui
 local config = {
 	buffer_frames = 0, -- audio callback frames (0: system default)
 	queue = 256, -- buffer size: input -> audio
-	-- patch_dir = [[{default}]] -- custom patches folder
+	-- custom_dir = [[{default}]] -- custom folder
 	tui = {
 		poll = 16, -- ms between redraws and key reads
 		meter_hold = 560, -- ms a peak holds before it falls

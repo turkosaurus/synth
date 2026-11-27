@@ -1,4 +1,4 @@
-//! The question `synth patches` asks about an edited copy of a built-in
+//! The question `synth custom` asks about an edited copy of a built-in
 //! that has a newer default. Reads and writes through any `BufRead` and
 //! `Write`, so a test can answer it.
 
@@ -65,7 +65,7 @@ mod tests {
     fn ask(answers: &str) -> (Choice, String) {
         let mut output = Vec::new();
         let choice = overwrite(
-            Path::new("patches/synth/envelope.lua"),
+            Path::new("custom/synth/envelope.lua"),
             "attack = 5\n",
             "attack = 15\n",
             false,
