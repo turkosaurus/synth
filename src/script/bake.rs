@@ -558,6 +558,7 @@ pub(super) fn inspect(
         peak,
         dc,
         seam,
+        harmonics: super::spectrum::octaves(instrument.wave().frame(0)),
         clamped: clamped.iter().sum(),
         attack: instrument.attack().samples(rate),
         decay: instrument.decay().samples(rate),

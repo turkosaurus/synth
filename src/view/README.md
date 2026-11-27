@@ -15,5 +15,6 @@ Presentation only: draws data it is handed, does no work of its own.
 flowchart LR
     Session --> tui --> meter
     Patch --> report --> table
+    report --> meter
     prompt --> diff
 ```

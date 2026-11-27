@@ -4,7 +4,7 @@ use crate::audio::Snapshot;
 use crate::input::keyboard::Gating;
 use crate::spec::{Config, Patch};
 
-use super::table;
+use super::{meter, table};
 
 pub fn environment(gating: Gating) {
     let term = std::env::var("TERM").unwrap_or_default();
@@ -192,6 +192,13 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
             ],
         );
 
+        println!();
+        let label = match report.frames {
+            1 => "harmonics".to_string(),
+            _ => "harmonics  (waves[1])".to_string(),
+        };
+        table::columns(&label, &["harmonic", "level"], harmonics(&report.harmonics));
+
         for diagnostic in &report.diagnostics {
             println!("  {}  {name}: {diagnostic}", diagnostic.severity().label());
         }
@@ -243,6 +250,39 @@ pub fn patch(path: &std::path::Path, patch: &Patch, sample_rate: u32) {
     if patch.clean() {
         println!("  ok");
     }
+}
+
+// a baked f32 table rounds at about -140 dB, so anything quieter than this
+// is rounding rather than content
+const HARMONIC_FLOOR_DB: f32 = -120.0;
+
+/// One row per octave, in dB below the loudest: 1, 2–3, 4–7, and so on, the
+/// last running on to nyquist.
+fn harmonics(octaves: &[f32]) -> Vec<Vec<String>> {
+    let loudest = octaves.iter().copied().fold(0.0f32, f32::max);
+    let last = octaves.len().saturating_sub(1);
+    octaves
+        .iter()
+        .enumerate()
+        .map(|(octave, &amplitude)| {
+            let low = 1usize << octave;
+            let span = match octave {
+                0 => "1".to_string(),
+                _ if octave == last => format!("{low}+"),
+                _ => format!("{low}–{}", 2 * low - 1),
+            };
+            let ratio = if loudest > 0.0 {
+                amplitude / loudest
+            } else {
+                0.0
+            };
+            let scaled = meter::scale(ratio, HARMONIC_FLOOR_DB);
+            vec![
+                span,
+                format!("{} dB", meter::db_label(scaled, HARMONIC_FLOOR_DB)),
+            ]
+        })
+        .collect()
 }
 
 /// One line of stream telemetry. Returns rather than prints, because the tui

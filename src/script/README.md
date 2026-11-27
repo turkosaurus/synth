@@ -9,6 +9,7 @@ The only place `mlua` appears. Loads a patch, checks it, and bakes it into [`spe
 | [`error.rs`](./error.rs) | `Error`: why a patch failed, by variant |
 | [`sandbox.rs`](./sandbox.rs) | the allowlisted environment user Lua runs in |
 | [`bake.rs`](./bake.rs) | instrument to wavetable and envelope |
+| [`spectrum.rs`](./spectrum.rs) | a baked cycle's loudest harmonic per octave |
 | [`feed.rs`](./feed.rs) | single note or sequence to a timeline |
 | [`keymap.rs`](./keymap.rs) | keyboard layout to keymap |
 | [`filter.rs`](./filter.rs) | filter table to `Filter` and its report |

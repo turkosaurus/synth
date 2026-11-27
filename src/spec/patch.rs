@@ -69,6 +69,9 @@ pub struct Report {
     pub(crate) peak: f32,
     pub(crate) dc: f32,
     pub(crate) seam: f32,
+    /// the first wave's loudest harmonic in each octave, 1, 2–3, 4–7, and
+    /// so on to nyquist, as an amplitude where a full-scale sine reads 1.0
+    pub(crate) harmonics: Vec<f32>,
     pub(crate) clamped: usize,
     pub(crate) attack: usize,
     pub(crate) decay: usize,

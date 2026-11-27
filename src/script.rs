@@ -13,6 +13,7 @@ mod filter;
 mod keymap;
 mod sandbox;
 mod schema;
+mod spectrum;
 pub mod starters;
 mod structure;
 
