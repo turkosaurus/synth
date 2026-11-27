@@ -38,8 +38,8 @@ sequenceDiagram
 
 | term | type | definition |
 | ---  | ---  | ---        |
-| clip | | recorded audio; a clip loops, where a sequence repeats |
-| fragment | | part of a clip, which can loop as an oscillator waveform or become a cycle of a wavetable |
+| clip | | recorded audio; a clip loops, whereas a sequence repeats |
+| slice | | part of a clip, which can loop as an oscillator waveform or become a cycle of a wavetable |
 | loop start | | where a looping clip plays again from |
 | loop end | | where a looping clip turns back to its loop start |
 | one-shot | | a clip that plays once through, without looping |
