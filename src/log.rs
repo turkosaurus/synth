@@ -7,7 +7,7 @@
 //! it does get.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -151,6 +151,7 @@ impl Drop for Listening {
 }
 
 /// The pid file beside a socket: `log.pid` for `log.sock`.
+#[cfg(unix)]
 fn pid_path(socket: &Path) -> PathBuf {
     socket.with_extension("pid")
 }
@@ -224,18 +225,30 @@ pub fn follow(
     file: &Path,
     mut line: impl FnMut(&str) -> io::Result<()>,
 ) -> io::Result<()> {
-    let mut from_end = false;
-    #[cfg(unix)]
-    if let Some(stream) = socket.and_then(|path| std::os::unix::net::UnixStream::connect(path).ok())
-    {
-        for text in BufReader::new(stream).lines() {
-            line(&text?)?;
-        }
-        from_end = true;
-    }
-    #[cfg(not(unix))]
-    let _ = socket;
+    let from_end = live(socket, &mut line)?;
     tail(file, from_end, &mut line)
+}
+
+/// Passes each line from `socket` until it closes; false when no synth
+/// holds it.
+#[cfg(unix)]
+fn live(socket: Option<&Path>, line: &mut impl FnMut(&str) -> io::Result<()>) -> io::Result<bool> {
+    use std::io::{BufRead, BufReader};
+
+    let Some(stream) = socket.and_then(|path| std::os::unix::net::UnixStream::connect(path).ok())
+    else {
+        return Ok(false);
+    };
+    for text in BufReader::new(stream).lines() {
+        line(&text?)?;
+    }
+    Ok(true)
+}
+
+/// Windows has no live log; the file is all there is.
+#[cfg(not(unix))]
+fn live(_: Option<&Path>, _: &mut impl FnMut(&str) -> io::Result<()>) -> io::Result<bool> {
+    Ok(false)
 }
 
 /// Follows `path` as `tail -F` does: through its absence, and from the
