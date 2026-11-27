@@ -112,7 +112,7 @@ const FAULTS: &str = "synth::audio::fault=warn";
 // faults are always written by a command that `streams`; RUST_LOG adds
 // whatever else it names, and is the one case where a log that cannot be
 // opened stops synth. without it, other commands leave the log alone, so a
-// `synth check` does not truncate the log of a session still playing.
+// `synth check` does not trim the log of a session still playing.
 fn tracing_init(streams: bool) -> anyhow::Result<()> {
     let filter = match tracing_subscriber::EnvFilter::try_from_default_env() {
         Ok(env) => env.add_directive(FAULTS.parse().context("fault log directive")?),
@@ -142,7 +142,10 @@ fn log_file() -> anyhow::Result<std::fs::File> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
     }
-    std::fs::File::create(&path).with_context(|| format!("create {}", path.display()))
+    // a config.lua that does not load leaves the log untrimmed; the command
+    // reports that error itself
+    let trim_kb = script::config().map_or(0, |config| config.log.trim_size_kb);
+    synth::log::open(&path, trim_kb * 1024).with_context(|| format!("open {}", path.display()))
 }
 
 fn run() -> anyhow::Result<ExitCode> {

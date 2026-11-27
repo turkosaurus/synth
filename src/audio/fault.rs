@@ -115,13 +115,16 @@ impl Faults {
         Reporter(tx)
     }
 
-    /// Log every fault waiting in every ring, oldest first.
+    /// Log every fault waiting in every ring, oldest first. Faults with
+    /// equal stamps keep the order they were drained in, ring by ring, and
+    /// the last of them drained is the last shown.
     pub fn drain(&mut self) {
         for ring in &mut self.rings {
             while let Ok(stamped) = ring.pop() {
                 self.drained.push(stamped);
             }
         }
+        // stable, so equal stamps stay in drain order
         self.drained.sort_by_key(|stamped| stamped.at);
         for stamped in self.drained.drain(..) {
             warn!("{}", stamped.fault);
@@ -142,6 +145,7 @@ impl Faults {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn each_fault_reads_as_text() {
@@ -169,34 +173,55 @@ mod tests {
         }
     }
 
+    fn at(base: Instant, ms: u64, fault: Fault) -> Stamped {
+        Stamped {
+            at: base + Duration::from_millis(ms),
+            fault,
+        }
+    }
+
     // the later ring is drained first, so only the stamps can put the
     // underrun last
     #[test]
     fn drain_orders_every_ring_by_time() {
+        let base = Instant::now();
         let mut faults = Faults::new(4);
         let mut audio = faults.ring();
         let mut input = faults.ring();
-        input.push(Fault::Dropped);
-        audio.push(Fault::Stream(StreamKind::Underrun));
+        let underrun = Fault::Stream(StreamKind::Underrun);
+        input.0.push(at(base, 1, Fault::Dropped)).unwrap();
+        audio.0.push(at(base, 2, underrun)).unwrap();
         faults.drain();
-        assert_eq!(faults.last(), Some(Fault::Stream(StreamKind::Underrun)));
+        assert_eq!(faults.last(), Some(underrun));
         assert!(faults.rings.iter().all(rtrb::Consumer::is_empty));
     }
 
     #[test]
-    fn a_fault_stamped_earlier_does_not_replace_the_last() {
+    fn equal_stamps_keep_drain_order() {
+        let base = Instant::now();
         let mut faults = Faults::new(4);
         let mut audio = faults.ring();
         let mut input = faults.ring();
-        let early = Instant::now();
-        audio.push(Fault::Dropped);
+        audio.0.push(at(base, 1, Fault::Dropped)).unwrap();
+        input
+            .0
+            .push(at(base, 1, Fault::Stream(StreamKind::Underrun)))
+            .unwrap();
+        faults.drain();
+        assert_eq!(faults.last(), Some(Fault::Stream(StreamKind::Underrun)));
+    }
+
+    #[test]
+    fn a_fault_stamped_earlier_does_not_replace_the_last() {
+        let base = Instant::now();
+        let mut faults = Faults::new(4);
+        let mut audio = faults.ring();
+        let mut input = faults.ring();
+        audio.0.push(at(base, 2, Fault::Dropped)).unwrap();
         faults.drain();
         input
             .0
-            .push(Stamped {
-                at: early,
-                fault: Fault::Stream(StreamKind::Underrun),
-            })
+            .push(at(base, 1, Fault::Stream(StreamKind::Underrun)))
             .unwrap();
         faults.drain();
         assert_eq!(faults.last(), Some(Fault::Dropped));

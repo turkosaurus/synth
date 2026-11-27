@@ -8,7 +8,7 @@ use std::time::Duration;
 use super::Error;
 
 use super::field;
-use crate::spec::{Budget, Config, TuiConfig};
+use crate::spec::{Budget, Config, LogConfig, TuiConfig};
 
 /// `config.lua` under the config directory.
 const FILE: [&str; 2] = ["synth", "config.lua"];
@@ -187,6 +187,9 @@ fn table(lua: &mlua::Lua, source: &str, name: &str) -> Result<mlua::Table, Error
         });
     };
     super::schema::CONFIG.check(&table, None)?;
+    if let Some(log) = table.get::<Option<mlua::Table>>(field::LOG)? {
+        super::schema::CONFIG_LOG.check(&log, None)?;
+    }
     if let Some(tui) = table.get::<Option<mlua::Table>>(field::TUI)? {
         super::schema::CONFIG_TUI.check(&tui, None)?;
         if let Some(latency) = tui.get::<Option<mlua::Table>>(field::METER_LATENCY)? {
@@ -287,6 +290,7 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
     let (floor, ceil) = ordered(&latency, LATENCY, field::FLOOR, field::CEIL)?;
     // a frame rate is better higher, so its danger comes below its warn
     let fps: mlua::Table = tui.get(field::METER_FPS)?;
+    let log: mlua::Table = table.get(field::LOG)?;
     let (fps_danger, fps_warn) = ordered(&fps, FPS, field::DANGER, field::WARN)?;
     Ok(Config {
         // 0 asks for nothing, the same as leaving it out
@@ -319,6 +323,9 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
                 danger: fps_danger as f32,
             },
             faults: tui.get(field::FAULTS)?,
+        },
+        log: LogConfig {
+            trim_size_kb: log.get(field::TRIM_SIZE_KB)?,
         },
     })
 }
@@ -435,6 +442,7 @@ mod tests {
         assert_eq!(config.tui.latency_window, Duration::from_secs(5));
         assert_eq!(config.tui.latency_records, 1024);
         assert_eq!(config.tui.faults, 64);
+        assert_eq!(config.log.trim_size_kb, 1024);
         assert_eq!(config.tui.latency_floor_ms, 0.01);
         assert_eq!(config.tui.latency_ceil_ms, 100.0);
         let budget = |warn, danger| Budget { warn, danger };
@@ -625,6 +633,10 @@ mod tests {
             (
                 "return { tui = { meter_latency = { records = 0 } } }",
                 "config.lua tui meter_latency: `records` is 0; must be 1 to 65536",
+            ),
+            (
+                "return { log = { trim_size_kb = -1 } }",
+                "config.lua log: `trim_size_kb` is -1; must be 0 to 1048576",
             ),
             (
                 "return { tui = { faults = 0 } }",

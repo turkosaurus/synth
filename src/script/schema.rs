@@ -139,6 +139,20 @@ pub(super) const CONFIG: Schema = Schema {
         // "" is the default folder; anything else is checked when resolved
         optional(field::CUSTOM_DIR, Ty::Text, Bound::Any),
         optional(field::TUI, Ty::Table, Bound::Any),
+        optional(field::LOG, Ty::Table, Bound::Any),
+    ],
+};
+
+pub(super) const CONFIG_LOG: Schema = Schema {
+    what: "config.lua log",
+    fields: &[
+        // KiB; 0 never trims, and a trim reads the kept part into memory
+        // once at start, so the ceiling is 1 GiB
+        optional(
+            field::TRIM_SIZE_KB,
+            Ty::Integer,
+            Bound::Between(0.0, 1_048_576.0),
+        ),
     ],
 };
 

@@ -90,6 +90,13 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
                 format!("warn below {}, red below {}", tui.fps.warn, tui.fps.danger),
             ),
             ("faults", tui.faults.to_string()),
+            (
+                "log trim",
+                match config.log.trim_size_kb {
+                    0 => "never".to_string(),
+                    kb => format!("to {kb} KiB at start"),
+                },
+            ),
         ],
         false,
     );
