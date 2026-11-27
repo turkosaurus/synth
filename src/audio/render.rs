@@ -348,6 +348,20 @@ pub enum Feed {
     },
 }
 
+/// The reader's end of an output tee: output frames, `channels` samples
+/// each, interleaved as the device takes them.
+pub struct OutputTee {
+    pub samples: rtrb::Consumer<f32>,
+    pub channels: usize,
+}
+
+/// An output tee holding up to `frames` frames, and the producer for
+/// [`Player::with_output_tee`].
+pub fn output_tee(frames: usize, channels: usize) -> (rtrb::Producer<f32>, OutputTee) {
+    let (tx, samples) = rtrb::RingBuffer::new(frames * channels);
+    (tx, OutputTee { samples, channels })
+}
+
 /// A feed's events once its instruments are in pools.
 enum Source {
     Timeline {
@@ -369,6 +383,8 @@ pub struct Player {
     filter: Option<Svf>,
     /// moves `filter`'s cutoff each sample
     sweep: Option<Sweep>,
+    /// receives every output frame, for a reader off the audio thread
+    output_tee: Option<rtrb::Producer<f32>>,
 }
 
 /// One LFO moving the shared filter's cutoff from `base`. Never restarted,
@@ -418,7 +434,16 @@ impl Player {
             total_samples,
             filter: None,
             sweep: None,
+            output_tee: None,
         }
+    }
+
+    /// Push every frame `fill` writes into `output_tee`, all channels
+    /// interleaved. A full ring drops the frames that do not fit, so a
+    /// stalled reader never holds up the callback.
+    pub fn with_output_tee(mut self, output_tee: rtrb::Producer<f32>) -> Self {
+        self.output_tee = Some(output_tee);
+        self
     }
 
     /// Run the summed output through `filter`. Built here, at load, so
@@ -583,6 +608,8 @@ pub(super) struct Tally {
     /// an infinity would pin the meter, and `Stats::record_peak` orders bit
     /// patterns, which only holds for non-negative finite floats.
     pub peak: f32,
+    /// frames the output tee had no room for
+    pub output_tee_dropped: u64,
 }
 
 /// Full scale. A sample beyond this cannot be represented, so `fill`
@@ -603,7 +630,17 @@ const CLIP: f32 = 1.0;
 /// The feed is read where an event can land: once at the start, which
 /// takes everything a live ring holds, then at each timeline event's
 /// sample. The spans between render without looking at it.
+///
+/// Once the buffer is written, the player's output tee gets a copy of it.
 pub(super) fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tally {
+    let mut tally = render(out, channels, player);
+    if let Some(output_tee) = &mut player.output_tee {
+        tally.output_tee_dropped = push(output_tee, out, channels);
+    }
+    tally
+}
+
+fn render(out: &mut [f32], channels: usize, player: &mut Player) -> Tally {
     let mut tally = Tally::default();
     let mut frames = out.chunks_mut(channels);
     loop {
@@ -618,6 +655,18 @@ pub(super) fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tal
             return tally;
         }
     }
+}
+
+/// Copies whole frames of `out` into `output_tee`, as many as it has room
+/// for, and returns how many frames it had no room for. Writing only whole
+/// frames keeps the reader's channels aligned whatever the ring's size.
+fn push(output_tee: &mut rtrb::Producer<f32>, out: &[f32], channels: usize) -> u64 {
+    let frames = out.len() / channels;
+    let room = frames.min(output_tee.slots() / channels);
+    if let Ok(chunk) = output_tee.write_chunk_uninit(room * channels) {
+        chunk.fill_from_iter(out.iter().copied());
+    }
+    (frames - room) as u64
 }
 
 /// Renders one sample and lays it across `frame`, bounded as `fill` says.
@@ -1439,6 +1488,63 @@ mod tests {
         .unwrap();
         // each instrument is mono, but neither steals the other's voice
         assert_eq!(player.next(), 0.5);
+    }
+
+    fn drain(output_tee: &mut OutputTee) -> Vec<f32> {
+        std::iter::from_fn(|| output_tee.samples.pop().ok()).collect()
+    }
+
+    #[test]
+    fn the_output_tee_gets_every_channel_of_every_frame() {
+        let (tx, mut rx) = output_tee(4, 2);
+        let mut player = player(flat_instrument()).with_output_tee(tx);
+        let mut out = [0.0f32; 8];
+        let tally = fill(&mut out, 2, &mut player);
+
+        assert_eq!(tally.output_tee_dropped, 0);
+        assert_eq!(rx.channels, 2);
+        assert_eq!(drain(&mut rx), out);
+    }
+
+    // a reader that never reads must cost the callback frames, not time
+    #[test]
+    fn a_full_output_tee_drops_and_counts_frames() {
+        let (tx, mut rx) = output_tee(3, 2);
+        let mut player = player(flat_instrument()).with_output_tee(tx);
+        let mut out = [0.0f32; 8];
+
+        assert_eq!(fill(&mut out, 2, &mut player).output_tee_dropped, 1);
+        assert_eq!(fill(&mut out, 2, &mut player).output_tee_dropped, 4);
+        assert_eq!(drain(&mut rx), [0.25, 0.25, 0.5, 0.5, 0.75, 0.75]);
+    }
+
+    // five slots hold two stereo frames and one spare sample, which must
+    // stay empty or every frame after it reads with its channels swapped
+    #[test]
+    fn the_output_tee_never_takes_part_of_a_frame() {
+        let (tx, samples) = rtrb::RingBuffer::new(5);
+        let mut rx = OutputTee {
+            samples,
+            channels: 2,
+        };
+        let mut player = player(flat_instrument()).with_output_tee(tx);
+        let mut out = [0.0f32; 8];
+
+        assert_eq!(fill(&mut out, 2, &mut player).output_tee_dropped, 2);
+        assert_eq!(drain(&mut rx), [0.25, 0.25, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn fill_with_an_output_tee_never_allocates() {
+        let (tx, _rx) = output_tee(3, 2);
+        let mut player = player(flat_instrument()).with_output_tee(tx);
+        let mut out = [0.0f32; 8];
+        let info = allocation_counter::measure(|| {
+            // room for three frames, then room for none
+            fill(&mut out, 2, &mut player);
+            fill(&mut out, 2, &mut player);
+        });
+        assert_eq!(info.count_total, 0);
     }
 
     #[test]
