@@ -56,6 +56,9 @@ const INPUT_BUDGET_MS: (f32, f32) = (1.0, 5.0);
 const RENDER_BUDGET_MS: (f32, f32) = (5.0, 10.0);
 const OUTPUT_BUDGET_MS: (f32, f32) = (10.0, 20.0);
 const TOTAL_BUDGET_MS: (f32, f32) = (10.0, 20.0);
+/// Below these the view's frame rate turns yellow, then red.
+const FPS_WARN: usize = 30;
+const FPS_DANGER: usize = 24;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
@@ -257,6 +260,14 @@ fn buffer(requested: Option<u32>, got: u32) -> (String, bool) {
     }
 }
 
+fn fps_style(fps: usize) -> Style {
+    match fps {
+        fps if fps < FPS_DANGER => Style::new().fg(Color::Red),
+        fps if fps < FPS_WARN => Style::new().fg(Color::Yellow),
+        _ => Style::new(),
+    }
+}
+
 /// The one status line: fault counters, the buffer, and the view's rate.
 /// An unplugged device or a stalled callback otherwise looks like a quiet
 /// synth, so each counter takes colour once it moves.
@@ -278,10 +289,7 @@ fn status(snap: &Snapshot, requested: Option<u32>, fps: usize) -> Line<'static> 
         count("overruns", snap.overruns, Color::Red),
         count("dropped", snap.dropped, Color::Yellow),
         Span::styled(buffer, buffer_style),
-        Span::styled(
-            format!("  view {fps} fps"),
-            Style::new().fg(Color::DarkGray),
-        ),
+        Span::styled(format!("  view {fps} fps"), fps_style(fps)),
     ])
 }
 
@@ -801,6 +809,15 @@ mod tests {
             buffer(Some(128), 512),
             ("buffer 512 (asked 128)".into(), true)
         );
+    }
+
+    #[test]
+    fn a_slow_view_warns_then_turns_red() {
+        assert_eq!(fps_style(60), Style::new());
+        assert_eq!(fps_style(30), Style::new());
+        assert_eq!(fps_style(29), Style::new().fg(Color::Yellow));
+        assert_eq!(fps_style(24), Style::new().fg(Color::Yellow));
+        assert_eq!(fps_style(23), Style::new().fg(Color::Red));
     }
 
     #[test]
