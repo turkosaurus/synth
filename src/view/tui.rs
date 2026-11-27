@@ -1,6 +1,8 @@
 //! Drives a `Session` and draws it.
 
 use std::io::Stdout;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -15,10 +17,10 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 
-use crate::audio::Snapshot;
-use crate::input::keyboard::{Gating, Keyboard, Kind, Stroke};
-use crate::session::{Msg, Session};
-use crate::spec::{Freqs, Key, TuiConfig};
+use crate::audio::{Snapshot, Stats};
+use crate::input::keyboard::{Gating, Kind, Stroke};
+use crate::session::{Glance, Input, Msg, Session};
+use crate::spec::{Freqs, Key, Keymap, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
 
@@ -43,13 +45,99 @@ pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
 
     // restores the terminal on every way out of here, a panic included
     let _restore = crate::terminal::enter(gating)?;
-    drive(&mut terminal, session, gating, config)
+
+    // the view's own copies of what never changes while playing,
+    // so the draw loop shares nothing with the input thread but the channel
+    let model = session.model();
+    let still = Still {
+        keymap: model.keyboard.keymap().clone(),
+        freqs: model.freqs.clone(),
+        gating,
+        glance: model.glance(),
+    };
+    let (input, stats) = session.split();
+
+    // a channel rather than a lock on the keyboard: a send never waits, so a
+    // key is never held up behind a draw, and the view only ever needs the
+    // latest copy
+    let (tx, rx) = mpsc::channel();
+    let done = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let reader = std::thread::Builder::new()
+            .name("input".into())
+            .spawn_scoped(scope, || read(input, config.poll, &done, tx))
+            .context("spawning input thread")?;
+        let drawn = drive(&mut terminal, stats, &still, rx, config);
+        done.store(true, Ordering::Relaxed);
+        let read = reader
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        drawn.and(read)
+    })
 }
 
+/// Read keys as they arrive and push their notes to the ring at once, then
+/// send the view a fresh `Glance` whenever one changed.
+fn read(
+    input: &mut Input,
+    poll: Duration,
+    done: &AtomicBool,
+    tx: mpsc::Sender<Glance>,
+) -> anyhow::Result<()> {
+    let mut shown = input.model().glance();
+    loop {
+        // SIGTERM and SIGHUP only set a flag; leaving here restores the
+        // terminal through the same path as the quit key
+        if crate::terminal::interrupted() || done.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
+        // poll bounds the wait so Fixed note-offs still fall due on time
+        if event::poll(poll).context("polling terminal")? {
+            while event::poll(Duration::ZERO).context("polling terminal")? {
+                let event::Event::Key(key) = event::read().context("reading key")? else {
+                    continue;
+                };
+                let Some(stroke) = stroke(key) else {
+                    continue;
+                };
+                if input.update(Msg::Key(stroke)).is_break() {
+                    return Ok(());
+                }
+            }
+        }
+
+        if input.update(Msg::Tick).is_break() {
+            return Ok(());
+        }
+
+        let glance = input.model().glance();
+        if glance != shown {
+            shown = glance;
+            // the view has gone, so there is no one left to play for
+            if tx.send(glance).is_err() {
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// What the view draws from that stays put while playing.
+struct Still {
+    keymap: Keymap,
+    freqs: Freqs,
+    gating: Gating,
+    /// before the first key
+    glance: Glance,
+}
+
+/// Redraw every `poll`, and at once when the input thread reports a change,
+/// until it stops.
 fn drive(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    session: &mut Session,
-    gating: Gating,
+    stats: &Stats,
+    still: &Still,
+    rx: mpsc::Receiver<Glance>,
     config: &TuiConfig,
 ) -> anyhow::Result<()> {
     // ballistics are the view's, not the device's: the callback has no
@@ -57,17 +145,12 @@ fn drive(
     let mut peak = Meter::new(config.meter_hold, config.meter_fall);
     let mut activity = Activity::default();
     let mut last = Instant::now();
+    let mut glance = still.glance;
 
     loop {
-        // SIGTERM and SIGHUP only set a flag; leaving here restores the
-        // terminal through the same path as the quit key
-        if crate::terminal::interrupted() {
-            return Ok(());
-        }
-
         // one snapshot() per frame gauges reset,
         // so widgets must share one capture
-        let snap = session.stats.snapshot();
+        let snap = stats.snapshot();
 
         let now = Instant::now();
         let dt = now - last;
@@ -75,36 +158,24 @@ fn drive(
         peak.update(meter::scale(snap.peak, config.meter_floor_db), dt);
         activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clipped);
 
-        let model = session.model();
         let view = View {
-            keyboard: &model.keyboard,
+            keymap: &still.keymap,
+            glance: &glance,
             snap: &snap,
             peak: &peak,
             activity: &activity,
-            freqs: &model.freqs,
-            gating,
-            help: model.help,
+            freqs: &still.freqs,
+            gating: still.gating,
             floor_db: config.meter_floor_db,
         };
         terminal.draw(|frame| draw(frame, &view))?;
 
-        if event::poll(config.poll)? {
-            // drain immediately
-            while event::poll(Duration::ZERO)? {
-                let event::Event::Key(key) = event::read()? else {
-                    continue;
-                };
-                let Some(stroke) = stroke(key) else {
-                    continue;
-                };
-                if session.update(Msg::Key(stroke)).is_break() {
-                    return Ok(());
-                }
-            }
-        }
-
-        if session.update(Msg::Tick).is_break() {
-            return Ok(());
+        match rx.recv_timeout(config.poll) {
+            // only the latest copy matters
+            Ok(next) => glance = rx.try_iter().last().unwrap_or(next),
+            Err(RecvTimeoutError::Timeout) => {}
+            // quit, an interrupt, or an input error, which the caller reports
+            Err(RecvTimeoutError::Disconnected) => return Ok(()),
         }
     }
 }
@@ -170,26 +241,26 @@ fn code(key: Key) -> KeyCode {
 /// and whatever a second screen needs will land here too.
 #[derive(Clone, Copy)]
 struct View<'a> {
-    keyboard: &'a Keyboard,
+    keymap: &'a Keymap,
+    glance: &'a Glance,
     snap: &'a Snapshot,
     peak: &'a Meter,
     activity: &'a Activity,
     freqs: &'a Freqs,
     gating: Gating,
-    help: bool,
     /// the meter's floor, from `config.lua`
     floor_db: f32,
 }
 
 fn draw(frame: &mut Frame, view: &View) {
     let View {
-        keyboard,
+        keymap,
+        glance,
         snap,
         peak,
         activity,
         freqs,
         gating,
-        help,
         floor_db,
     } = *view;
 
@@ -224,7 +295,7 @@ fn draw(frame: &mut Frame, view: &View) {
     let input_block = pane().title(" input ");
     let input_inner = input_block.inner(input_area);
     frame.render_widget(input_block, input_area);
-    frame.render_widget(state(keyboard, freqs, gating), input_inner);
+    frame.render_widget(state(keymap, glance, freqs, gating), input_inner);
     // bound so its inner area can be split: the gauges and the sparkline sit
     // inside one border rather than carrying one each
     let stats_block = pane().title(" stats ");
@@ -328,8 +399,8 @@ fn draw(frame: &mut Frame, view: &View) {
     );
 
     // last, so it lands on top of everything already drawn
-    if help {
-        overlay(frame, keyboard);
+    if glance.help {
+        overlay(frame, keymap);
     }
 }
 
@@ -346,7 +417,7 @@ fn pane() -> Block<'static> {
 }
 
 /// The keymap, over the top of whatever is behind it.
-fn overlay(frame: &mut Frame, keyboard: &Keyboard) {
+fn overlay(frame: &mut Frame, keymap: &Keymap) {
     let [area] = Layout::horizontal([Constraint::Length(34)])
         .flex(Flex::Center)
         .areas(frame.area());
@@ -368,7 +439,7 @@ fn overlay(frame: &mut Frame, keyboard: &Keyboard) {
         .style(Style::new().fg(POPUP_INK).bg(POPUP_FILL))
         .title(Line::from(" keymap ").style(Style::new().add_modifier(Modifier::BOLD)))
         .title_bottom(" (/) close ");
-    frame.render_widget(bindings(keyboard).block(block), area);
+    frame.render_widget(bindings(keymap).block(block), area);
 }
 
 /// Darken the band one cell down and right of `area`, keeping the symbols
@@ -395,8 +466,7 @@ fn shadow(frame: &mut Frame, area: Rect) {
 /// A table rather than padded strings: the two columns are measured from
 /// the content, and `Flex::Center` sits the pair in the middle of whatever
 /// width the popup has instead of pinning them left.
-fn bindings(keyboard: &Keyboard) -> Table<'static> {
-    let keymap = keyboard.keymap();
+fn bindings(keymap: &Keymap) -> Table<'static> {
     let keys = |keys: &[Key]| {
         keys.iter()
             .map(|&key| code(key).to_string())
@@ -456,10 +526,10 @@ fn bar(label: String, value: f32, warn: f32, danger: f32) -> Gauge<'static> {
 /// because it is modal state that is easy to forget, and `fixed` gating is
 /// yellow because it means the terminal will not report key release, so note
 /// length is not the player's choice.
-fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
+fn state(keymap: &Keymap, glance: &Glance, freqs: &Freqs, gating: Gating) -> Table<'static> {
     let dim = Style::new().fg(Color::DarkGray);
 
-    let note = match keyboard.sounding() {
+    let note = match glance.sounding {
         // the patch's tuning defines frequency
         Some(note) => {
             let hz = freqs.hz(note).unwrap_or(0.0);
@@ -471,8 +541,8 @@ fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
         None => ("—".to_string(), dim),
     };
 
-    let (octave, at_start) = keyboard.octave();
-    let (low, high) = keyboard.reach();
+    let (octave, at_start) = glance.octave;
+    let (low, high) = glance.reach;
     let octave = (
         format!("{octave:+}  ({low:+}..{high:+})"),
         // dim at the start, so the row lights up only once it has moved
@@ -486,17 +556,16 @@ fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
     let gating = match gating {
         Gating::Held => ("gated".to_string(), dim),
         Gating::Fixed => (
-            format!("{}ms", keyboard.keymap().gate.as_millis()),
+            format!("{}ms", keymap.gate.as_millis()),
             Style::new().fg(Color::Yellow),
         ),
     };
 
-    let char = match keyboard.last_key() {
+    let char = match glance.last_key {
         Some(ch) => (ch.to_string(), Style::new().fg(Color::Reset)),
         None => ("—".to_string(), dim),
     };
 
-    let keymap = keyboard.keymap();
     let layout = match keymap.name.as_deref() {
         Some(name) => (name.to_string(), Style::new().fg(Color::Reset)),
         // a patch supplying its own notes without a name

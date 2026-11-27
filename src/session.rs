@@ -72,14 +72,75 @@ impl Model {
         cmds.extend(events.into_iter().map(Cmd::Play));
         flow
     }
+
+    pub(crate) fn glance(&self) -> Glance {
+        Glance {
+            sounding: self.keyboard.sounding(),
+            last_key: self.keyboard.last_key(),
+            octave: self.keyboard.octave(),
+            reach: self.keyboard.reach(),
+            help: self.help,
+        }
+    }
+}
+
+/// The part of the model that changes while playing, copied out so a view on
+/// another thread can draw it without sharing the keyboard.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Glance {
+    pub(crate) sounding: Option<u8>,
+    pub(crate) last_key: Option<char>,
+    /// The current shift, and whether it is the one the keyboard started at.
+    pub(crate) octave: (i32, bool),
+    /// The lowest and highest shift the octave keys can reach.
+    pub(crate) reach: (i32, i32),
+    pub(crate) help: bool,
+}
+
+/// The model and the ring's producer: everything a message touches.
+///
+/// `Send` and apart from the stream, so whichever thread reads input owns it
+/// and pushes each event the moment it is read.
+pub(crate) struct Input {
+    model: Model,
+    /// The ring's producer; the consumer lives in the audio callback.
+    tx: rtrb::Producer<Event>,
+    stats: Arc<Stats>,
+}
+
+impl Input {
+    pub(crate) fn model(&self) -> &Model {
+        &self.model
+    }
+
+    /// Apply `msg`, then carry out what it asked for; `Break` once the
+    /// player has quit.
+    pub(crate) fn update(&mut self, msg: Msg) -> ControlFlow<()> {
+        let mut cmds = Vec::new();
+        let flow = self.model.update(msg, &mut cmds);
+        for cmd in cmds {
+            self.run(cmd);
+        }
+        flow
+    }
+
+    fn run(&mut self, cmd: Cmd) {
+        match cmd {
+            // the queue is bounded; a full queue means the audio thread has
+            // stalled, and dropping an event is better than blocking input
+            Cmd::Play(event) => {
+                if self.tx.push(event).is_err() {
+                    self.stats.record_dropped();
+                }
+            }
+        }
+    }
 }
 
 /// A patch playing live on the default output device.
 pub struct Session {
-    model: Model,
+    input: Input,
     pub(crate) stats: Arc<Stats>,
-    /// The ring's producer; the consumer lives in the audio callback.
-    tx: rtrb::Producer<Event>,
     /// Kept only so the stream plays until the session drops.
     _stream: audio::Stream,
 }
@@ -115,42 +176,28 @@ impl Session {
         let stream = audio::stream(&output, player, Arc::clone(&stats))?;
 
         Ok(Self {
-            model: Model {
-                keyboard: Keyboard::new(patch.keymap, gating),
-                freqs,
-                help: false,
+            input: Input {
+                model: Model {
+                    keyboard: Keyboard::new(patch.keymap, gating),
+                    freqs,
+                    help: false,
+                },
+                tx,
+                stats: Arc::clone(&stats),
             },
             stats,
-            tx,
             _stream: stream,
         })
     }
 
     pub(crate) fn model(&self) -> &Model {
-        &self.model
+        self.input.model()
     }
 
-    /// Apply `msg`, then carry out what it asked for; `Break` once the
-    /// player has quit.
-    pub(crate) fn update(&mut self, msg: Msg) -> ControlFlow<()> {
-        let mut cmds = Vec::new();
-        let flow = self.model.update(msg, &mut cmds);
-        for cmd in cmds {
-            self.run(cmd);
-        }
-        flow
-    }
-
-    fn run(&mut self, cmd: Cmd) {
-        match cmd {
-            // the queue is bounded; a full queue means the audio thread has
-            // stalled, and dropping an event is better than blocking the UI
-            Cmd::Play(event) => {
-                if self.tx.push(event).is_err() {
-                    self.stats.record_dropped();
-                }
-            }
-        }
+    /// The input side, lent to the thread that reads keys, beside the stats
+    /// the view keeps reading.
+    pub(crate) fn split(&mut self) -> (&mut Input, &Stats) {
+        (&mut self.input, &self.stats)
     }
 }
 
@@ -234,5 +281,24 @@ mod tests {
         assert!(quits(&mut model, key('c', true)));
         send(&mut model, key('?', false));
         assert!(quits(&mut model, key('c', true)));
+    }
+
+    #[test]
+    fn input_can_be_owned_by_another_thread() {
+        fn send<T: Send>() {}
+        send::<Input>();
+    }
+
+    #[test]
+    fn the_glance_shows_what_a_key_changed() {
+        let mut model = model();
+        let before = model.glance();
+        send(&mut model, key('a', false));
+        let after = model.glance();
+        assert_eq!(after.sounding, Some(60));
+        assert_eq!(after.last_key, Some('a'));
+        assert_ne!(before, after);
+        send(&mut model, key('?', false));
+        assert!(model.glance().help);
     }
 }
