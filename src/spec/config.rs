@@ -40,17 +40,16 @@ pub struct TuiConfig {
     pub render_budget: Budget,
     pub output_budget: Budget,
     pub total_budget: Budget,
-    /// Frames per second below which the view's rate turns yellow.
-    pub fps_warn: u32,
-    /// Frames per second below which it turns red; at most `fps_warn`.
-    pub fps_danger: u32,
+    /// Frames per second below which the view's rate turns yellow, then
+    /// red; `danger` is below `warn`, since a higher rate is better.
+    pub fps: Budget,
 }
 
-/// Where a latency stage turns yellow, then red, in ms; `warn_ms` is at
-/// most `danger_ms`.
+/// Where a reading turns yellow, then red: ms for a latency stage, where
+/// `warn` is below `danger`, or frames per second for the view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Budget {
-    pub warn_ms: f32,
-    pub danger_ms: f32,
+    pub warn: f32,
+    pub danger: f32,
 }

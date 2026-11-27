@@ -186,6 +186,17 @@ fn table(lua: &mlua::Lua, source: &str, name: &str) -> Result<mlua::Table, Error
     super::schema::CONFIG.check(&table, None)?;
     if let Some(tui) = table.get::<Option<mlua::Table>>(field::TUI)? {
         super::schema::CONFIG_TUI.check(&tui, None)?;
+        if let Some(latency) = tui.get::<Option<mlua::Table>>(field::METER_LATENCY)? {
+            super::schema::CONFIG_LATENCY.check(&latency, Some(LATENCY))?;
+            for stage in STAGES {
+                if let Some(budget) = latency.get::<Option<mlua::Table>>(stage)? {
+                    super::schema::CONFIG_BUDGET.check(&budget, Some(&stage_name(stage)))?;
+                }
+            }
+        }
+        if let Some(fps) = tui.get::<Option<mlua::Table>>(field::METER_FPS)? {
+            super::schema::CONFIG_BUDGET.check(&fps, Some(FPS))?;
+        }
     }
     Ok(table)
 }
@@ -224,36 +235,43 @@ fn custom_dir(setting: &str, dirs: &Dirs) -> Result<Option<PathBuf>, Error> {
     Ok(Some(path))
 }
 
-/// `low` and `high` as read, once `low` is known to come before `high`:
-/// below it with `strict`, at most it otherwise.
+/// `low` and `high` from `table`, once `low` is known to be below `high`.
+/// `what` names the table in the error.
 fn ordered(
-    tui: &mlua::Table,
+    table: &mlua::Table,
+    what: &str,
     low: &'static str,
     high: &'static str,
-    strict: bool,
 ) -> Result<(f64, f64), Error> {
-    let (low_value, high_value): (f64, f64) = (tui.get(low)?, tui.get(high)?);
-    let holds = match strict {
-        true => low_value < high_value,
-        false => low_value <= high_value,
-    };
-    if !holds {
+    let (low_value, high_value): (f64, f64) = (table.get(low)?, table.get(high)?);
+    if low_value >= high_value {
         return Err(Error::ConfigOrder {
+            what: what.to_string(),
             low,
             low_value,
             high,
             high_value,
-            relation: if strict { "below" } else { "at most" },
         });
     }
     Ok((low_value, high_value))
 }
 
-fn budget(tui: &mlua::Table, warn: &'static str, danger: &'static str) -> Result<Budget, Error> {
-    let (warn_ms, danger_ms) = ordered(tui, warn, danger, false)?;
+/// The tables under `tui` and their names, for checks and errors.
+const LATENCY: &str = "config.lua tui meter_latency";
+const FPS: &str = "config.lua tui meter_fps";
+const STAGES: [&str; 4] = [field::INPUT, field::RENDER, field::OUTPUT, field::TOTAL];
+
+fn stage_name(stage: &str) -> String {
+    format!("{LATENCY} {stage}")
+}
+
+/// A stage's budget, whose warn comes below its danger.
+fn budget(latency: &mlua::Table, stage: &str) -> Result<Budget, Error> {
+    let table: mlua::Table = latency.get(stage)?;
+    let (warn, danger) = ordered(&table, &stage_name(stage), field::WARN, field::DANGER)?;
     Ok(Budget {
-        warn_ms: warn_ms as f32,
-        danger_ms: danger_ms as f32,
+        warn: warn as f32,
+        danger: danger as f32,
     })
 }
 
@@ -262,8 +280,11 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
     let ms = |key: &str| -> mlua::Result<Duration> {
         Ok(Duration::from_secs_f64(tui.get::<f64>(key)? / 1000.0))
     };
-    let (floor, ceil) = ordered(&tui, field::LATENCY_FLOOR, field::LATENCY_CEIL, true)?;
-    let (fps_danger, fps_warn) = ordered(&tui, field::FPS_DANGER, field::FPS_WARN, false)?;
+    let latency: mlua::Table = tui.get(field::METER_LATENCY)?;
+    let (floor, ceil) = ordered(&latency, LATENCY, field::FLOOR, field::CEIL)?;
+    // a frame rate is better higher, so its danger comes below its warn
+    let fps: mlua::Table = tui.get(field::METER_FPS)?;
+    let (fps_danger, fps_warn) = ordered(&fps, FPS, field::DANGER, field::WARN)?;
     Ok(Config {
         // 0 asks for nothing, the same as leaving it out
         buffer_frames: table
@@ -282,23 +303,17 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
             meter_hold: ms(field::METER_HOLD)?,
             meter_fall: ms(field::METER_FALL)?,
             meter_floor_db: tui.get(field::METER_FLOOR)?,
-            latency_window: ms(field::LATENCY_WINDOW)?,
+            latency_window: Duration::from_secs_f64(latency.get::<f64>(field::WINDOW)? / 1000.0),
             latency_floor_ms: floor as f32,
             latency_ceil_ms: ceil as f32,
-            input_budget: budget(&tui, field::LATENCY_INPUT_WARN, field::LATENCY_INPUT_DANGER)?,
-            render_budget: budget(
-                &tui,
-                field::LATENCY_RENDER_WARN,
-                field::LATENCY_RENDER_DANGER,
-            )?,
-            output_budget: budget(
-                &tui,
-                field::LATENCY_OUTPUT_WARN,
-                field::LATENCY_OUTPUT_DANGER,
-            )?,
-            total_budget: budget(&tui, field::LATENCY_TOTAL_WARN, field::LATENCY_TOTAL_DANGER)?,
-            fps_warn: fps_warn as u32,
-            fps_danger: fps_danger as u32,
+            input_budget: budget(&latency, field::INPUT)?,
+            render_budget: budget(&latency, field::RENDER)?,
+            output_budget: budget(&latency, field::OUTPUT)?,
+            total_budget: budget(&latency, field::TOTAL)?,
+            fps: Budget {
+                warn: fps_warn as f32,
+                danger: fps_danger as f32,
+            },
         },
     })
 }
@@ -415,29 +430,12 @@ mod tests {
         assert_eq!(config.tui.latency_window, Duration::from_secs(5));
         assert_eq!(config.tui.latency_floor_ms, 0.01);
         assert_eq!(config.tui.latency_ceil_ms, 100.0);
-        assert_eq!(
-            config.tui.input_budget,
-            Budget {
-                warn_ms: 1.0,
-                danger_ms: 5.0
-            }
-        );
-        assert_eq!(
-            config.tui.render_budget,
-            Budget {
-                warn_ms: 5.0,
-                danger_ms: 10.0
-            }
-        );
-        assert_eq!(
-            config.tui.output_budget,
-            Budget {
-                warn_ms: 10.0,
-                danger_ms: 20.0
-            }
-        );
-        assert_eq!(config.tui.total_budget, config.tui.output_budget);
-        assert_eq!((config.tui.fps_warn, config.tui.fps_danger), (30, 24));
+        let budget = |warn, danger| Budget { warn, danger };
+        assert_eq!(config.tui.input_budget, budget(1.0, 5.0));
+        assert_eq!(config.tui.render_budget, budget(5.0, 10.0));
+        assert_eq!(config.tui.output_budget, budget(10.0, 20.0));
+        assert_eq!(config.tui.total_budget, budget(10.0, 20.0));
+        assert_eq!(config.tui.fps, budget(30.0, 24.0));
     }
 
     #[test]
@@ -456,6 +454,19 @@ mod tests {
         assert_eq!(config.tui.poll, defaults.tui.poll);
         assert_eq!(config.tui.meter_hold, defaults.tui.meter_hold);
         assert_eq!(config.buffer_frames, defaults.buffer_frames);
+    }
+
+    #[test]
+    fn a_nested_budget_changes_only_what_it_sets() {
+        let config =
+            user("return { tui = { meter_latency = { render = { warn = 6 } } } }").unwrap();
+        let defaults = resolve(None).unwrap();
+        assert_eq!(config.tui.render_budget.warn, 6.0);
+        assert_eq!(
+            config.tui.render_budget.danger,
+            defaults.tui.render_budget.danger
+        );
+        assert_eq!(config.tui.latency_window, defaults.tui.latency_window);
     }
 
     #[test]
@@ -601,28 +612,32 @@ mod tests {
                 "`meter_floor` is 0; must be below 0",
             ),
             (
-                "return { tui = { latency_window = 0 } }",
-                "`latency_window` is 0; must be 1 to 3600000",
+                "return { tui = { meter_latency = { window = 0 } } }",
+                "config.lua tui meter_latency: `window` is 0; must be above 0",
             ),
             (
-                "return { tui = { latency_floor = 0 } }",
-                "`latency_floor` is 0; must be above 0",
+                "return { tui = { meter_latency = { floor = 0 } } }",
+                "`floor` is 0; must be above 0",
             ),
             (
-                "return { tui = { latency_floor = 100 } }",
-                "`latency_floor` is 100, `latency_ceil` is 100; `latency_floor` must be below `latency_ceil`",
+                "return { tui = { meter_latency = { floor = 100 } } }",
+                "config.lua tui meter_latency: `floor` is 100, `ceil` is 100; `floor` must be below `ceil`",
             ),
             (
-                "return { tui = { latency_render_warn = 20 } }",
-                "`latency_render_warn` must be at most `latency_render_danger`",
+                "return { tui = { meter_latency = { render = { warn = 10 } } } }",
+                "config.lua tui meter_latency render: `warn` is 10, `danger` is 10; `warn` must be below `danger`",
             ),
             (
-                "return { tui = { fps_danger = 40 } }",
-                "`fps_danger` must be at most `fps_warn`",
+                "return { tui = { meter_latency = { input = { wran = 1 } } } }",
+                "config.lua tui meter_latency input: unknown field `wran`",
             ),
             (
-                "return { tui = { fps_warn = 29.5 } }",
-                "`fps_warn` must be a whole number",
+                "return { tui = { meter_fps = { danger = 30 } } }",
+                "config.lua tui meter_fps: `danger` is 30, `warn` is 30; `danger` must be below `warn`",
+            ),
+            (
+                "return { tui = { meter_latency = { windw = 1 } } }",
+                "unknown field `windw`",
             ),
             ("return { tui = { pol = 16 } }", "unknown field `pol`"),
             ("return 256", "must return a table, got integer"),
