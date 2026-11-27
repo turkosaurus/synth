@@ -1249,9 +1249,9 @@ fn a_patch_requires_modules_beside_it() {
 }
 
 #[test]
-fn a_patch_requires_from_the_patches_folder_after_its_own() {
-    let patches = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lua/loader/patches");
-    load(&fixture("from_patches"), 48000, Some(&patches)).unwrap();
+fn a_patch_requires_from_the_custom_folder_after_its_own() {
+    let custom = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lua/loader/custom");
+    load(&fixture("from_custom"), 48000, Some(&custom)).unwrap();
 }
 
 #[test]
@@ -1330,10 +1330,10 @@ fn every_rejected_patch_fails_with_its_expected_error() {
 
 #[test]
 fn an_edited_built_in_copy_loads_in_place_of_the_built_in() {
-    let patches = std::env::temp_dir().join(format!("synth-edited-load-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&patches);
-    builtins::write(&patches).unwrap();
-    let wave = patches.join("synth/wave.lua");
+    let custom = std::env::temp_dir().join(format!("synth-edited-load-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&custom);
+    builtins::write(&custom).unwrap();
+    let wave = custom.join("synth/wave.lua");
     let source = std::fs::read_to_string(&wave).unwrap();
     std::fs::write(
         &wave,
@@ -1346,17 +1346,17 @@ fn an_edited_built_in_copy_loads_in_place_of_the_built_in() {
         assert(require("synth.wave").edited, "the edited copy")
         return synth.instrument({})
     "#;
-    load_in(patch, "test", 48000, None, Some(&patches)).unwrap();
-    // without the patches folder, the built-in loads and has no mark
+    load_in(patch, "test", 48000, None, Some(&custom)).unwrap();
+    // without the custom folder, the built-in loads and has no mark
     assert!(load_in(patch, "test", 48000, None, None).is_err());
 }
 
 #[test]
 fn every_starter_loads_in_one_patch() {
-    let patches = std::env::temp_dir().join(format!("synth-starters-load-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&patches);
-    starters::write(&patches).unwrap();
-    let patch = load(&fixture("starters"), 48000, Some(&patches)).unwrap();
+    let custom = std::env::temp_dir().join(format!("synth-starters-load-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&custom);
+    starters::write(&custom).unwrap();
+    let patch = load(&fixture("starters"), 48000, Some(&custom)).unwrap();
     assert!(patch.clean(), "{:?}", patch.reports);
 }
 
@@ -2000,19 +2000,19 @@ fn print_uses_tostring() {
     assert_eq!(patch.printed[0].message, "custom\tnil\ttrue");
 }
 
-/// A patches folder whose `synth/wave.lua` is marked but still matches its
+/// A custom folder whose `synth/wave.lua` is marked but still matches its
 /// recorded base, as an untouched copy from an older built-in does.
-fn patches_with_a_stale_copy(case: &str) -> std::path::PathBuf {
+fn custom_with_a_stale_copy(case: &str) -> std::path::PathBuf {
     use sha2::{Digest, Sha256};
-    let patches = std::env::temp_dir().join(format!("synth-{case}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&patches);
-    builtins::write(&patches).unwrap();
-    let dir = patches.join("synth");
+    let custom = std::env::temp_dir().join(format!("synth-{case}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&custom);
+    builtins::write(&custom).unwrap();
+    let dir = custom.join("synth");
     let copy = "return { stale = true }\n";
     std::fs::write(dir.join("wave.lua"), copy).unwrap();
     let hash = format!("{:x}", Sha256::digest(copy.as_bytes()));
     std::fs::write(dir.join(".base.sha256"), format!("{hash}  wave.lua\n")).unwrap();
-    patches
+    custom
 }
 
 const NOT_STALE: &str = r#"
@@ -2023,27 +2023,27 @@ const NOT_STALE: &str = r#"
 
 #[test]
 fn a_copy_matching_its_base_does_not_replace_the_built_in() {
-    let patches = patches_with_a_stale_copy("stale-copy");
-    load_in(NOT_STALE, "test", 48000, None, Some(&patches)).unwrap();
+    let custom = custom_with_a_stale_copy("stale-copy");
+    load_in(NOT_STALE, "test", 48000, None, Some(&custom)).unwrap();
 }
 
 #[test]
-fn a_patch_in_the_patches_folder_skips_a_copy_matching_its_base() {
-    let patches = patches_with_a_stale_copy("stale-in-folder");
-    load_in(NOT_STALE, "test", 48000, Some(&patches), Some(&patches)).unwrap();
+fn a_patch_in_the_custom_folder_skips_a_copy_matching_its_base() {
+    let custom = custom_with_a_stale_copy("stale-in-folder");
+    load_in(NOT_STALE, "test", 48000, Some(&custom), Some(&custom)).unwrap();
 }
 
 #[test]
-fn a_synth_name_with_no_built_in_loads_from_the_patches_folder() {
-    let patches = std::env::temp_dir().join(format!("synth-extra-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&patches);
-    std::fs::create_dir_all(patches.join("synth")).unwrap();
-    std::fs::write(patches.join("synth/extra.lua"), "return { extra = true }").unwrap();
+fn a_synth_name_with_no_built_in_loads_from_the_custom_folder() {
+    let custom = std::env::temp_dir().join(format!("synth-extra-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&custom);
+    std::fs::create_dir_all(custom.join("synth")).unwrap();
+    std::fs::write(custom.join("synth/extra.lua"), "return { extra = true }").unwrap();
     let patch = r#"
-        assert(require("synth.extra").extra, "synth.extra from the patches folder")
+        assert(require("synth.extra").extra, "synth.extra from the custom folder")
         return require("synth").instrument({})
     "#;
-    load_in(patch, "test", 48000, None, Some(&patches)).unwrap();
+    load_in(patch, "test", 48000, None, Some(&custom)).unwrap();
 }
 
 #[test]

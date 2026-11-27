@@ -1,5 +1,5 @@
 -- A pattern of your own: a list of steps. A sequence uses it with
---   patterns = { intro = require("pattern.example") }
+--   patterns = { intro = require("patterns.example") }
 -- Each step is one grid slot; an empty step is a rest.
 return {
 	{ note = 60 },

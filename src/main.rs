@@ -38,9 +38,9 @@ enum Commands {
     Tui { path: Option<PathBuf> },
     /// Open config.lua in $VISUAL or $EDITOR, creating it if needed
     Config,
-    /// Open your patches folder in $VISUAL or $EDITOR, creating it and
+    /// Open your custom folder in $VISUAL or $EDITOR, creating it and
     /// copying in the built-in modules if needed
-    Patches {
+    Custom {
         /// print the folder's path instead, for editors that cannot open one
         #[arg(long, conflicts_with = "sync")]
         path: bool,
@@ -138,9 +138,9 @@ fn run() -> anyhow::Result<ExitCode> {
             let config_path = script::config_path();
             let config = script::config()?;
             view::report::config(config_path.as_deref(), &config);
-            if let Some(patches) = &config.patch_dir {
+            if let Some(custom) = &config.custom_dir {
                 println!();
-                view::report::builtins(&script::builtins::states(patches));
+                view::report::builtins(&script::builtins::states(custom));
             }
         }
         Commands::Check { path, rate } => return lint(&path, rate),
@@ -151,7 +151,7 @@ fn run() -> anyhow::Result<ExitCode> {
             view::tui::run(&mut session, &config.tui)?;
         }
         Commands::Config => return edit_config(),
-        Commands::Patches { path, sync } => patches(path, sync)?,
+        Commands::Custom { path, sync } => custom(path, sync)?,
         Commands::Install => match install::install()? {
             install::Installed::Already(to) => println!("synth is installed at {}", to.display()),
             install::Installed::Copied { to, on_path } => {
@@ -174,7 +174,7 @@ fn run() -> anyhow::Result<ExitCode> {
             update::Outcome::Current(version) => println!("synth {version} is current"),
             update::Outcome::Installed { from, to, path } => {
                 println!("synth {from} -> {to}");
-                sync_patches(&path);
+                sync_custom(&path);
             }
             update::Outcome::Checked { to, path } => {
                 println!("synth {to} verified; would replace {}", path.display());
@@ -225,11 +225,11 @@ fn edit_config() -> anyhow::Result<ExitCode> {
     }
 }
 
-/// Prints the patches folder, or creates it with a folder per kind and
+/// Prints the custom folder, or creates it with a folder per kind and
 /// opens it in the user's editor.
-fn patches(print_path: bool, sync: bool) -> anyhow::Result<()> {
-    let dir = script::config()?.patch_dir.context(
-        "no patches folder: set `patch_dir` in config.lua, or HOME, or APPDATA on Windows",
+fn custom(print_path: bool, sync: bool) -> anyhow::Result<()> {
+    let dir = script::config()?.custom_dir.context(
+        "no custom folder: set `custom_dir` in config.lua, or HOME, or APPDATA on Windows",
     )?;
     if print_path {
         println!("{}", dir.display());
@@ -295,12 +295,12 @@ fn resolve_behind(
     Ok(())
 }
 
-/// After an update, runs `patches --sync` from the new binary at `exe`, so built-in
+/// After an update, runs `custom --sync` from the new binary at `exe`, so built-in
 /// copies follow the new built-ins and edited ones are asked about. Only
-/// for a patches folder that already has copies; a failure here is
+/// for a custom folder that already has copies; a failure here is
 /// reported, but the update itself has succeeded.
-fn sync_patches(exe: &std::path::Path) {
-    let Ok(Some(dir)) = script::config().map(|config| config.patch_dir) else {
+fn sync_custom(exe: &std::path::Path) {
+    let Ok(Some(dir)) = script::config().map(|config| config.custom_dir) else {
         return;
     };
     if !script::builtins::written(&dir) {
@@ -309,12 +309,12 @@ fn sync_patches(exe: &std::path::Path) {
     // current_exe would name the replaced binary, which Linux reports as
     // deleted
     let ran = std::process::Command::new(exe)
-        .args(["patches", "--sync"])
+        .args(["custom", "--sync"])
         .status();
     match ran {
         Ok(status) if status.success() => {}
-        Ok(status) => eprintln!("synth patches --sync exited with {status}; run it again"),
-        Err(error) => eprintln!("could not run synth patches --sync: {error}"),
+        Ok(status) => eprintln!("synth custom --sync exited with {status}; run it again"),
+        Err(error) => eprintln!("could not run synth custom --sync: {error}"),
     }
 }
 
@@ -349,7 +349,7 @@ fn editor(visual: Option<String>, editor: Option<String>) -> Vec<String> {
 /// Bakes a patch and reports it; fails when the patch has warnings.
 fn lint(path: &std::path::Path, rate: u32) -> anyhow::Result<ExitCode> {
     let config = script::config()?;
-    let patch = script::load(path, rate, config.patch_dir.as_deref())?;
+    let patch = script::load(path, rate, config.custom_dir.as_deref())?;
     view::report::patch(path, &patch, rate);
     if patch.clean() {
         Ok(ExitCode::SUCCESS)
@@ -362,7 +362,7 @@ fn play(path: &std::path::Path, config: &synth::spec::Config) -> anyhow::Result<
     let output = audio::open(config.buffer_frames)?;
     let (sample_rate, channels) = (output.sample_rate, output.channels);
 
-    let patch = script::load(path, sample_rate, config.patch_dir.as_deref())?;
+    let patch = script::load(path, sample_rate, config.custom_dir.as_deref())?;
     let notes = patch.timeline.events.len();
     let player = audio::Player::new(
         audio::Feed::Timeline(patch.timeline),
