@@ -1,5 +1,5 @@
-//! Errors from a realtime thread, as plain values. 
-//! Each producer pushes to its own ring, since a ring takes one producer; 
+//! Errors from a realtime thread, as plain values.
+//! Each producer pushes to its own ring, since a ring takes one producer;
 //! the formatting and logging UI thread drains them all.
 
 use std::fmt;
