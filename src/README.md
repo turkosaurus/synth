@@ -10,7 +10,7 @@
 | [`session.rs`](./session.rs) | model, msg, and cmd for a live view; wires device, patch, and ring |
 | [`view`](./view) | tui, reports, prompts |
 | [`terminal.rs`](./terminal.rs) | raw mode and key release detection |
-| [`log.rs`](./log.rs) | the live log socket, and following the log for `log` |
+| [`log.rs`](./log.rs) | the live log at `$XDG_RUNTIME_DIR/synth/log-<pid>.sock`, and following it or `synth.log` for `log` |
 | [`install.rs`](./install.rs) | `install`, `uninstall` |
 | [`update.rs`](./update.rs) | `update` from GitHub releases |
 | [`release.rs`](./release.rs) | build identity for `--version` |

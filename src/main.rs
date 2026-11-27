@@ -63,7 +63,7 @@ enum Commands {
     },
     /// Print the version, as --version does
     Version,
-    /// Follow the log in colour: live while synth runs, else from the file
+    /// Follow the log in colour: live while synth runs, else from synth.log
     Log,
 }
 
@@ -167,8 +167,9 @@ fn tracing_init(command: &Commands) -> anyhow::Result<Option<synth::log::Listeni
     Ok(listening)
 }
 
-/// The log file, created fresh; `None` for a command that does not
-/// `stream` unless RUST_LOG asks for a log.
+/// `$XDG_STATE_HOME/synth/synth.log`, else `~/.local/state/synth/synth.log`,
+/// or `%APPDATA%\synth\synth.log` on Windows, created fresh; `None` for
+/// a command that does not `stream` unless RUST_LOG asks for a log.
 fn log_file(streams: bool) -> anyhow::Result<Option<std::fs::File>> {
     if !streams && std::env::var_os("RUST_LOG").is_none() {
         return Ok(None);

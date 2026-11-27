@@ -16,7 +16,7 @@ const FILE: [&str; 2] = ["synth", "config.lua"];
 const CUSTOM: [&str; 2] = ["synth", "custom"];
 /// The debug log under the state directory.
 const LOG: [&str; 2] = ["synth", "synth.log"];
-/// The live logs' sockets under the runtime directory.
+/// The live logs' sockets, `log-<pid>.sock`, under the runtime directory.
 const SOCKETS: [&str; 1] = ["synth"];
 
 /// Where the config, data, and state directories are, from the environment. The XDG
@@ -88,9 +88,9 @@ impl Dirs {
         })
     }
 
-    /// `$XDG_RUNTIME_DIR`, else the state directory where no session
-    /// manager sets one, as on macOS. `None` on Windows, which has no Unix
-    /// socket for it.
+    /// `$XDG_RUNTIME_DIR`, else `$XDG_STATE_HOME`, else `~/.local/state`,
+    /// since no session manager sets a runtime directory on macOS. `None` on
+    /// Windows, which has no Unix socket for it.
     fn runtime(&self) -> Option<PathBuf> {
         match self.windows {
             true => None,
@@ -155,9 +155,10 @@ pub fn log_path() -> Option<PathBuf> {
     Dirs::current().state().map(|dir| under(dir, &LOG))
 }
 
-/// Where the live logs listen, a socket per synth: `synth/` under the
-/// runtime directory, private to the user and cleared at logout, so no
-/// stale socket outlives the session.
+/// Where the live logs listen, `log-<pid>.sock` per synth:
+/// `$XDG_RUNTIME_DIR/synth`, private to the user and cleared at logout, so
+/// no stale socket outlives the session. Without it, `$XDG_STATE_HOME/synth`,
+/// else `~/.local/state/synth`.
 /// `None` when the environment names none, and always on Windows.
 pub fn socket_dir() -> Option<PathBuf> {
     Dirs::current().runtime().map(|dir| under(dir, &SOCKETS))

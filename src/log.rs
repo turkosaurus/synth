@@ -15,6 +15,14 @@ use tracing_subscriber::fmt::MakeWriter;
 
 /// How often [`follow`] looks for more of the file.
 const POLL: Duration = Duration::from_millis(250);
+/// A socket's name is [`PREFIX`], the synth's pid, then [`SUFFIX`].
+const PREFIX: &str = "log-";
+const SUFFIX: &str = ".sock";
+
+/// The socket of the synth with process id `pid`.
+fn socket_name(pid: u32) -> String {
+    format!("{PREFIX}{pid}{SUFFIX}")
+}
 
 /// One connected reader, with the rest of a line it had no room for.
 struct Reader {
@@ -112,8 +120,7 @@ impl Drop for Listening {
     }
 }
 
-/// Listens in `dir`, at a socket named for this process, on a thread of
-/// its own, adding each reader that connects to `socket`. Each synth has
+/// Listens at `dir/log-<pid>.sock`, on a thread of its own, adding each reader that connects to `socket`. Each synth has
 /// its own, so a second one is live too. Sockets nobody answers on were
 /// left by a synth that did not exit cleanly, and are removed.
 #[cfg(unix)]
@@ -132,7 +139,7 @@ pub fn listen(dir: &Path, socket: &Socket) -> anyhow::Result<Listening> {
             let _ = std::fs::remove_file(&stale);
         }
     }
-    let path = dir.join(format!("log-{}.sock", std::process::id()));
+    let path = dir.join(socket_name(std::process::id()));
     // a reused pid's socket, already found dead above, or racing us
     match std::fs::remove_file(&path) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => {
@@ -142,7 +149,7 @@ pub fn listen(dir: &Path, socket: &Socket) -> anyhow::Result<Listening> {
     }
     let listener = UnixListener::bind(&path).with_context(|| format!("bind {}", path.display()))?;
     let listening = Listening { path: path.clone() };
-    // the state directory fallback may be readable by others
+    // the fallback, `$XDG_STATE_HOME/synth`, may be readable by others
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
         .with_context(|| format!("restrict {}", path.display()))?;
 
@@ -160,7 +167,7 @@ pub fn listen(dir: &Path, socket: &Socket) -> anyhow::Result<Listening> {
     Ok(listening)
 }
 
-/// The live log sockets in `dir`, newest first.
+/// The `log-<pid>.sock` files in `dir`, newest first.
 #[cfg(unix)]
 fn sockets(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -171,7 +178,7 @@ fn sockets(dir: &Path) -> Vec<PathBuf> {
         .filter(|entry| {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            name.starts_with("log-") && name.ends_with(".sock")
+            name.starts_with(PREFIX) && name.ends_with(SUFFIX)
         })
         .map(|entry| {
             let made = entry.metadata().and_then(|m| m.modified());
@@ -252,7 +259,7 @@ fn tail(
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{listen, newest, sockets, Socket};
+    use super::{listen, newest, socket_name, sockets, Socket};
     use std::io::{BufRead, BufReader, Read, Write};
     use std::os::unix::net::UnixStream;
     use std::time::{Duration, Instant};
@@ -324,7 +331,7 @@ mod tests {
     fn a_connected_reader_gets_each_line() {
         let dir = temp("listen");
         // left by a synth that did not exit cleanly
-        let stale = dir.join("log-1.sock");
+        let stale = dir.join(socket_name(1));
         drop(std::os::unix::net::UnixListener::bind(&stale).unwrap());
 
         let socket = Socket::default();
@@ -349,11 +356,11 @@ mod tests {
     fn the_reader_connects_to_the_newest_live_synth() {
         use std::os::unix::net::UnixListener;
         let dir = temp("newest");
-        let old = UnixListener::bind(dir.join("log-100.sock")).unwrap();
+        let old = UnixListener::bind(dir.join(socket_name(100))).unwrap();
         std::thread::sleep(Duration::from_millis(20));
-        let new = UnixListener::bind(dir.join("log-200.sock")).unwrap();
+        let new = UnixListener::bind(dir.join(socket_name(200))).unwrap();
         std::thread::sleep(Duration::from_millis(20));
-        drop(UnixListener::bind(dir.join("log-300.sock")).unwrap());
+        drop(UnixListener::bind(dir.join(socket_name(300))).unwrap());
 
         newest(&dir).expect("a live socket");
         new.set_nonblocking(true).unwrap();
