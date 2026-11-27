@@ -1,6 +1,5 @@
-//! The questions `synth custom` asks: whether to move the folder from its
-//! old name, and what to do with an edited copy of a built-in that has a
-//! newer default. Reads and writes through any `BufRead` and
+//! The question `synth custom` asks about an edited copy of a built-in
+//! that has a newer default. Reads and writes through any `BufRead` and
 //! `Write`, so a test can answer it.
 
 use std::io::{self, BufRead, Write};
@@ -59,64 +58,9 @@ pub fn overwrite(
     }
 }
 
-/// Asks whether to move the folder at `old` to `new`. The end of input
-/// leaves it where it is.
-pub fn move_folder(
-    old: &Path,
-    new: &Path,
-    input: &mut impl BufRead,
-    output: &mut impl Write,
-) -> io::Result<bool> {
-    loop {
-        write!(
-            output,
-            "move {} to {}? (y/n) ",
-            old.display(),
-            new.display()
-        )?;
-        output.flush()?;
-        let mut answer = String::new();
-        if input.read_line(&mut answer)? == 0 {
-            writeln!(output)?;
-            return Ok(false);
-        }
-        match answer.trim().to_ascii_lowercase().as_str() {
-            "y" | "yes" => return Ok(true),
-            "n" | "no" => return Ok(false),
-            _ => writeln!(output, "answer y to move it, or n to leave it")?,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn ask_move(answers: &str) -> (bool, String) {
-        let mut output = Vec::new();
-        let moved = move_folder(
-            Path::new("synth/patches"),
-            Path::new("synth/custom"),
-            &mut answers.as_bytes(),
-            &mut output,
-        )
-        .unwrap();
-        (moved, String::from_utf8(output).unwrap())
-    }
-
-    #[test]
-    fn y_moves_and_n_or_no_answer_leaves_the_folder() {
-        assert!(ask_move("y\n").0);
-        assert!(!ask_move("n\n").0);
-        assert!(!ask_move("").0);
-    }
-
-    #[test]
-    fn an_unknown_answer_to_the_move_asks_again() {
-        let (moved, output) = ask_move("maybe\ny\n");
-        assert!(moved);
-        assert_eq!(output.matches("(y/n)").count(), 2, "{output}");
-    }
 
     fn ask(answers: &str) -> (Choice, String) {
         let mut output = Vec::new();

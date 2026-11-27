@@ -14,8 +14,6 @@ use crate::spec::{Config, TuiConfig};
 const FILE: [&str; 2] = ["synth", "config.lua"];
 /// The custom folder under the data directory.
 const CUSTOM: [&str; 2] = ["synth", "custom"];
-/// The custom folder's default before it was renamed.
-const OLD_CUSTOM: [&str; 2] = ["synth", "patches"];
 /// The debug log under the state directory.
 const LOG: [&str; 2] = ["synth", "synth.log"];
 
@@ -141,12 +139,6 @@ pub fn config_path() -> Option<PathBuf> {
 /// `None` when the environment names none.
 pub fn log_path() -> Option<PathBuf> {
     Dirs::current().state().map(|dir| under(dir, &LOG))
-}
-
-/// Where the custom folder defaulted to under its old name, whether or not
-/// a folder is there. `None` when the environment names no data directory.
-pub fn old_custom_dir() -> Option<PathBuf> {
-    Dirs::current().data().map(|dir| under(dir, &OLD_CUSTOM))
 }
 
 /// The file's source, or `None` when there is no file.

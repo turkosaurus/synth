@@ -235,14 +235,13 @@ fn custom(print_path: bool, sync: bool) -> anyhow::Result<()> {
         println!("{}", dir.display());
         return Ok(());
     }
-    // a question needs someone at a terminal to answer it; a script or CI
-    // run is told what was left and to decide later
-    let asking = std::io::stdin().is_terminal();
-    offer_move(&dir, asking)?;
     for wrote in script::starters::write(&dir)? {
         println!("wrote {wrote}");
     }
     let wrote = script::builtins::write(&dir)?;
+    // a question needs someone at a terminal to answer it; a script or CI
+    // run is told which copies are behind and left to decide later
+    let asking = std::io::stdin().is_terminal();
     view::report::builtins_written(&wrote, asking);
     if asking {
         resolve_behind(&dir, &wrote)?;
@@ -251,35 +250,6 @@ fn custom(print_path: bool, sync: bool) -> anyhow::Result<()> {
         return Ok(());
     }
     open_in_editor(&dir)
-}
-
-/// Offers to move the folder at its old default name to `dir`, when only
-/// the old one exists. Once `dir` exists the old folder is never looked at.
-fn offer_move(dir: &std::path::Path, asking: bool) -> anyhow::Result<()> {
-    let Some(old) = script::old_custom_dir() else {
-        return Ok(());
-    };
-    if !old.is_dir() || dir.exists() {
-        return Ok(());
-    }
-    if !asking {
-        eprintln!(
-            "{} is the old custom folder; run synth custom in a terminal to move it",
-            old.display()
-        );
-        return Ok(());
-    }
-    let mut input = std::io::stdin().lock();
-    if !view::prompt::move_folder(&old, dir, &mut input, &mut std::io::stdout())? {
-        return Ok(());
-    }
-    if let Some(parent) = dir.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    std::fs::rename(&old, dir)
-        .with_context(|| format!("move {} to {}", old.display(), dir.display()))?;
-    println!("moved {} to {}", old.display(), dir.display());
-    Ok(())
 }
 
 /// Asks about each edited copy whose built-in changed since it was written,
