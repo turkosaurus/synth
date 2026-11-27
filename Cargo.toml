@@ -60,6 +60,7 @@ unsafe_code = "forbid"
 mod_module_files = "warn"
 
 [dev-dependencies]
+allocation-counter = "0.8.1"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 realfft = "3.5.1"
 

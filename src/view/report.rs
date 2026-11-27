@@ -256,6 +256,7 @@ pub fn stats(snap: &Snapshot) -> String {
         overruns,
         errors,
         dropped,
+        tap_dropped: _,
         peak,
         budget_us,
         callback_us_max,

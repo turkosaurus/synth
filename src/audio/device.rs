@@ -29,6 +29,9 @@ pub struct Stats {
     errors: AtomicU64,
     /// events the UI thread could not push because the ring was full
     dropped: AtomicU64,
+    /// output samples the callback could not push to the tap because its
+    /// ring was full
+    tap_dropped: AtomicU64,
     peak_bits: AtomicU32,
     /// the most recent callback's deadline, so it describes a callback that
     /// actually ran
@@ -79,6 +82,7 @@ impl Stats {
             overruns: self.overruns.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
             dropped: self.dropped.load(Ordering::Relaxed),
+            tap_dropped: self.tap_dropped.load(Ordering::Relaxed),
             peak: self.take_peak(),
             budget_us: self.budget_us(),
             callback_us_max: self.callback_us_max.swap(0, Ordering::Relaxed),
@@ -98,6 +102,7 @@ pub struct Snapshot {
     pub overruns: u64,
     pub errors: u64,
     pub dropped: u64,
+    pub tap_dropped: u64,
     pub peak: f32,
     pub budget_us: u32,
     pub callback_us_max: u32,
@@ -240,6 +245,7 @@ where
         tally.clipped += part.clipped;
         tally.non_finite += part.non_finite;
         tally.peak = tally.peak.max(part.peak);
+        tally.tap_dropped += part.tap_dropped;
     }
     tally
 }
@@ -278,6 +284,9 @@ where
                     .non_finite
                     .fetch_add(tally.non_finite, Ordering::Relaxed);
                 stats.record_peak(tally.peak);
+                stats
+                    .tap_dropped
+                    .fetch_add(tally.tap_dropped, Ordering::Relaxed);
 
                 let used_us = start.elapsed().as_micros() as u32;
                 stats.callback_us_max.fetch_max(used_us, Ordering::Relaxed);

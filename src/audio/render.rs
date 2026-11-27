@@ -369,6 +369,9 @@ pub struct Player {
     filter: Option<Svf>,
     /// moves `filter`'s cutoff each sample
     sweep: Option<Sweep>,
+    /// receives each output sample, one per frame, for a reader off the
+    /// audio thread
+    tap: Option<rtrb::Producer<f32>>,
 }
 
 /// One LFO moving the shared filter's cutoff from `base`. Never restarted,
@@ -418,7 +421,16 @@ impl Player {
             total_samples,
             filter: None,
             sweep: None,
+            tap: None,
         }
+    }
+
+    /// Push every sample `fill` writes into `tap`, one per frame. A full
+    /// ring drops what does not fit, so a stalled reader never holds up
+    /// the callback.
+    pub fn with_tap(mut self, tap: rtrb::Producer<f32>) -> Self {
+        self.tap = Some(tap);
+        self
     }
 
     /// Run the summed output through `filter`. Built here, at load, so
@@ -583,6 +595,8 @@ pub(super) struct Tally {
     /// an infinity would pin the meter, and `Stats::record_peak` orders bit
     /// patterns, which only holds for non-negative finite floats.
     pub peak: f32,
+    /// samples the tap had no room for
+    pub tap_dropped: u64,
 }
 
 /// Full scale. A sample beyond this cannot be represented, so `fill`
@@ -603,7 +617,17 @@ const CLIP: f32 = 1.0;
 /// The feed is read where an event can land: once at the start, which
 /// takes everything a live ring holds, then at each timeline event's
 /// sample. The spans between render without looking at it.
+///
+/// Once the buffer is written, the player's tap gets a copy of it.
 pub(super) fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tally {
+    let mut tally = render(out, channels, player);
+    if let Some(tap) = &mut player.tap {
+        tally.tap_dropped = push(tap, out, channels);
+    }
+    tally
+}
+
+fn render(out: &mut [f32], channels: usize, player: &mut Player) -> Tally {
     let mut tally = Tally::default();
     let mut frames = out.chunks_mut(channels);
     loop {
@@ -618,6 +642,17 @@ pub(super) fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tal
             return tally;
         }
     }
+}
+
+/// Copies the first channel of each frame into `tap`, as many as it has
+/// room for, and returns how many it had no room for.
+fn push(tap: &mut rtrb::Producer<f32>, out: &[f32], channels: usize) -> u64 {
+    let frames = out.len() / channels;
+    let room = frames.min(tap.slots());
+    if let Ok(chunk) = tap.write_chunk_uninit(room) {
+        chunk.fill_from_iter(out.iter().step_by(channels).copied());
+    }
+    (frames - room) as u64
 }
 
 /// Renders one sample and lays it across `frame`, bounded as `fill` says.
@@ -1439,6 +1474,44 @@ mod tests {
         .unwrap();
         // each instrument is mono, but neither steals the other's voice
         assert_eq!(player.next(), 0.5);
+    }
+
+    #[test]
+    fn the_tap_gets_one_sample_per_frame() {
+        let (tx, mut rx) = rtrb::RingBuffer::new(16);
+        let mut player = player(flat_instrument()).with_tap(tx);
+        let mut out = [0.0f32; 8];
+        let tally = fill(&mut out, 2, &mut player);
+
+        assert_eq!(tally.tap_dropped, 0);
+        let tapped: Vec<f32> = std::iter::from_fn(|| rx.pop().ok()).collect();
+        assert_eq!(tapped, [0.25, 0.5, 0.75, 1.0]);
+    }
+
+    // a reader that never reads must cost the callback samples, not time
+    #[test]
+    fn a_full_tap_drops_and_counts() {
+        let (tx, mut rx) = rtrb::RingBuffer::new(3);
+        let mut player = player(flat_instrument()).with_tap(tx);
+        let mut out = [0.0f32; 4];
+
+        assert_eq!(fill(&mut out, 1, &mut player).tap_dropped, 1);
+        assert_eq!(fill(&mut out, 1, &mut player).tap_dropped, 4);
+        let tapped: Vec<f32> = std::iter::from_fn(|| rx.pop().ok()).collect();
+        assert_eq!(tapped, [0.25, 0.5, 0.75]);
+    }
+
+    #[test]
+    fn fill_with_a_tap_never_allocates() {
+        let (tx, _rx) = rtrb::RingBuffer::new(6);
+        let mut player = player(flat_instrument()).with_tap(tx);
+        let mut out = [0.0f32; 8];
+        let info = allocation_counter::measure(|| {
+            // room for three frames, then room for none
+            fill(&mut out, 2, &mut player);
+            fill(&mut out, 2, &mut player);
+        });
+        assert_eq!(info.count_total, 0);
     }
 
     #[test]
