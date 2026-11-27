@@ -143,14 +143,17 @@ pub fn config() -> Result<Config, Error> {
     )
 }
 
-/// Where `config` looks, whether or not a file is there: `synth/config.lua`
-/// under the config directory. `None` when the environment names none.
+/// Where `config` looks, whether or not a file is there:
+/// `$XDG_CONFIG_HOME/synth/config.lua`, else `~/.config/synth/config.lua`,
+/// or `%APPDATA%\synth\config.lua` on Windows. `None` when the
+/// environment names none.
 pub fn config_path() -> Option<PathBuf> {
     Dirs::current().config().map(|dir| under(dir, &FILE))
 }
 
-/// Where the log goes: `synth/synth.log` under the state directory.
-/// `None` when the environment names none.
+/// Where the log goes: `$XDG_STATE_HOME/synth/synth.log`, else
+/// `~/.local/state/synth/synth.log`, or `%APPDATA%\synth\synth.log` on
+/// Windows. `None` when the environment names none.
 pub fn log_path() -> Option<PathBuf> {
     Dirs::current().state().map(|dir| under(dir, &LOG))
 }
