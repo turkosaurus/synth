@@ -15,7 +15,9 @@ const FILE: [&str; 2] = ["synth", "config.lua"];
 /// The custom folder under the data directory.
 const CUSTOM: [&str; 2] = ["synth", "custom"];
 /// The debug log under the state directory.
-const LOG: [&str; 2] = ["synth", "synth.log"];
+const LOG: [&str; 2] = ["synth", "log.jsonl"];
+/// The live log under the runtime directory.
+const SOCKET: [&str; 2] = ["synth", "log.sock"];
 
 /// Where the config, data, and state directories are, from the environment. The XDG
 /// variables win wherever they are set; otherwise Unix uses the XDG spec's
@@ -25,6 +27,7 @@ struct Dirs {
     xdg_config: Option<OsString>,
     xdg_data: Option<OsString>,
     xdg_state: Option<OsString>,
+    xdg_runtime: Option<OsString>,
     home: Option<OsString>,
     /// Windows' roaming application data, for config, the custom folder, and the log
     appdata: Option<OsString>,
@@ -48,6 +51,7 @@ impl Dirs {
             xdg_config: env::var_os("XDG_CONFIG_HOME"),
             xdg_data: env::var_os("XDG_DATA_HOME"),
             xdg_state: env::var_os("XDG_STATE_HOME"),
+            xdg_runtime: env::var_os("XDG_RUNTIME_DIR"),
             home: env::var_os("HOME"),
             appdata: env::var_os("APPDATA"),
             userprofile: env::var_os("USERPROFILE"),
@@ -82,6 +86,16 @@ impl Dirs {
             true => absolute(&self.appdata),
             false => Some(absolute(&self.home)?.join(".local").join("state")),
         })
+    }
+
+    /// `$XDG_RUNTIME_DIR`, else `$XDG_STATE_HOME`, else `~/.local/state`,
+    /// since no session manager sets a runtime directory on macOS. `None` on
+    /// Windows, which has no Unix socket for it.
+    fn runtime(&self) -> Option<PathBuf> {
+        match self.windows {
+            true => None,
+            false => absolute(&self.xdg_runtime).or_else(|| self.state()),
+        }
     }
 }
 
@@ -137,11 +151,20 @@ pub fn config_path() -> Option<PathBuf> {
     Dirs::current().config().map(|dir| under(dir, &FILE))
 }
 
-/// Where the log goes: `$XDG_STATE_HOME/synth/synth.log`, else
-/// `~/.local/state/synth/synth.log`, or `%APPDATA%\synth\synth.log` on
+/// Where the log goes: `$XDG_STATE_HOME/synth/log.jsonl`, else
+/// `~/.local/state/synth/log.jsonl`, or `%APPDATA%\synth\log.jsonl` on
 /// Windows. `None` when the environment names none.
 pub fn log_path() -> Option<PathBuf> {
     Dirs::current().state().map(|dir| under(dir, &LOG))
+}
+
+/// Where the live log listens: `$XDG_RUNTIME_DIR/synth/log.sock`, private
+/// to the user and cleared at logout, so no stale socket outlives the
+/// session. Without it, `$XDG_STATE_HOME/synth/log.sock`, else
+/// `~/.local/state/synth/log.sock`.
+/// `None` when the environment names none, and always on Windows.
+pub fn socket_path() -> Option<PathBuf> {
+    Dirs::current().runtime().map(|dir| under(dir, &SOCKET))
 }
 
 /// The file's source, or `None` when there is no file.
@@ -358,6 +381,7 @@ mod tests {
             xdg_config: xdg.map(var),
             xdg_data: xdg.map(var),
             xdg_state: xdg.map(var),
+            xdg_runtime: xdg.map(var),
             home: home.map(var),
             appdata: None,
             userprofile: None,
@@ -371,6 +395,7 @@ mod tests {
             xdg_config: None,
             xdg_data: None,
             xdg_state: None,
+            xdg_runtime: None,
             home: None,
             appdata: appdata.map(var),
             userprofile: userprofile.map(var),
@@ -404,12 +429,26 @@ mod tests {
     #[test]
     fn the_log_prefers_xdg_state() {
         let log = |xdg, home| unix(xdg, home).state().map(|dir| under(dir, &LOG));
-        assert_eq!(log(Some("/x"), Some("/h")), Some(abs("/x/synth/synth.log")));
+        assert_eq!(log(Some("/x"), Some("/h")), Some(abs("/x/synth/log.jsonl")));
         assert_eq!(
             log(None, Some("/h")),
-            Some(abs("/h/.local/state/synth/synth.log"))
+            Some(abs("/h/.local/state/synth/log.jsonl"))
         );
         assert_eq!(log(Some("x"), None), None);
+    }
+
+    #[test]
+    fn the_socket_prefers_xdg_runtime_then_state() {
+        let socket = |dirs: Dirs| dirs.runtime().map(|dir| under(dir, &SOCKET));
+        assert_eq!(
+            socket(unix(Some("/x"), Some("/h"))),
+            Some(abs("/x/synth/log.sock"))
+        );
+        assert_eq!(
+            socket(unix(None, Some("/h"))),
+            Some(abs("/h/.local/state/synth/log.sock"))
+        );
+        assert_eq!(socket(windows(Some("/appdata"), None)), None);
     }
 
     fn user(source: &str) -> Result<Config, Error> {

@@ -63,6 +63,8 @@ enum Commands {
     },
     /// Print the version, as --version does
     Version,
+    /// Follow the log in colour: live while synth runs, else from log.jsonl
+    Log,
 }
 
 /// At most one channel; none means stable.
@@ -108,35 +110,81 @@ fn main() -> ExitCode {
 
 // never to stdout to avoid collisions with the TUI
 const FAULTS: &str = "synth::audio::fault=warn";
+/// Why a synth has no live log, which the file records whatever RUST_LOG.
+const LIVE: &str = "synth::log=warn";
 
 // faults are always written by a command that `streams`; RUST_LOG adds
 // whatever else it names, and is the one case where a log that cannot be
 // opened stops synth. without it, other commands leave the log alone, so a
 // `synth check` does not trim the log of a session still playing.
-fn tracing_init(streams: bool) -> anyhow::Result<()> {
+// `log` reads the file, so it never opens it for writing.
+fn tracing_init(command: &Commands) -> anyhow::Result<Option<synth::log::Listening>> {
+    use tracing_subscriber::fmt::writer::MakeWriterExt;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let streams = matches!(command, Commands::Play { .. } | Commands::Tui { .. });
+    let stderr = matches!(
+        command,
+        Commands::Play { .. } | Commands::Check { .. } | Commands::Doctor
+    );
+    if matches!(command, Commands::Log) {
+        return Ok(None);
+    }
     let filter = match tracing_subscriber::EnvFilter::try_from_default_env() {
         Ok(env) => env.add_directive(FAULTS.parse().context("fault log directive")?),
-        Err(_) if !streams => return Ok(()),
+        Err(_) if !streams && !stderr => return Ok(None),
         Err(_) => tracing_subscriber::EnvFilter::new(FAULTS),
     };
-    let file = match log_file() {
+    let filter = filter.add_directive(LIVE.parse().context("live log directive")?);
+    let file = match log_file(streams) {
         Ok(file) => file,
         Err(e) if std::env::var_os("RUST_LOG").is_none() => {
             eprintln!("warning: faults go unlogged: {e:#}");
-            return Ok(());
+            None
         }
         Err(e) => return Err(e),
     };
-    tracing_subscriber::fmt()
-        .with_writer(file)
-        .with_env_filter(filter)
-        .with_span_events(FmtSpan::CLOSE)
-        .with_ansi(false)
+    let socket = synth::log::Socket::default();
+    let live = match file.is_some() && streams {
+        true => live_log(&socket),
+        false => Ok(None),
+    };
+    let file = file.map(|file| {
+        tracing_subscriber::fmt::layer()
+            .json()
+            .with_writer(file.and(socket))
+            .with_span_events(FmtSpan::CLOSE)
+    });
+    let stderr = stderr.then(|| {
+        tracing_subscriber::fmt::layer()
+            .with_writer(std::io::stderr)
+            .with_ansi(std::io::stderr().is_terminal())
+            .with_span_events(FmtSpan::CLOSE)
+    });
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(file)
+        .with(stderr)
         .init();
-    Ok(())
+    match live {
+        Ok(listening) => Ok(listening),
+        Err(e) => {
+            eprintln!("warning: no live log: {e:#}");
+            tracing::warn!(target: "synth::log", "no live log: {e:#}");
+            Ok(None)
+        }
+    }
 }
 
-fn log_file() -> anyhow::Result<std::fs::File> {
+/// `$XDG_STATE_HOME/synth/log.jsonl`, else `~/.local/state/synth/log.jsonl`,
+/// or `%APPDATA%\synth\log.jsonl` on Windows, trimmed and opened to
+/// append; `None` for a command that does not `stream` unless RUST_LOG
+/// asks for a log.
+fn log_file(streams: bool) -> anyhow::Result<Option<std::fs::File>> {
+    if !streams && std::env::var_os("RUST_LOG").is_none() {
+        return Ok(None);
+    }
     let path = script::log_path()
         .context("no log directory: set XDG_STATE_HOME or HOME, or APPDATA on Windows")?;
     if let Some(dir) = path.parent() {
@@ -145,15 +193,53 @@ fn log_file() -> anyhow::Result<std::fs::File> {
     // a config.lua that does not load leaves the log untrimmed; the command
     // reports that error itself
     let trim_kb = script::config().map_or(0, |config| config.log.trim_size_kb);
-    synth::log::open(&path, trim_kb * 1024).with_context(|| format!("open {}", path.display()))
+    synth::log::open(&path, trim_kb * 1024)
+        .map(Some)
+        .with_context(|| format!("open {}", path.display()))
+}
+
+/// Starts the live log at `$XDG_RUNTIME_DIR/synth/log.sock`, or says why
+/// there is none; the file is written either way. `None` on Windows.
+fn live_log(socket: &synth::log::Socket) -> anyhow::Result<Option<synth::log::Listening>> {
+    #[cfg(unix)]
+    {
+        let Some(path) = script::socket_path() else {
+            anyhow::bail!("no runtime directory: set XDG_RUNTIME_DIR, XDG_STATE_HOME, or HOME");
+        };
+        synth::log::listen(&path, socket).map(Some)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = socket;
+        Ok(None)
+    }
+}
+
+/// Prints the log as `synth log` reads it, until stdout closes.
+fn follow_log() -> anyhow::Result<()> {
+    use std::io::Write;
+
+    let file = script::log_path()
+        .context("no log directory: set XDG_STATE_HOME or HOME, or APPDATA on Windows")?;
+    let socket = script::socket_path();
+    // escape codes only for a terminal; crossterm also drops them for
+    // NO_COLOR
+    let color = std::io::stdout().is_terminal();
+    let width = view::log::width();
+    let mut out = std::io::stdout().lock();
+    let followed = synth::log::follow(socket.as_deref(), &file, |event| {
+        writeln!(out, "{}", view::log::line(event, color, width))
+    });
+    match followed {
+        // `synth log | head` ends here
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        other => other.with_context(|| format!("follow {}", file.display())),
+    }
 }
 
 fn run() -> anyhow::Result<ExitCode> {
     let args = Args::parse();
-    tracing_init(matches!(
-        args.command,
-        Commands::Play { .. } | Commands::Tui { .. }
-    ))?;
+    let _live_log = tracing_init(&args.command)?;
     match args.command {
         Commands::Doctor => {
             view::report::environment(gating());
@@ -206,6 +292,7 @@ fn run() -> anyhow::Result<ExitCode> {
             }
         },
         Commands::Version => print!("{}", Args::command().render_version()),
+        Commands::Log => follow_log()?,
     }
     Ok(ExitCode::SUCCESS)
 }

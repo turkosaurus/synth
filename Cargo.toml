@@ -1,6 +1,6 @@
 [package]
 name = "synth"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2021"
 # the dependencies' floor; ratatui, mlua, and comfy-table need 1.88
 rust-version = "1.88"
@@ -15,7 +15,6 @@ crossterm = "0.29.0"
 flate2 = "1.1.11"
 ratatui = "0.30"
 rtrb = "0.4.0"
-serde_json = "1.0.154"
 sha2 = "0.10.9"
 signal-hook = "0.3"
 thiserror = "2.0.21"
@@ -33,6 +32,11 @@ features = ["luajit", "vendored", "serialize", "error-send"]
 version = "1.0.229"
 features = ["derive"]
 
+# `synth log` prints fields in the order they were logged
+[dependencies.serde_json]
+version = "1.0.154"
+features = ["preserve_order"]
+
 # reads release archives without a tar on the machine
 [dependencies.tar]
 version = "0.4.46"
@@ -47,7 +51,7 @@ features = ["rustls"]
 
 [dependencies.tracing-subscriber]
 version = "0.3.23"
-features = ["env-filter"]
+features = ["env-filter", "json"]
 
 # `pub` should mean "used outside the library", so anything marked pub that
 # main.rs and tests/ cannot reach is flagged

@@ -24,7 +24,7 @@
 ---@field faults? integer faults each thread queues for the view, allocated once at start
 
 ---@class synth.ConfigLog
----@field trim_size_kb? integer KiB; at start, a larger synth.log keeps only its newest lines up to this (0: never trim)
+---@field trim_size_kb? integer KiB; at start, a larger log.jsonl keeps only its newest lines up to this (0: never trim)
 
 ---@class synth.Config
 ---@field buffer_frames? integer audio callback frames (0: system default)
@@ -55,7 +55,7 @@ local config = {
 		faults = 64, -- faults each thread queues for the view, allocated once at start
 	},
 	log = {
-		trim_size_kb = 1024, -- KiB; at start, a larger synth.log keeps only its newest lines up to this (0: never trim)
+		trim_size_kb = 1024, -- KiB; at start, a larger log.jsonl keeps only its newest lines up to this (0: never trim)
 	},
 }
 

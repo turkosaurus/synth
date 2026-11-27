@@ -21,20 +21,20 @@ description = "report terminal capabilities and gating mode"
 run = "cargo run -- doctor"
 
 [tasks.log]
-description = "follow the debug log; pair with a TUI in another pane"
-run = 'tail -F "${XDG_STATE_HOME:-$HOME/.local/state}/synth/synth.log"'
+description = "follow the log in colour; pair with a TUI in another pane"
+run = "cargo run --quiet -- log"
 
 # play and tui run the audio callback in real time. Debug by default: the
 # slowest render loop, a worst case to compare against. --release builds
 # optimized, as releases do, but a rebuild takes about 15 s, not 2 s.
 
 [tasks.play]
-description = "play the example patch, then show the debug log; --release builds optimized"
+description = "play the example patch, logging to stderr; --release builds optimized"
 usage = 'flag "--release" help="build optimized, as releases are"'
-# synth always logs faults to ${XDG_STATE_HOME:-$HOME/.local/state}/synth/synth.log;
+# synth always logs faults to ${XDG_STATE_HOME:-$HOME/.local/state}/synth/log.jsonl;
 # RUST_LOG adds the rest
 env = { RUST_LOG = "synth=debug" }
-run = 'cargo run ${usage_release:+--release} -- play lua/example.lua; cat "${XDG_STATE_HOME:-$HOME/.local/state}/synth/synth.log"'
+run = 'cargo run ${usage_release:+--release} -- play lua/example.lua'
 
 [tasks.tui]
 description = "play live from the keyboard, a patch or the default instrument; --release builds optimized"

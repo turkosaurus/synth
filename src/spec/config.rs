@@ -19,7 +19,7 @@ pub struct Config {
     pub log: LogConfig,
 }
 
-/// How `synth.log` is kept between sessions.
+/// How `log.jsonl` is kept between sessions.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct LogConfig {
