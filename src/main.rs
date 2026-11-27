@@ -63,7 +63,7 @@ enum Commands {
     },
     /// Print the version, as --version does
     Version,
-    /// Follow the log in colour: live while synth runs, else from synth.log
+    /// Follow the log in colour: live while synth runs, else from log.jsonl
     Log,
 }
 
@@ -110,6 +110,8 @@ fn main() -> ExitCode {
 
 // never to stdout to avoid collisions with the TUI
 const FAULTS: &str = "synth::audio::fault=warn";
+/// Why a synth has no live log, which the file records whatever RUST_LOG.
+const LIVE: &str = "synth::log=warn";
 
 // faults are always written by a command that `streams`; RUST_LOG adds
 // whatever else it names, and is the one case where a log that cannot be
@@ -134,6 +136,7 @@ fn tracing_init(command: &Commands) -> anyhow::Result<Option<synth::log::Listeni
         Err(_) if !streams && !stderr => return Ok(None),
         Err(_) => tracing_subscriber::EnvFilter::new(FAULTS),
     };
+    let filter = filter.add_directive(LIVE.parse().context("live log directive")?);
     let file = match log_file(streams) {
         Ok(file) => file,
         Err(e) if std::env::var_os("RUST_LOG").is_none() => {
@@ -143,9 +146,9 @@ fn tracing_init(command: &Commands) -> anyhow::Result<Option<synth::log::Listeni
         Err(e) => return Err(e),
     };
     let socket = synth::log::Socket::default();
-    let listening = match file.is_some() && streams {
+    let live = match file.is_some() && streams {
         true => live_log(&socket),
-        false => None,
+        false => Ok(None),
     };
     let file = file.map(|file| {
         tracing_subscriber::fmt::layer()
@@ -164,11 +167,18 @@ fn tracing_init(command: &Commands) -> anyhow::Result<Option<synth::log::Listeni
         .with(file)
         .with(stderr)
         .init();
-    Ok(listening)
+    match live {
+        Ok(listening) => Ok(listening),
+        Err(e) => {
+            eprintln!("warning: no live log: {e:#}");
+            tracing::warn!(target: "synth::log", "no live log: {e:#}");
+            Ok(None)
+        }
+    }
 }
 
-/// `$XDG_STATE_HOME/synth/synth.log`, else `~/.local/state/synth/synth.log`,
-/// or `%APPDATA%\synth\synth.log` on Windows, created fresh; `None` for
+/// `$XDG_STATE_HOME/synth/log.jsonl`, else `~/.local/state/synth/log.jsonl`,
+/// or `%APPDATA%\synth\log.jsonl` on Windows, created fresh; `None` for
 /// a command that does not `stream` unless RUST_LOG asks for a log.
 fn log_file(streams: bool) -> anyhow::Result<Option<std::fs::File>> {
     if !streams && std::env::var_os("RUST_LOG").is_none() {
@@ -184,24 +194,20 @@ fn log_file(streams: bool) -> anyhow::Result<Option<std::fs::File>> {
         .with_context(|| format!("create {}", path.display()))
 }
 
-/// Starts the live log, or says why there is none; the file is written
-/// either way.
-fn live_log(socket: &synth::log::Socket) -> Option<synth::log::Listening> {
+/// Starts the live log at `$XDG_RUNTIME_DIR/synth/log.sock`, or says why
+/// there is none; the file is written either way. `None` on Windows.
+fn live_log(socket: &synth::log::Socket) -> anyhow::Result<Option<synth::log::Listening>> {
     #[cfg(unix)]
     {
-        let dir = script::socket_dir()?;
-        match synth::log::listen(&dir, socket) {
-            Ok(listening) => Some(listening),
-            Err(e) => {
-                eprintln!("warning: no live log: {e:#}");
-                None
-            }
-        }
+        let Some(path) = script::socket_path() else {
+            anyhow::bail!("no runtime directory: set XDG_RUNTIME_DIR, XDG_STATE_HOME, or HOME");
+        };
+        synth::log::listen(&path, socket).map(Some)
     }
     #[cfg(not(unix))]
     {
         let _ = socket;
-        None
+        Ok(None)
     }
 }
 
@@ -211,13 +217,13 @@ fn follow_log() -> anyhow::Result<()> {
 
     let file = script::log_path()
         .context("no log directory: set XDG_STATE_HOME or HOME, or APPDATA on Windows")?;
-    let sockets = script::socket_dir();
+    let socket = script::socket_path();
     // escape codes only for a terminal; crossterm also drops them for
     // NO_COLOR
     let color = std::io::stdout().is_terminal();
     let width = view::log::width();
     let mut out = std::io::stdout().lock();
-    let followed = synth::log::follow(sockets.as_deref(), &file, |event| {
+    let followed = synth::log::follow(socket.as_deref(), &file, |event| {
         writeln!(out, "{}", view::log::line(event, color, width))
     });
     match followed {

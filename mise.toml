@@ -31,7 +31,7 @@ run = "cargo run --quiet -- log"
 [tasks.play]
 description = "play the example patch, logging to stderr; --release builds optimized"
 usage = 'flag "--release" help="build optimized, as releases are"'
-# synth always logs faults to ${XDG_STATE_HOME:-$HOME/.local/state}/synth/synth.log;
+# synth always logs faults to ${XDG_STATE_HOME:-$HOME/.local/state}/synth/log.jsonl;
 # RUST_LOG adds the rest
 env = { RUST_LOG = "synth=debug" }
 run = 'cargo run ${usage_release:+--release} -- play lua/example.lua'

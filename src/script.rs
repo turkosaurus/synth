@@ -19,7 +19,7 @@ mod structure;
 use crate::spec::{Diagnostic, DiagnosticKind, Freqs, Patch};
 #[cfg(test)]
 pub(crate) use config::defaults as config_defaults;
-pub use config::{config, config_path, log_path, socket_dir, template as config_template};
+pub use config::{config, config_path, log_path, socket_path, template as config_template};
 pub use error::Error;
 use feed::{bare, sequence, SINGLE};
 use keymap::keymap;
