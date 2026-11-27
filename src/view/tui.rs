@@ -73,7 +73,7 @@ fn drive(
         let dt = now - last;
         last = now;
         peak.update(meter::scale(snap.peak, config.meter_floor_db), dt);
-        activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clips);
+        activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clipped);
 
         let model = session.model();
         let view = View {
@@ -323,7 +323,7 @@ fn draw(frame: &mut Frame, view: &View) {
         peak_row,
     );
     frame.render_widget(
-        Line::from(format!(" clips {} ", activity.clips())).style(over),
+        Line::from(format!(" clipped {} ", activity.clipped())).style(over),
         clip_row,
     );
 
