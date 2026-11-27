@@ -6,29 +6,48 @@
 //! A view reads the model and sends messages, but never builds a session,
 //! so a second view can reuse this wiring unchanged.
 
+mod latency;
+
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use crate::audio::{self, Feed, Player, Stats};
+use crate::audio::{self, Feed, Origin, Player, Record, Stamp, Stats};
 use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke};
 use crate::script;
 use crate::spec::{Config, Event};
+
+pub(crate) use latency::{Latency, Spread, Window};
+
+/// Timing records the callback can push before the view drains them.
+const RECORDS: usize = 1024;
 
 /// What a view sends the session. A view reads its own library's input and
 /// translates it into one of these, so the session never names that library.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Msg {
-    Key(Stroke),
+    /// A key, and when the view read it.
+    Key(Stroke, Instant),
     /// Once per frame: ends every `Fixed` note whose time is up.
     Tick,
+    /// How long the view took to draw a frame.
+    Drawn(Duration),
 }
 
 /// What `update` asks the session to carry out, so `update` itself touches
 /// no ring or device.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Cmd {
-    Play(Event),
+    Play(Event, Trigger),
+}
+
+/// What caused an event, carried to the push so it can be timed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Trigger {
+    /// a key read at this instant
+    Key(Instant),
+    Tick,
 }
 
 /// Everything a view reads. A view gets only `&Model`, so `update` is the
@@ -39,13 +58,17 @@ pub(crate) struct Model {
     pub(crate) freqs: crate::spec::Freqs,
     /// Whether the help overlay is up.
     pub(crate) help: bool,
+    pub(crate) latency: Latency,
+    /// Frames per callback asked of the device; `None` left it to the
+    /// platform.
+    pub(crate) requested: Option<u32>,
 }
 
 impl Model {
     fn update(&mut self, msg: Msg, cmds: &mut Vec<Cmd>) -> ControlFlow<()> {
         let mut events = Vec::new();
-        let flow = match msg {
-            Msg::Key(stroke) => {
+        let (flow, trigger) = match msg {
+            Msg::Key(stroke, read) => {
                 // the overlay owns the keyboard while it is up: no key
                 // reaches the note grid, so nothing can be left sounding
                 // behind it. quit still works, and the help key toggles.
@@ -54,22 +77,27 @@ impl Model {
                 } else {
                     self.keyboard.handle(stroke, &mut events)
                 };
-                match outcome {
+                let flow = match outcome {
                     Outcome::Quit => ControlFlow::Break(()),
                     Outcome::Help => {
                         self.help = !self.help;
                         ControlFlow::Continue(())
                     }
                     Outcome::Continue => ControlFlow::Continue(()),
-                }
+                };
+                (flow, Trigger::Key(read))
             }
             Msg::Tick => {
                 // a no-op when Held
                 self.keyboard.tick(&mut events);
-                ControlFlow::Continue(())
+                (ControlFlow::Continue(()), Trigger::Tick)
+            }
+            Msg::Drawn(took) => {
+                self.latency.draw.push(took);
+                return ControlFlow::Continue(());
             }
         };
-        cmds.extend(events.into_iter().map(Cmd::Play));
+        cmds.extend(events.into_iter().map(|event| Cmd::Play(event, trigger)));
         flow
     }
 }
@@ -80,6 +108,9 @@ pub struct Session {
     pub(crate) stats: Arc<Stats>,
     /// The ring's producer; the consumer lives in the audio callback.
     tx: rtrb::Producer<Event>,
+    /// One stamp per event in `tx`, pushed just before it.
+    stamps: rtrb::Producer<Stamp>,
+    records: rtrb::Consumer<Record>,
     /// Kept only so the stream plays until the session drops.
     _stream: audio::Stream,
 }
@@ -111,17 +142,22 @@ impl Session {
         )
         .with_filter(patch.filter);
 
+        let (stamps, recorder, records) = audio::timing(config.queue, RECORDS);
         let stats = Arc::new(Stats::default());
-        let stream = audio::stream(&output, player, Arc::clone(&stats))?;
+        let stream = audio::stream(&output, player, Arc::clone(&stats), Some(recorder))?;
 
         Ok(Self {
             model: Model {
                 keyboard: Keyboard::new(patch.keymap, gating),
                 freqs,
                 help: false,
+                latency: Latency::default(),
+                requested: output.requested(),
             },
             stats,
             tx,
+            stamps,
+            records,
             _stream: stream,
         })
     }
@@ -138,6 +174,11 @@ impl Session {
         for cmd in cmds {
             self.run(cmd);
         }
+        if msg == Msg::Tick {
+            while let Ok(record) = self.records.pop() {
+                self.model.latency.record(record);
+            }
+        }
         flow
     }
 
@@ -145,8 +186,29 @@ impl Session {
         match cmd {
             // the queue is bounded; a full queue means the audio thread has
             // stalled, and dropping an event is better than blocking the UI
-            Cmd::Play(event) => {
-                if self.tx.push(event).is_err() {
+            Cmd::Play(event, trigger) => {
+                // checked together, so a stamp is never left without its
+                // event; nothing else pushes, so room cannot shrink after
+                if self.stamps.slots() == 0 || self.tx.slots() == 0 {
+                    self.stats.record_dropped();
+                    return;
+                }
+                let pushed = Instant::now();
+                let origin = match trigger {
+                    Trigger::Key(read) => {
+                        self.model
+                            .latency
+                            .read
+                            .push(pushed.saturating_duration_since(read));
+                        Origin::Key
+                    }
+                    Trigger::Tick => Origin::Tick,
+                };
+                // the stamp goes first, so the callback never pops an
+                // event whose stamp is not there yet
+                if self.stamps.push(Stamp { pushed, origin }).is_err()
+                    || self.tx.push(event).is_err()
+                {
                     self.stats.record_dropped();
                 }
             }
@@ -183,15 +245,26 @@ mod tests {
             keyboard: Keyboard::new(keymap, Gating::Held),
             freqs: crate::spec::Freqs::unchecked([0.0; 128]),
             help: false,
+            latency: Latency::default(),
+            requested: None,
         }
     }
 
     fn key(ch: char, ctrl: bool) -> Msg {
-        Msg::Key(Stroke {
-            key: Key::Char(ch),
-            kind: Kind::Press,
-            ctrl,
-        })
+        Msg::Key(
+            Stroke {
+                key: Key::Char(ch),
+                kind: Kind::Press,
+                ctrl,
+            },
+            read(),
+        )
+    }
+
+    // one instant for every key, so a test can name the trigger it expects
+    fn read() -> Instant {
+        static READ: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        *READ.get_or_init(Instant::now)
     }
 
     fn send(model: &mut Model, msg: Msg) -> Vec<Cmd> {
@@ -209,12 +282,23 @@ mod tests {
         let mut model = model();
         assert_eq!(
             send(&mut model, key('a', false)),
-            vec![Cmd::Play(Event::NoteOn {
-                instrument: 0,
-                note: 60,
-                velocity: 100,
-            })]
+            vec![Cmd::Play(
+                Event::NoteOn {
+                    instrument: 0,
+                    note: 60,
+                    velocity: 100,
+                },
+                Trigger::Key(read()),
+            )]
         );
+    }
+
+    #[test]
+    fn a_drawn_frame_is_timed_and_plays_nothing() {
+        let mut model = model();
+        let took = Duration::from_millis(3);
+        assert_eq!(send(&mut model, Msg::Drawn(took)), vec![]);
+        assert_eq!(model.latency.draw.spread().unwrap().max, took);
     }
 
     #[test]

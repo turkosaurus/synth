@@ -17,7 +17,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::audio::Snapshot;
 use crate::input::keyboard::{Gating, Keyboard, Kind, Stroke};
-use crate::session::{Msg, Session};
+use crate::session::{Latency, Msg, Session, Spread, Window};
 use crate::spec::{Freqs, Key, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
@@ -31,6 +31,9 @@ const INPUT_WIDTH: u16 = LABEL_WIDTH + COLUMN_GAP + VALUE_WIDTH + 2;
 const COLUMN_GAP: u16 = 2;
 const SPARK_ROWS: u16 = 2;
 const STATS_ROWS: u16 = 3 + SPARK_ROWS;
+const STAGE_WIDTH: u16 = 9;
+const SPREAD_WIDTH: u16 = 8;
+const LATENCY_WIDTH: u16 = STAGE_WIDTH + 3 * (SPREAD_WIDTH + 1) + 2;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
@@ -76,6 +79,10 @@ fn drive(
         activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clipped);
 
         let model = session.model();
+        // spread sorts each window, so it is taken before the draw it
+        // would otherwise be counted in
+        let latency = stages(&model.latency);
+        let buffer = buffer(model.requested, snap.buffer_frames);
         let view = View {
             keyboard: &model.keyboard,
             snap: &snap,
@@ -85,8 +92,12 @@ fn drive(
             gating,
             help: model.help,
             floor_db: config.meter_floor_db,
+            latency: &latency,
+            buffer: &buffer,
         };
+        let drawing = Instant::now();
         terminal.draw(|frame| draw(frame, &view))?;
+        let _ = session.update(Msg::Drawn(drawing.elapsed()));
 
         if event::poll(config.poll)? {
             // drain immediately
@@ -94,10 +105,11 @@ fn drive(
                 let event::Event::Key(key) = event::read()? else {
                     continue;
                 };
+                let read = Instant::now();
                 let Some(stroke) = stroke(key) else {
                     continue;
                 };
-                if session.update(Msg::Key(stroke)).is_break() {
+                if session.update(Msg::Key(stroke, read)).is_break() {
                     return Ok(());
                 }
             }
@@ -179,6 +191,66 @@ struct View<'a> {
     help: bool,
     /// the meter's floor, from `config.lua`
     floor_db: f32,
+    latency: &'a [Stage],
+    /// buffer asked for and got, for the latency pane's bottom edge
+    buffer: &'a str,
+}
+
+/// One row of the latency pane: a stage and its spread, formatted.
+struct Stage {
+    name: &'static str,
+    spread: Option<Spread<String>>,
+}
+
+fn stages(latency: &Latency) -> Vec<Stage> {
+    fn ms(window: &Window<Duration>) -> Option<Spread<String>> {
+        let text = |at: Duration| format!("{:.2}ms", at.as_secs_f64() * 1e3);
+        window.spread().map(|s| Spread {
+            p50: text(s.p50),
+            p99: text(s.p99),
+            max: text(s.max),
+        })
+    }
+    let frames = latency.offset.spread().map(|s| Spread {
+        p50: format!("{}fr", s.p50),
+        p99: format!("{}fr", s.p99),
+        max: format!("{}fr", s.max),
+    });
+    vec![
+        Stage {
+            name: "read",
+            spread: ms(&latency.read),
+        },
+        Stage {
+            name: "wait key",
+            spread: ms(&latency.key_wait),
+        },
+        Stage {
+            name: "wait tick",
+            spread: ms(&latency.tick_wait),
+        },
+        Stage {
+            name: "offset",
+            spread: frames,
+        },
+        Stage {
+            name: "output",
+            spread: ms(&latency.output),
+        },
+        Stage {
+            name: "draw",
+            spread: ms(&latency.draw),
+        },
+    ]
+}
+
+fn buffer(requested: Option<u32>, got: u32) -> String {
+    let asked = requested.map_or("default".to_string(), |frames| frames.to_string());
+    let got = match got {
+        0 => "—".to_string(),
+        frames => frames.to_string(),
+    };
+    format!(" buffer asked {asked}, got {got} ")
 }
 
 fn draw(frame: &mut Frame, view: &View) {
@@ -191,6 +263,8 @@ fn draw(frame: &mut Frame, view: &View) {
         gating,
         help,
         floor_db,
+        latency,
+        buffer,
     } = *view;
 
     let footer = vec![Line::from("(ctrl-c) quit | (?) help")];
@@ -208,10 +282,18 @@ fn draw(frame: &mut Frame, view: &View) {
 
     // input is sized to its table; the section beside it takes the rest, so
     // widening the window grows that one and leaves the table alone
-    let [input_area, scope_area] =
-        Layout::horizontal([Constraint::Length(INPUT_WIDTH), Constraint::Min(0)])
-            .spacing(Spacing::Overlap(1))
-            .areas(input_area);
+    let [input_area, latency_area, scope_area] = Layout::horizontal([
+        Constraint::Length(INPUT_WIDTH),
+        Constraint::Length(LATENCY_WIDTH),
+        Constraint::Min(0),
+    ])
+    .spacing(Spacing::Overlap(1))
+    .areas(input_area);
+
+    let latency_block = pane().title(" latency ").title_bottom(buffer);
+    let latency_inner = latency_block.inner(latency_area);
+    frame.render_widget(latency_block, latency_area);
+    frame.render_widget(spreads(latency), latency_inner);
 
     frame.render_widget(
         Paragraph::new("TODO")
@@ -522,6 +604,47 @@ fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
         ],
     )
     .column_spacing(COLUMN_GAP)
+}
+
+/// Each stage's p50, p99, and max, right-aligned so the digits line up.
+fn spreads(stages: &[Stage]) -> Table<'static> {
+    let dim = Style::new().fg(Color::DarkGray);
+    let right = |text: String| Cell::from(Line::from(text).right_aligned());
+    let header = Row::new([
+        Cell::from(""),
+        right("p50".to_string()),
+        right("p99".to_string()),
+        right("max".to_string()),
+    ])
+    .style(dim);
+    let rows = stages.iter().map(|stage| {
+        let name = Cell::from(stage.name).style(dim);
+        match &stage.spread {
+            Some(spread) => Row::new([
+                name,
+                right(spread.p50.clone()),
+                right(spread.p99.clone()),
+                right(spread.max.clone()),
+            ]),
+            None => Row::new([
+                name,
+                right("—".to_string()).style(dim),
+                right("—".to_string()).style(dim),
+                right("—".to_string()).style(dim),
+            ]),
+        }
+    });
+    Table::new(
+        rows,
+        [
+            Constraint::Length(STAGE_WIDTH),
+            Constraint::Length(SPREAD_WIDTH),
+            Constraint::Length(SPREAD_WIDTH),
+            Constraint::Length(SPREAD_WIDTH),
+        ],
+    )
+    .header(header)
+    .column_spacing(1)
 }
 
 fn name(note: u8) -> String {

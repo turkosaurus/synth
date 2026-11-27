@@ -257,8 +257,10 @@ pub fn stats(snap: &Snapshot) -> String {
         errors,
         dropped,
         output_tee_dropped: _,
+        timing_dropped: _,
         peak,
         budget_us,
+        buffer_frames: _,
         callback_us_max,
         load,
     } = *snap;

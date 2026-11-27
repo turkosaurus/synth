@@ -543,12 +543,15 @@ impl Player {
     }
 
     /// Applies every event due now: a timeline's stamped at or before the
-    /// clock, or everything waiting in a live ring.
-    fn apply_due(&mut self) {
+    /// clock, or everything waiting in a live ring. Returns how many.
+    fn apply_due(&mut self) -> u32 {
+        let mut applied = 0;
         // several events can land on the same sample, so drain rather than peek
         while let Some(event) = self.pull() {
             self.apply(event);
+            applied += 1;
         }
+        applied
     }
 
     /// Samples that can be rendered before the next event is due. Live
@@ -610,6 +613,8 @@ pub(super) struct Tally {
     pub peak: f32,
     /// frames the output tee had no room for
     pub output_tee_dropped: u64,
+    /// events applied, all at the first frame when the feed is live
+    pub events: u32,
 }
 
 /// Full scale. A sample beyond this cannot be represented, so `fill`
@@ -644,7 +649,7 @@ fn render(out: &mut [f32], channels: usize, player: &mut Player) -> Tally {
     let mut tally = Tally::default();
     let mut frames = out.chunks_mut(channels);
     loop {
-        player.apply_due();
+        tally.events += player.apply_due();
         let span = usize::try_from(player.until_event()).unwrap_or(usize::MAX);
         let mut written = 0;
         for frame in frames.by_ref().take(span) {

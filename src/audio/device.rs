@@ -6,6 +6,7 @@ use std::time::Instant;
 use tracing::debug;
 
 use super::render::{fill, Player, Tally};
+use super::timing::Recorder;
 
 /// A running output stream; audio stops when it drops. Named here so
 /// holders need not import cpal, which stays in this file.
@@ -32,10 +33,14 @@ pub struct Stats {
     /// output frames the callback could not push to the output tee because
     /// its ring was full
     output_tee_dropped: AtomicU64,
+    /// timing records the callback could not push because their ring was full
+    timing_dropped: AtomicU64,
     peak_bits: AtomicU32,
     /// the most recent callback's deadline, so it describes a callback that
     /// actually ran
     budget_us: AtomicU32,
+    /// the most recent callback's frames, which the driver may vary
+    buffer_frames: AtomicU32,
     callback_us_max: AtomicU32,
     load_bits: AtomicU32,
 }
@@ -83,8 +88,10 @@ impl Stats {
             errors: self.errors.load(Ordering::Relaxed),
             dropped: self.dropped.load(Ordering::Relaxed),
             output_tee_dropped: self.output_tee_dropped.load(Ordering::Relaxed),
+            timing_dropped: self.timing_dropped.load(Ordering::Relaxed),
             peak: self.take_peak(),
             budget_us: self.budget_us(),
+            buffer_frames: self.buffer_frames.load(Ordering::Relaxed),
             callback_us_max: self.callback_us_max.swap(0, Ordering::Relaxed),
             load: f32::from_bits(self.load_bits.swap(0, Ordering::Relaxed)),
         }
@@ -103,8 +110,11 @@ pub struct Snapshot {
     pub errors: u64,
     pub dropped: u64,
     pub output_tee_dropped: u64,
+    pub timing_dropped: u64,
     pub peak: f32,
     pub budget_us: u32,
+    /// frames the most recent callback was handed; 0 before the first
+    pub buffer_frames: u32,
     pub callback_us_max: u32,
     /// worst fraction of the deadline used, 1.0 being the deadline itself
     pub load: f32,
@@ -154,6 +164,16 @@ pub struct Output {
     pub(crate) buffer: cpal::BufferSize,
     pub sample_rate: u32,
     pub channels: usize,
+}
+
+impl Output {
+    /// The frames per callback asked for; `None` left it to the platform.
+    pub fn requested(&self) -> Option<u32> {
+        match self.buffer {
+            cpal::BufferSize::Fixed(frames) => Some(frames),
+            cpal::BufferSize::Default => None,
+        }
+    }
 }
 
 /// Open the default output device, asking for `buffer_frames` per callback
@@ -213,13 +233,30 @@ fn buffer_size(
     Ok(cpal::BufferSize::Fixed(frames))
 }
 
-/// Build and start a stream that drives `player`, reporting into `stats`.
-pub fn stream(output: &Output, player: Player, stats: Arc<Stats>) -> Result<cpal::Stream, Error> {
+/// Build and start a stream that drives `player`, reporting into `stats`,
+/// and into `recorder` when one is given.
+pub fn stream(
+    output: &Output,
+    player: Player,
+    stats: Arc<Stats>,
+    recorder: Option<Recorder>,
+) -> Result<cpal::Stream, Error> {
     match output.config.sample_format() {
-        SampleFormat::I16 => build::<i16>(output, player, stats, convert),
-        SampleFormat::I32 => build::<i32>(output, player, stats, convert),
-        _ => build::<f32>(output, player, stats, fill),
+        SampleFormat::I16 => build::<i16>(output, player, stats, recorder, convert),
+        SampleFormat::I32 => build::<i32>(output, player, stats, recorder, convert),
+        _ => build::<f32>(output, player, stats, recorder, direct),
     }
+}
+
+/// Told how many events a render pass applied, and at which frame of the
+/// device buffer.
+type Applied<'a> = dyn FnMut(u32, u32) + 'a;
+
+/// Renders straight into an f32 device buffer in one pass.
+fn direct(out: &mut [f32], channels: usize, player: &mut Player, applied: &mut Applied) -> Tally {
+    let tally = fill(out, channels, player);
+    applied(tally.events, 0);
+    tally
 }
 
 /// Samples rendered per pass when the device is not f32: enough to keep
@@ -228,7 +265,7 @@ const SCRATCH: usize = 1024;
 
 /// Renders into a stack buffer and converts each sample to `T`, in passes
 /// of whole frames so `fill` never sees a frame split across two of them.
-fn convert<T>(out: &mut [T], channels: usize, player: &mut Player) -> Tally
+fn convert<T>(out: &mut [T], channels: usize, player: &mut Player, applied: &mut Applied) -> Tally
 where
     T: Sample + FromSample<f32>,
 {
@@ -238,6 +275,7 @@ where
     for chunk in out.chunks_mut(pass) {
         let rendered = &mut scratch[..chunk.len()];
         let part = fill(rendered, channels, player);
+        applied(part.events, tally.frames);
         for (sample, &value) in chunk.iter_mut().zip(rendered.iter()) {
             *sample = T::from_sample(value);
         }
@@ -246,6 +284,7 @@ where
         tally.non_finite += part.non_finite;
         tally.peak = tally.peak.max(part.peak);
         tally.output_tee_dropped += part.output_tee_dropped;
+        tally.events += part.events;
     }
     tally
 }
@@ -254,7 +293,8 @@ fn build<T>(
     output: &Output,
     mut player: Player,
     stats: Arc<Stats>,
-    render: fn(&mut [T], usize, &mut Player) -> Tally,
+    mut recorder: Option<Recorder>,
+    render: fn(&mut [T], usize, &mut Player, &mut Applied) -> Tally,
 ) -> Result<cpal::Stream, Error>
 where
     T: SizedSample + 'static,
@@ -270,9 +310,23 @@ where
         .device
         .build_output_stream(
             config,
-            move |out: &mut [T], _: &cpal::OutputCallbackInfo| {
+            move |out: &mut [T], info: &cpal::OutputCallbackInfo| {
                 let start = Instant::now();
-                let tally = render(out, channels, &mut player);
+                let mut timing_dropped = 0;
+                let tally = render(out, channels, &mut player, &mut |events, offset| {
+                    if let Some(recorder) = &mut recorder {
+                        timing_dropped += recorder.applied(events, offset, start);
+                    }
+                });
+                if let Some(recorder) = &mut recorder {
+                    let at = info.timestamp();
+                    timing_dropped += recorder.output(at.playback.duration_since(at.callback));
+                }
+                if timing_dropped > 0 {
+                    stats
+                        .timing_dropped
+                        .fetch_add(timing_dropped, Ordering::Relaxed);
+                }
 
                 // accumulated in `fill`, then written once per callback rather
                 // than once per sample
@@ -290,6 +344,7 @@ where
 
                 let used_us = start.elapsed().as_micros() as u32;
                 stats.callback_us_max.fetch_max(used_us, Ordering::Relaxed);
+                stats.buffer_frames.store(tally.frames, Ordering::Relaxed);
 
                 // the deadline comes from this callback's own frame count. the
                 // driver may vary the buffer, so a ratio of two independent
@@ -365,11 +420,16 @@ mod tests {
         let want = fill(&mut expected, channels, &mut player());
 
         let mut out = vec![0i16; expected.len()];
-        let got = convert(&mut out, channels, &mut player());
+        let mut passes = Vec::new();
+        let got = convert(&mut out, channels, &mut player(), &mut |events, offset| {
+            passes.push((events, offset));
+        });
 
         assert_eq!(got, want);
         let converted: Vec<i16> = expected.iter().map(|&s| i16::from_sample(s)).collect();
         assert_eq!(out, converted);
+        // 1023 samples per pass is 341 frames
+        assert_eq!(passes, vec![(1, 0), (0, 341), (0, 682)]);
     }
 
     // a count, not a gauge: taking a snapshot must not reset it
