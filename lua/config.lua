@@ -6,6 +6,7 @@
 
 ---@class synth.ConfigLatency
 ---@field window? number ms of readings each row keeps
+---@field records? integer timing records queued for the view, allocated once at start
 ---@field floor? number ms, left end of the scale
 ---@field ceil? number ms, right end of the scale
 ---@field input? synth.ConfigBudget ms, key read until pushed
@@ -37,6 +38,7 @@ local config = {
 		meter_floor = -60, -- dB, the quietest level the meter shows
 		meter_latency = {
 			window = 5000, -- ms of readings each row keeps
+			records = 1024, -- timing records queued for the view, allocated once at start
 			floor = 0.01, -- ms, left end of the scale
 			ceil = 100, -- ms, right end of the scale
 			input = { warn = 1, danger = 5 },

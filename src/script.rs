@@ -254,6 +254,7 @@ mod field {
     pub(super) const METER_LATENCY: &str = "meter_latency";
     pub(super) const METER_FPS: &str = "meter_fps";
     pub(super) const WINDOW: &str = "window";
+    pub(super) const RECORDS: &str = "records";
     pub(super) const FLOOR: &str = "floor";
     pub(super) const CEIL: &str = "ceil";
     pub(super) const INPUT: &str = "input";

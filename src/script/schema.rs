@@ -161,6 +161,9 @@ pub(super) const CONFIG_LATENCY: Schema = Schema {
     what: "config.lua tui meter_latency",
     fields: &[
         optional(field::WINDOW, Ty::Number, Bound::Above(0.0)),
+        // one ring, allocated when the session opens; the view drains it
+        // every frame, so far fewer than the maximum are ever waiting
+        optional(field::RECORDS, Ty::Integer, Bound::Between(1.0, 65536.0)),
         // the log scale divides by both ends; their order is checked once
         // both are known
         optional(field::FLOOR, Ty::Number, Bound::Above(0.0)),

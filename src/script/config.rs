@@ -304,6 +304,7 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
             meter_fall: ms(field::METER_FALL)?,
             meter_floor_db: tui.get(field::METER_FLOOR)?,
             latency_window: Duration::from_secs_f64(latency.get::<f64>(field::WINDOW)? / 1000.0),
+            latency_records: latency.get(field::RECORDS)?,
             latency_floor_ms: floor as f32,
             latency_ceil_ms: ceil as f32,
             input_budget: budget(&latency, field::INPUT)?,
@@ -428,6 +429,7 @@ mod tests {
         assert_eq!(config.tui.meter_fall, Duration::from_millis(280));
         assert_eq!(config.tui.meter_floor_db, -60.0);
         assert_eq!(config.tui.latency_window, Duration::from_secs(5));
+        assert_eq!(config.tui.latency_records, 1024);
         assert_eq!(config.tui.latency_floor_ms, 0.01);
         assert_eq!(config.tui.latency_ceil_ms, 100.0);
         let budget = |warn, danger| Budget { warn, danger };
@@ -614,6 +616,14 @@ mod tests {
             (
                 "return { tui = { meter_latency = { window = 0 } } }",
                 "config.lua tui meter_latency: `window` is 0; must be above 0",
+            ),
+            (
+                "return { tui = { meter_latency = { records = 0 } } }",
+                "config.lua tui meter_latency: `records` is 0; must be 1 to 65536",
+            ),
+            (
+                "return { tui = { meter_latency = { records = 1.5 } } }",
+                "`records` must be a whole number",
             ),
             (
                 "return { tui = { meter_latency = { floor = 0 } } }",

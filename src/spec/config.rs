@@ -32,6 +32,9 @@ pub struct TuiConfig {
     pub meter_floor_db: f32,
     /// How far back each latency row's readings reach.
     pub latency_window: Duration,
+    /// Timing records the callback can push before the view drains them;
+    /// the ring is allocated once, when the session opens.
+    pub latency_records: usize,
     /// The latency scale's left end, in ms; below `latency_ceil_ms`.
     pub latency_floor_ms: f32,
     /// The latency scale's right end, in ms.
