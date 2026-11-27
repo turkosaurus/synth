@@ -29,7 +29,7 @@ pub struct Stats {
     errors: AtomicU64,
     /// events the UI thread could not push because the ring was full
     dropped: AtomicU64,
-    /// output samples the callback could not push to the tap because its
+    /// output frames the callback could not push to the tap because its
     /// ring was full
     tap_dropped: AtomicU64,
     peak_bits: AtomicU32,

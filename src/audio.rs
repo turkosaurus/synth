@@ -8,7 +8,7 @@ mod fx;
 mod render;
 
 pub use device::{open, stream, Error, Output, Snapshot, Stats, Stream};
-pub use render::{Feed, Player};
+pub use render::{tap, Feed, Player, Tap};
 
 /// The callback's render step, for `benches/` only: a bench links the
 /// crate from outside, so it sees only what is public.

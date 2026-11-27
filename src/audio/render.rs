@@ -348,6 +348,20 @@ pub enum Feed {
     },
 }
 
+/// The reader's end of a tap: output frames, `channels` samples each,
+/// interleaved as the device takes them.
+pub struct Tap {
+    pub samples: rtrb::Consumer<f32>,
+    pub channels: usize,
+}
+
+/// A tap holding up to `frames` frames, and the producer for
+/// [`Player::with_tap`].
+pub fn tap(frames: usize, channels: usize) -> (rtrb::Producer<f32>, Tap) {
+    let (tx, samples) = rtrb::RingBuffer::new(frames * channels);
+    (tx, Tap { samples, channels })
+}
+
 /// A feed's events once its instruments are in pools.
 enum Source {
     Timeline {
@@ -369,8 +383,7 @@ pub struct Player {
     filter: Option<Svf>,
     /// moves `filter`'s cutoff each sample
     sweep: Option<Sweep>,
-    /// receives each output sample, one per frame, for a reader off the
-    /// audio thread
+    /// receives every output frame, for a reader off the audio thread
     tap: Option<rtrb::Producer<f32>>,
 }
 
@@ -425,9 +438,9 @@ impl Player {
         }
     }
 
-    /// Push every sample `fill` writes into `tap`, one per frame. A full
-    /// ring drops what does not fit, so a stalled reader never holds up
-    /// the callback.
+    /// Push every frame `fill` writes into `tap`, all channels
+    /// interleaved. A full ring drops the frames that do not fit, so a
+    /// stalled reader never holds up the callback.
     pub fn with_tap(mut self, tap: rtrb::Producer<f32>) -> Self {
         self.tap = Some(tap);
         self
@@ -595,7 +608,7 @@ pub(super) struct Tally {
     /// an infinity would pin the meter, and `Stats::record_peak` orders bit
     /// patterns, which only holds for non-negative finite floats.
     pub peak: f32,
-    /// samples the tap had no room for
+    /// frames the tap had no room for
     pub tap_dropped: u64,
 }
 
@@ -644,13 +657,14 @@ fn render(out: &mut [f32], channels: usize, player: &mut Player) -> Tally {
     }
 }
 
-/// Copies the first channel of each frame into `tap`, as many as it has
-/// room for, and returns how many it had no room for.
+/// Copies whole frames of `out` into `tap`, as many as it has room for,
+/// and returns how many frames it had no room for. Writing only whole
+/// frames keeps the reader's channels aligned whatever the ring's size.
 fn push(tap: &mut rtrb::Producer<f32>, out: &[f32], channels: usize) -> u64 {
     let frames = out.len() / channels;
-    let room = frames.min(tap.slots());
-    if let Ok(chunk) = tap.write_chunk_uninit(room) {
-        chunk.fill_from_iter(out.iter().step_by(channels).copied());
+    let room = frames.min(tap.slots() / channels);
+    if let Ok(chunk) = tap.write_chunk_uninit(room * channels) {
+        chunk.fill_from_iter(out.iter().copied());
     }
     (frames - room) as u64
 }
@@ -1476,34 +1490,53 @@ mod tests {
         assert_eq!(player.next(), 0.5);
     }
 
+    fn drain(tap: &mut Tap) -> Vec<f32> {
+        std::iter::from_fn(|| tap.samples.pop().ok()).collect()
+    }
+
     #[test]
-    fn the_tap_gets_one_sample_per_frame() {
-        let (tx, mut rx) = rtrb::RingBuffer::new(16);
+    fn the_tap_gets_every_channel_of_every_frame() {
+        let (tx, mut rx) = tap(4, 2);
         let mut player = player(flat_instrument()).with_tap(tx);
         let mut out = [0.0f32; 8];
         let tally = fill(&mut out, 2, &mut player);
 
         assert_eq!(tally.tap_dropped, 0);
-        let tapped: Vec<f32> = std::iter::from_fn(|| rx.pop().ok()).collect();
-        assert_eq!(tapped, [0.25, 0.5, 0.75, 1.0]);
+        assert_eq!(rx.channels, 2);
+        assert_eq!(drain(&mut rx), out);
     }
 
-    // a reader that never reads must cost the callback samples, not time
+    // a reader that never reads must cost the callback frames, not time
     #[test]
-    fn a_full_tap_drops_and_counts() {
-        let (tx, mut rx) = rtrb::RingBuffer::new(3);
+    fn a_full_tap_drops_and_counts_frames() {
+        let (tx, mut rx) = tap(3, 2);
         let mut player = player(flat_instrument()).with_tap(tx);
-        let mut out = [0.0f32; 4];
+        let mut out = [0.0f32; 8];
 
-        assert_eq!(fill(&mut out, 1, &mut player).tap_dropped, 1);
-        assert_eq!(fill(&mut out, 1, &mut player).tap_dropped, 4);
-        let tapped: Vec<f32> = std::iter::from_fn(|| rx.pop().ok()).collect();
-        assert_eq!(tapped, [0.25, 0.5, 0.75]);
+        assert_eq!(fill(&mut out, 2, &mut player).tap_dropped, 1);
+        assert_eq!(fill(&mut out, 2, &mut player).tap_dropped, 4);
+        assert_eq!(drain(&mut rx), [0.25, 0.25, 0.5, 0.5, 0.75, 0.75]);
+    }
+
+    // five slots hold two stereo frames and one spare sample, which must
+    // stay empty or every frame after it reads with its channels swapped
+    #[test]
+    fn the_tap_never_takes_part_of_a_frame() {
+        let (tx, samples) = rtrb::RingBuffer::new(5);
+        let mut rx = Tap {
+            samples,
+            channels: 2,
+        };
+        let mut player = player(flat_instrument()).with_tap(tx);
+        let mut out = [0.0f32; 8];
+
+        assert_eq!(fill(&mut out, 2, &mut player).tap_dropped, 2);
+        assert_eq!(drain(&mut rx), [0.25, 0.25, 0.5, 0.5]);
     }
 
     #[test]
     fn fill_with_a_tap_never_allocates() {
-        let (tx, _rx) = rtrb::RingBuffer::new(6);
+        let (tx, _rx) = tap(3, 2);
         let mut player = player(flat_instrument()).with_tap(tx);
         let mut out = [0.0f32; 8];
         let info = allocation_counter::measure(|| {
