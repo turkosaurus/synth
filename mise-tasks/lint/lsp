@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-#MISE description="lua-language-server and Neovim in a patches folder: each tests/lua/lsp/ case flagged, all else clean"
+#MISE description="lua-language-server and Neovim in a custom folder: each tests/lua/lsp/ case flagged, all else clean"
 #MISE depends=["lsp:folder"]
 
 # lint:lua checks the modules themselves. This checks what a user gets: a
-# folder written by `synth patches`, where .luarc.json lets the language
+# folder written by `synth custom`, where .luarc.json lets the language
 # server resolve `require("synth")` and read the annotations.
 
 set -euo pipefail
 
 scratch="$PWD/target/lsp"
-patches="$scratch/data/synth/patches"
+custom="$scratch/data/synth/custom"
 cases="$PWD/tests/lua/lsp"
 
-rm -rf "$patches/expect"
-mkdir "$patches/expect"
-cp "$cases"/*.lua "$patches/expect/"
+rm -rf "$custom/expect"
+mkdir "$custom/expect"
+cp "$cases"/*.lua "$custom/expect/"
 
 report="$scratch/check.json"
 rm -f "$report"
 # exits nonzero when anything is found, which the cases always are
-lua-language-server --check "$patches" --checklevel=Warning \
+lua-language-server --check "$custom" --checklevel=Warning \
   --check_format=json --check_out_path="$report" \
   --logpath="$scratch/log" >/dev/null || true
 if [[ ! -f $report ]]; then
@@ -41,7 +41,7 @@ for path in "$cases"/*.lua; do
     failed=1
     continue
   fi
-  codes=$(awk -v file="$patches/expect/$name" '$1 == file { print $2 }' <<<"$found")
+  codes=$(awk -v file="$custom/expect/$name" '$1 == file { print $2 }' <<<"$found")
   if [[ $codes != "$expected" ]]; then
     echo "::error file=tests/lua/lsp/$name,title=lint:lsp::expected $expected, got ${codes:-nothing}"
     failed=1
@@ -50,14 +50,14 @@ done
 
 # every other file, the starters and built-in copies included, is clean
 while read -r file codes; do
-  [[ -z $file || $file == "$patches/expect/"* ]] && continue
-  echo "::error title=lint:lsp::${file#"$patches/"}: $codes"
+  [[ -z $file || $file == "$custom/expect/"* ]] && continue
+  echo "::error title=lint:lsp::${file#"$custom/"}: $codes"
   failed=1
 done <<<"$found"
 
-rm -rf "$patches/expect"
+rm -rf "$custom/expect"
 
-if ! nvim --headless --clean -l tests/nvim/lsp.lua "$patches"; then
+if ! nvim --headless --clean -l tests/nvim/lsp.lua "$custom"; then
   echo "::error file=tests/nvim/lsp.lua,title=lint:lsp::Neovim did not see the annotations"
   failed=1
 fi

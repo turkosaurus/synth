@@ -575,7 +575,7 @@ impl Player {
 pub(super) struct Tally {
     pub frames: u32,
     /// samples beyond full scale, each written clamped to it
-    pub clips: u64,
+    pub clipped: u64,
     /// samples that were NaN or infinite, each written as silence
     pub non_finite: u64,
     /// Largest finite magnitude, taken before the clamp so a meter shows how
@@ -625,7 +625,7 @@ fn write(frame: &mut [f32], player: &mut Player, tally: &mut Tally) {
     let raw = player.render();
     let sample = if raw.is_finite() {
         if raw.abs() > CLIP {
-            tally.clips += 1;
+            tally.clipped += 1;
         }
         tally.peak = tally.peak.max(raw.abs());
         raw.clamp(-CLIP, CLIP)
@@ -1530,7 +1530,7 @@ mod tests {
         assert_eq!(tally.frames, 4);
         // -2.0 and 1.5 are written at full scale
         assert_eq!(out, [0.5, 0.5, -1.0, -1.0, 1.0, 1.0, 0.1, 0.1]);
-        assert_eq!(tally.clips, 2); // -2.0 and 1.5 both exceed full scale
+        assert_eq!(tally.clipped, 2); // -2.0 and 1.5 both exceed full scale
         assert_eq!(tally.peak, 2.0); // absolute and pre-clamp, so -2.0 wins
     }
 
@@ -1550,7 +1550,7 @@ mod tests {
             // a non-finite value times zero is NaN, so two samples are bad
             assert_eq!(out, [0.0, 0.0, 0.25, 0.75], "for {bad}");
             assert_eq!(tally.non_finite, 2, "for {bad}");
-            assert_eq!(tally.clips, 0, "for {bad}");
+            assert_eq!(tally.clipped, 0, "for {bad}");
             assert_eq!(tally.peak, 0.75, "for {bad}");
         }
     }
@@ -1624,7 +1624,7 @@ mod tests {
         let tally = fill(&mut out, 1, &mut player);
 
         assert_eq!(out, [1.0, -1.0, 1.0, -1.0]);
-        assert_eq!(tally.clips, 4);
+        assert_eq!(tally.clipped, 4);
         assert_eq!(tally.peak, 2.0);
     }
 

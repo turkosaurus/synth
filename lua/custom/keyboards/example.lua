@@ -1,5 +1,5 @@
 -- A keyboard of your own. A patch uses it with
---   keyboard = require("keyboard.example")
+--   keyboard = require("keyboards.example")
 local synth = require("synth")
 
 return synth.keyboard({

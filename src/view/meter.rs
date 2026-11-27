@@ -49,10 +49,10 @@ pub(crate) const STEPS: u64 = 100;
 ///
 /// Height says how loud the frame was and the flag says whether it
 /// clipped, because clipping is an attribute of a loud frame rather than a
-/// separate measurement. `Stats` counts clips cumulatively, so the rate is
-/// recovered here by diffing consecutive readings. Newest-first matches
-/// `RenderDirection::RightToLeft`, which draws index 0 at the right edge
-/// and drops whatever does not fit from the far end.
+/// separate measurement. `Stats` counts clipped samples cumulatively, so
+/// the rate is recovered here by diffing consecutive readings.
+/// Newest-first matches `RenderDirection::RightToLeft`, which draws index 0
+/// at the right edge and drops whatever does not fit from the far end.
 #[derive(Debug, Default)]
 pub(crate) struct Activity {
     seen: u64,
@@ -61,19 +61,19 @@ pub(crate) struct Activity {
 
 impl Activity {
     /// Fold in one frame: a scale position, and the cumulative clip count.
-    pub(crate) fn update(&mut self, scaled: f32, clips: u64) {
+    pub(crate) fn update(&mut self, scaled: f32, total: u64) {
         // saturating, so a counter that somehow went backwards reads as a
         // clean frame rather than wrapping to a vast spike
-        let clipped = clips.saturating_sub(self.seen) > 0;
-        self.seen = clips;
+        let clipped = total.saturating_sub(self.seen) > 0;
+        self.seen = total;
 
         let level = (scaled.clamp(0.0, 1.0) * STEPS as f32).round() as u64;
         self.history.push_front((level, clipped));
         self.history.truncate(HISTORY);
     }
 
-    /// Clips since the stream started.
-    pub(crate) fn clips(&self) -> u64 {
+    /// Clipped samples since the stream started.
+    pub(crate) fn clipped(&self) -> u64 {
         self.seen
     }
 
@@ -209,7 +209,7 @@ mod tests {
         for total in [0, 0, 3, 3, 10] {
             activity.update(0.0, total);
         }
-        assert_eq!(activity.clips(), 10);
+        assert_eq!(activity.clipped(), 10);
         // newest first: rose to 10, flat, rose to 3, flat, flat
         let marks: Vec<bool> = activity.history().map(|(_, clipped)| clipped).collect();
         assert_eq!(marks, vec![true, false, true, false, false]);
@@ -240,7 +240,7 @@ mod tests {
         activity.update(0.0, 50);
         activity.update(0.0, 10);
         assert_eq!(activity.history().next(), Some((0, false)));
-        assert_eq!(activity.clips(), 10);
+        assert_eq!(activity.clipped(), 10);
     }
 
     #[test]

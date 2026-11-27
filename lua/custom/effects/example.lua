@@ -1,5 +1,5 @@
 -- An effect of your own. A patch uses it with
---   filter = require("effect.example")
+--   filter = require("effects.example")
 local synth = require("synth")
 
 return synth.filter.lowpass({

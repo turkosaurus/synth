@@ -18,7 +18,7 @@ pub use cpal::Stream;
 pub struct Stats {
     /// frames, not samples: one frame is one sample per channel
     frames: AtomicU64,
-    clips: AtomicU64,
+    clipped: AtomicU64,
     /// NaN or infinite samples, each written as silence
     non_finite: AtomicU64,
     /// callbacks that ran past their deadline, which is the count that
@@ -74,7 +74,7 @@ impl Stats {
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             frames: self.frames.load(Ordering::Relaxed),
-            clips: self.clips.load(Ordering::Relaxed),
+            clipped: self.clipped.load(Ordering::Relaxed),
             non_finite: self.non_finite.load(Ordering::Relaxed),
             overruns: self.overruns.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
@@ -93,7 +93,7 @@ impl Stats {
 #[non_exhaustive]
 pub struct Snapshot {
     pub frames: u64,
-    pub clips: u64,
+    pub clipped: u64,
     pub non_finite: u64,
     pub overruns: u64,
     pub errors: u64,
@@ -237,7 +237,7 @@ where
             *sample = T::from_sample(value);
         }
         tally.frames += part.frames;
-        tally.clips += part.clips;
+        tally.clipped += part.clipped;
         tally.non_finite += part.non_finite;
         tally.peak = tally.peak.max(part.peak);
     }
@@ -273,7 +273,7 @@ where
                 stats
                     .frames
                     .fetch_add(tally.frames as u64, Ordering::Relaxed);
-                stats.clips.fetch_add(tally.clips, Ordering::Relaxed);
+                stats.clipped.fetch_add(tally.clipped, Ordering::Relaxed);
                 stats
                     .non_finite
                     .fetch_add(tally.non_finite, Ordering::Relaxed);

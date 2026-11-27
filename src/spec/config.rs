@@ -14,7 +14,7 @@ pub struct Config {
     pub queue: usize,
     /// Where `require` looks after the patch's own folder. `None` when there
     /// is no home directory to put the default in.
-    pub patch_dir: Option<PathBuf>,
+    pub custom_dir: Option<PathBuf>,
     pub tui: TuiConfig,
 }
 

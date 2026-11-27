@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-#MISE description="write a scratch patches folder at target/lsp from this build"
+#MISE description="write a scratch custom folder at target/lsp from this build"
 #MISE hide=true
 
-# The user's own config and patches folder are left alone: synth reads
+# The user's own config and custom folder are left alone: synth reads
 # both from XDG folders under target/lsp.
 
 set -euo pipefail
@@ -10,7 +10,7 @@ set -euo pipefail
 scratch="$PWD/target/lsp"
 mkdir -p "$scratch"
 if ! XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" \
-  cargo run -q -- patches --sync </dev/null; then
-  echo "::error title=lsp:folder::synth patches failed"
+  cargo run -q -- custom --sync </dev/null; then
+  echo "::error title=lsp:folder::synth custom failed"
   exit 1
 fi

@@ -1,5 +1,5 @@
 -- An instrument of your own. A patch uses it with
---   instruments = { lead = require("instrument.example") }
+--   instruments = { lead = require("instruments.example") }
 -- Copy this file to start another; the name is what require takes.
 local synth = require("synth")
 

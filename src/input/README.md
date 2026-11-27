@@ -17,7 +17,7 @@ flowchart LR
 
 ## layouts
 
-[`lua/keyboard.lua`](../../lua/keyboard.lua) ships `qwerty`, `qwertz`, `azerty`, `dvorak` and `colemak`. Each lines its rows up on the same physical keys, so one position plays the same note in every layout, and each brings its own octave and help keys so none of them takes a note key. A keyboard may replace those keys, as [`patches/keyboard/example.lua`](../../lua/patches/keyboard/example.lua) shows.
+[`lua/keyboard.lua`](../../lua/keyboard.lua) ships `qwerty`, `qwertz`, `azerty`, `dvorak` and `colemak`. Each lines its rows up on the same physical keys, so one position plays the same note in every layout, and each brings its own octave and help keys so none of them takes a note key. A keyboard may replace those keys, as [`custom/keyboards/example.lua`](../../lua/custom/keyboards/example.lua) shows.
 
 ## gating
 

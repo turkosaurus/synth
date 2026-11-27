@@ -59,12 +59,12 @@ const MODULES: [(&str, &str); 12] = [
 /// native library.
 ///
 /// Every name, `synth.*` included, is looked for in `dir`, then in
-/// `patches`, then among the embedded modules. On disk `a.b` is `a/b.lua`
+/// `custom`, then among the embedded modules. On disk `a.b` is `a/b.lua`
 /// or `a/b/init.lua`.
 fn lua_register(
     lua: &mlua::Lua,
     dir: Option<std::path::PathBuf>,
-    patches: Option<std::path::PathBuf>,
+    custom: Option<std::path::PathBuf>,
 ) -> Result<(), Error> {
     let package: mlua::Table = lua.globals().get(field::PACKAGE)?;
 
@@ -81,13 +81,13 @@ fn lua_register(
             Some(dir) => find(dir, &relative, &mut tried)?,
             None => None,
         };
-        if let (None, Some(patches)) = (&found, &patches) {
+        if let (None, Some(custom)) = (&found, &custom) {
             found = if embedded.is_some() {
                 // a copy still matching its built-in is skipped, so an
                 // updated built-in is not hidden by a stale copy
-                builtins::edited(patches, &name)
+                builtins::edited(custom, &name)
             } else {
-                find(patches, &relative, &mut tried)?
+                find(custom, &relative, &mut tried)?
             };
         }
         if let Some((path, source)) = found {
@@ -244,7 +244,7 @@ mod field {
 
     pub(super) const BUFFER_FRAMES: &str = "buffer_frames";
     pub(super) const QUEUE: &str = "queue";
-    pub(super) const PATCH_DIR: &str = "patch_dir";
+    pub(super) const CUSTOM_DIR: &str = "custom_dir";
     pub(super) const TUI: &str = "tui";
     pub(super) const POLL: &str = "poll";
     pub(super) const METER_HOLD: &str = "meter_hold";
@@ -256,30 +256,30 @@ mod field {
     pub(super) const PATH: &str = "path";
 }
 
-/// One folder per kind in the patches folder, named as its constructor, so
-/// `instrument/bass.lua` is `require("instrument.bass")`.
-pub const PATCH_KINDS: [&str; 5] = ["instrument", "effect", "keyboard", "tuning", "pattern"];
+/// One folder per kind in the custom folder, so
+/// `instruments/bass.lua` is `require("instruments.bass")`.
+pub const PATCH_KINDS: [&str; 5] = ["instruments", "effects", "keyboards", "tunings", "patterns"];
 
 /// What plays when no file is given.
 const DEFAULT: &str = include_str!("../lua/default.lua");
 
-/// The default patch. `patches` is the user's patches folder, searched by
+/// The default patch. `custom` is the user's custom folder, searched by
 /// `require`, as for [`load`].
 #[instrument]
 pub(crate) fn load_default(
     sample_rate: u32,
-    patches: Option<&std::path::Path>,
+    custom: Option<&std::path::Path>,
 ) -> anyhow::Result<Patch> {
-    load_in(DEFAULT, "(default)", sample_rate, None, patches)
+    load_in(DEFAULT, "(default)", sample_rate, None, custom)
 }
 
-/// The patch at `path`. `require` looks beside it first, then in `patches`,
-/// the user's patches folder from `config.lua`.
+/// The patch at `path`. `require` looks beside it first, then in `custom`,
+/// the user's custom folder from `config.lua`.
 #[instrument]
 pub fn load(
     path: &std::path::Path,
     sample_rate: u32,
-    patches: Option<&std::path::Path>,
+    custom: Option<&std::path::Path>,
 ) -> anyhow::Result<Patch> {
     let source =
         std::fs::read_to_string(path).map_err(|source| Error::io("reading", path, source))?;
@@ -288,7 +288,7 @@ pub fn load(
         &path.display().to_string(),
         sample_rate,
         path.parent(),
-        patches,
+        custom,
     )
 }
 
@@ -345,16 +345,16 @@ fn load_in(
     name: &str,
     sample_rate: u32,
     dir: Option<&std::path::Path>,
-    patches: Option<&std::path::Path>,
+    custom: Option<&std::path::Path>,
 ) -> anyhow::Result<Patch> {
     let lua = mlua::Lua::new();
-    // a patch in the patches folder itself finds built-in copies only
+    // a patch in the custom folder itself finds built-in copies only
     // through the edited check, so the folder is not searched twice
-    let dir = dir.filter(|dir| Some(*dir) != patches);
+    let dir = dir.filter(|dir| Some(*dir) != custom);
     lua_register(
         &lua,
         dir.map(std::path::Path::to_path_buf),
-        patches.map(std::path::Path::to_path_buf),
+        custom.map(std::path::Path::to_path_buf),
     )?;
 
     // eval to a Value first: a syntax error and a wrong return type both fail

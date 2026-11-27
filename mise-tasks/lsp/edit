@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="open a scratch patches folder from this build in $VISUAL or $EDITOR"
+#MISE description="open a scratch custom folder from this build in $VISUAL or $EDITOR"
 #MISE depends=["lsp:folder"]
 
 # The folder is kept between runs, and each run refreshes the copies that
@@ -7,10 +7,10 @@
 
 set -euo pipefail
 
-patches="$PWD/target/lsp/data/synth/patches"
+custom="$PWD/target/lsp/data/synth/custom"
 editor="${VISUAL:-${EDITOR:-nvim}}"
-cd "$patches"
-echo "patches folder: $patches"
+cd "$custom"
+echo "custom folder: $custom"
 # word splitting is wanted: an editor may come with flags, as `code -w`
 # shellcheck disable=SC2086
 exec $editor .

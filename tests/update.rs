@@ -22,8 +22,9 @@ fn update_dry_run() {
     assert!(stdout.contains(" verified; would replace "), "{stdout}");
 }
 
-/// `update --dev` from an installed copy with patches written: the copy is
-/// replaced while it runs, and the new binary syncs the patches.
+/// `update --dev` from an installed copy with a custom folder written:
+/// the copy is replaced while it runs, and the new binary syncs its
+/// built-in copies.
 #[test]
 #[ignore = "network: GitHub releases"]
 fn update_replaces_itself() {
@@ -42,7 +43,7 @@ fn update_replaces_itself() {
             .expect("run synth")
     };
 
-    let wrote = synth(&["patches", "--sync"]);
+    let wrote = synth(&["custom", "--sync"]);
     assert!(
         wrote.status.success(),
         "{}",
@@ -53,8 +54,15 @@ fn update_replaces_itself() {
     let out = synth(&["update", "--dev"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
+    // a build from before the rename has no `custom`; its sync fails with a
+    // warning, and the update still succeeds
+    let knows_custom = synth(&["custom", "--path"]).status.success();
     let _ = fs::remove_dir_all(&dir);
     assert!(out.status.success(), "{stderr}");
     assert!(stdout.contains(" -> "), "{stdout}");
-    assert!(!stderr.contains("patches --sync"), "{stderr}");
+    if knows_custom {
+        assert!(!stderr.contains("custom --sync"), "{stderr}");
+    } else {
+        assert!(stderr.contains("custom --sync exited with"), "{stderr}");
+    }
 }
