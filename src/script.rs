@@ -17,6 +17,8 @@ pub mod starters;
 mod structure;
 
 use crate::spec::{Diagnostic, DiagnosticKind, Freqs, Patch};
+#[cfg(test)]
+pub(crate) use config::defaults as config_defaults;
 pub use config::{config, config_path, log_path, template as config_template};
 pub use error::Error;
 use feed::{bare, sequence, SINGLE};
@@ -249,6 +251,19 @@ mod field {
     pub(super) const METER_HOLD: &str = "meter_hold";
     pub(super) const METER_FALL: &str = "meter_fall";
     pub(super) const METER_FLOOR: &str = "meter_floor";
+    pub(super) const LATENCY_WINDOW: &str = "latency_window";
+    pub(super) const LATENCY_FLOOR: &str = "latency_floor";
+    pub(super) const LATENCY_CEIL: &str = "latency_ceil";
+    pub(super) const LATENCY_INPUT_WARN: &str = "latency_input_warn";
+    pub(super) const LATENCY_INPUT_DANGER: &str = "latency_input_danger";
+    pub(super) const LATENCY_RENDER_WARN: &str = "latency_render_warn";
+    pub(super) const LATENCY_RENDER_DANGER: &str = "latency_render_danger";
+    pub(super) const LATENCY_OUTPUT_WARN: &str = "latency_output_warn";
+    pub(super) const LATENCY_OUTPUT_DANGER: &str = "latency_output_danger";
+    pub(super) const LATENCY_TOTAL_WARN: &str = "latency_total_warn";
+    pub(super) const LATENCY_TOTAL_DANGER: &str = "latency_total_danger";
+    pub(super) const FPS_WARN: &str = "fps_warn";
+    pub(super) const FPS_DANGER: &str = "fps_danger";
     pub(super) const LOADERS: &str = "loaders";
     pub(super) const CPATH: &str = "cpath";
     pub(super) const LOADED: &str = "loaded";

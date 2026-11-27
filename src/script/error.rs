@@ -211,6 +211,16 @@ pub enum Error {
     )]
     CustomDirRelative { setting: String },
 
+    /// Two settings each in bounds, but in the wrong order.
+    #[error("config.lua tui: `{low}` is {low_value}, `{high}` is {high_value}; `{low}` must be {relation} `{high}`")]
+    ConfigOrder {
+        low: &'static str,
+        low_value: f64,
+        high: &'static str,
+        high_value: f64,
+        relation: &'static str,
+    },
+
     #[error("{what} is not callable")]
     NotCallable { what: &'static str },
 
