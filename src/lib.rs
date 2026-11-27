@@ -11,6 +11,7 @@
 pub mod audio;
 pub mod input;
 pub mod install;
+pub mod log;
 pub mod release;
 pub mod script;
 pub mod session;

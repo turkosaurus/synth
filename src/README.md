@@ -12,6 +12,7 @@
 | [`terminal.rs`](./terminal.rs) | raw mode and key release detection |
 | [`install.rs`](./install.rs) | `install`, `uninstall` |
 | [`update.rs`](./update.rs) | `update` from GitHub releases |
+| [`log.rs`](./log.rs) | `synth.log`: appended each session, trimmed at start |
 | [`release.rs`](./release.rs) | build identity for `--version` |
 
 ```mermaid

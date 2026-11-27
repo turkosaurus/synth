@@ -139,6 +139,20 @@ pub(super) const CONFIG: Schema = Schema {
         // "" is the default folder; anything else is checked when resolved
         optional(field::CUSTOM_DIR, Ty::Text, Bound::Any),
         optional(field::TUI, Ty::Table, Bound::Any),
+        optional(field::LOG, Ty::Table, Bound::Any),
+    ],
+};
+
+pub(super) const CONFIG_LOG: Schema = Schema {
+    what: "config.lua log",
+    fields: &[
+        // KiB; 0 never trims, and a trim reads the kept part into memory
+        // once at start, so the ceiling is 1 GiB
+        optional(
+            field::TRIM_SIZE_KB,
+            Ty::Integer,
+            Bound::Between(0.0, 1_048_576.0),
+        ),
     ],
 };
 
@@ -154,6 +168,9 @@ pub(super) const CONFIG_TUI: Schema = Schema {
         optional(field::METER_FLOOR, Ty::Number, Bound::Below(0.0)),
         optional(field::METER_LATENCY, Ty::Table, Bound::Any),
         optional(field::METER_FPS, Ty::Table, Bound::Any),
+        // one ring per producing thread, allocated when the stream opens;
+        // a full ring loses the record, never the count
+        optional(field::FAULTS, Ty::Integer, Bound::Between(1.0, 65536.0)),
     ],
 };
 

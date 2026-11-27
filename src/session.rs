@@ -13,12 +13,15 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::audio::{self, Feed, Origin, Player, Record, Stamp, Stats};
-use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke};
+use crate::audio::{self, Fault, Faults, Feed, Origin, Player, Record, Reporter, Stamp, Stats};
+use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke, PITCHES};
 use crate::script;
 use crate::spec::{Config, Event};
 
 pub(crate) use latency::{Latency, Spread, Window};
+
+/// The most events one message makes: a tick can end every pitch at once.
+const EVENTS: usize = PITCHES;
 
 /// What a view sends the session. A view reads its own library's input and
 /// translates it into one of these, so the session never names that library.
@@ -49,8 +52,14 @@ pub(crate) struct Model {
 }
 
 impl Model {
-    fn update(&mut self, msg: Msg, cmds: &mut Vec<Cmd>) -> ControlFlow<()> {
-        let mut events = Vec::new();
+    /// Apply `msg`, appending what it asks for to `cmds`. `events` is
+    /// scratch, empty on entry and on return.
+    fn update(
+        &mut self,
+        msg: Msg,
+        events: &mut Vec<Event>,
+        cmds: &mut Vec<Cmd>,
+    ) -> ControlFlow<()> {
         let (flow, origin) = match msg {
             Msg::Key(stroke, read) => {
                 // the overlay owns the keyboard while it is up: no key
@@ -59,7 +68,7 @@ impl Model {
                 let outcome = if self.help {
                     self.keyboard.global(stroke)
                 } else {
-                    self.keyboard.handle(stroke, &mut events)
+                    self.keyboard.handle(stroke, events)
                 };
                 let flow = match outcome {
                     Outcome::Quit => ControlFlow::Break(()),
@@ -73,11 +82,11 @@ impl Model {
             }
             Msg::Tick => {
                 // a no-op when Held
-                self.keyboard.tick(&mut events);
+                self.keyboard.tick(events);
                 (ControlFlow::Continue(()), Origin::Release)
             }
         };
-        cmds.extend(events.into_iter().map(|event| Cmd::Play(event, origin)));
+        cmds.extend(events.drain(..).map(|event| Cmd::Play(event, origin)));
         flow
     }
 
@@ -108,7 +117,8 @@ pub(crate) struct Glance {
 /// The model and the ring producers: everything a message touches.
 ///
 /// `Send` and apart from the stream, so whichever thread reads input owns it
-/// and pushes each event the moment it is read.
+/// and pushes each event the moment it is read. Its scratch is allocated
+/// here, so that thread never allocates.
 pub(crate) struct Input {
     model: Model,
     /// The ring's producer; the consumer lives in the audio callback.
@@ -116,9 +126,30 @@ pub(crate) struct Input {
     /// One stamp per event in `tx`, pushed just before it.
     stamps: rtrb::Producer<Stamp>,
     stats: Arc<Stats>,
+    faults: Reporter,
+    events: Vec<Event>,
+    cmds: Vec<Cmd>,
 }
 
 impl Input {
+    fn new(
+        model: Model,
+        tx: rtrb::Producer<Event>,
+        stamps: rtrb::Producer<Stamp>,
+        stats: Arc<Stats>,
+        faults: Reporter,
+    ) -> Self {
+        Self {
+            model,
+            tx,
+            stamps,
+            stats,
+            faults,
+            events: Vec::with_capacity(EVENTS),
+            cmds: Vec::with_capacity(EVENTS),
+        }
+    }
+
     pub(crate) fn model(&self) -> &Model {
         &self.model
     }
@@ -126,12 +157,20 @@ impl Input {
     /// Apply `msg`, then carry out what it asked for; `Break` once the
     /// player has quit.
     pub(crate) fn update(&mut self, msg: Msg) -> ControlFlow<()> {
-        let mut cmds = Vec::new();
-        let flow = self.model.update(msg, &mut cmds);
-        for cmd in cmds {
+        let mut cmds = std::mem::take(&mut self.cmds);
+        let flow = self.model.update(msg, &mut self.events, &mut cmds);
+        for cmd in cmds.drain(..) {
             self.run(cmd);
         }
+        self.cmds = cmds;
         flow
+    }
+
+    /// Count a failed read of input, which ends the session, and report
+    /// its kind to the view.
+    pub(crate) fn read_failed(&mut self, kind: std::io::ErrorKind) {
+        self.stats.record_input_error();
+        self.faults.push(Fault::Input(kind));
     }
 
     fn run(&mut self, cmd: Cmd) {
@@ -142,7 +181,7 @@ impl Input {
                 // checked together, so a stamp is never left without its
                 // event; nothing else pushes, so room cannot shrink after
                 if self.stamps.slots() == 0 || self.tx.slots() == 0 {
-                    self.stats.record_dropped();
+                    self.dropped();
                     return;
                 }
                 let pushed = Instant::now();
@@ -151,10 +190,15 @@ impl Input {
                 if self.stamps.push(Stamp { pushed, origin }).is_err()
                     || self.tx.push(event).is_err()
                 {
-                    self.stats.record_dropped();
+                    self.dropped();
                 }
             }
         }
+    }
+
+    fn dropped(&mut self) {
+        self.stats.record_dropped();
+        self.faults.push(Fault::Dropped);
     }
 }
 
@@ -164,12 +208,13 @@ impl Input {
     pub(crate) fn detached(model: Model) -> Self {
         let (tx, _) = rtrb::RingBuffer::new(16);
         let (stamps, _, _) = audio::timing(16, 1);
-        Self {
+        Self::new(
             model,
             tx,
             stamps,
-            stats: Arc::new(Stats::default()),
-        }
+            Arc::new(Stats::default()),
+            Faults::new(1).ring(),
+        )
     }
 }
 
@@ -203,6 +248,7 @@ pub struct Session {
     input: Input,
     timing: Timing,
     pub(crate) stats: Arc<Stats>,
+    faults: Faults,
     /// Kept only so the stream plays until the session drops.
     _stream: audio::Stream,
 }
@@ -236,25 +282,34 @@ impl Session {
 
         let (stamps, recorder, records) = audio::timing(config.queue, config.tui.latency_records);
         let stats = Arc::new(Stats::default());
-        let stream = audio::stream(&output, player, Arc::clone(&stats), Some(recorder))?;
+        let mut faults = Faults::new(config.tui.faults);
+        let stream = audio::stream(
+            &output,
+            player,
+            Arc::clone(&stats),
+            Some(recorder),
+            &mut faults,
+        )?;
 
         Ok(Self {
-            input: Input {
-                model: Model {
+            input: Input::new(
+                Model {
                     keyboard: Keyboard::new(patch.keymap, gating),
                     freqs,
                     help: false,
                 },
                 tx,
                 stamps,
-                stats: Arc::clone(&stats),
-            },
+                Arc::clone(&stats),
+                faults.ring(),
+            ),
             timing: Timing {
                 latency: Latency::new(config.tui.latency_window),
                 requested: output.requested(),
                 records,
             },
             stats,
+            faults,
             _stream: stream,
         })
     }
@@ -263,10 +318,15 @@ impl Session {
         self.input.model()
     }
 
-    /// The input side, lent to the thread that reads keys, beside the timing
-    /// and stats the view keeps.
-    pub(crate) fn split(&mut self) -> (&mut Input, &mut Timing, &Stats) {
-        (&mut self.input, &mut self.timing, &self.stats)
+    /// The input side, lent to the thread that reads keys, beside the timing,
+    /// stats, and faults the view keeps.
+    pub(crate) fn split(&mut self) -> (&mut Input, &mut Timing, &Stats, &mut Faults) {
+        (
+            &mut self.input,
+            &mut self.timing,
+            &self.stats,
+            &mut self.faults,
+        )
     }
 }
 
@@ -321,12 +381,14 @@ pub(crate) mod tests {
 
     fn send(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         let mut cmds = Vec::new();
-        let _ = model.update(msg, &mut cmds);
+        let _ = model.update(msg, &mut Vec::new(), &mut cmds);
         cmds
     }
 
     fn quits(model: &mut Model, msg: Msg) -> bool {
-        model.update(msg, &mut Vec::new()).is_break()
+        model
+            .update(msg, &mut Vec::new(), &mut Vec::new())
+            .is_break()
     }
 
     #[test]
@@ -374,6 +436,44 @@ pub(crate) mod tests {
         assert!(quits(&mut model, key('c', true)));
         send(&mut model, key('?', false));
         assert!(quits(&mut model, key('c', true)));
+    }
+
+    #[test]
+    fn input_never_allocates_and_reports_a_full_queue() {
+        let mut fixed = model();
+        // a zero gate is due at the next tick
+        fixed.keyboard = Keyboard::new(fixed.keyboard.keymap().clone(), Gating::Fixed);
+        for model in [model(), fixed] {
+            never_allocates(model);
+        }
+    }
+
+    fn never_allocates(model: Model) {
+        let (tx, _events) = rtrb::RingBuffer::new(1);
+        let (stamps, _, _) = audio::timing(1, 1);
+        let mut faults = Faults::new(1);
+        let stats = Arc::new(Stats::default());
+        let mut input = Input::new(model, tx, stamps, Arc::clone(&stats), faults.ring());
+        let release = Msg::Key(
+            Stroke {
+                key: Key::Char('a'),
+                kind: Kind::Release,
+                ctrl: false,
+            },
+            read(),
+        );
+        let info = allocation_counter::measure(|| {
+            // the note-on fills the queue, so its note-off is dropped,
+            // from the release when Held and the tick when Fixed
+            let _ = input.update(key('a', false));
+            let _ = input.update(release);
+            let _ = input.update(Msg::Tick);
+            let _ = input.update(key('?', false));
+        });
+        assert_eq!(info.count_total, 0);
+        assert_eq!(stats.snapshot().dropped, 1);
+        faults.drain();
+        assert_eq!(faults.last(), Some(Fault::Dropped));
     }
 
     #[test]

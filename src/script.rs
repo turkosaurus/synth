@@ -247,12 +247,15 @@ mod field {
     pub(super) const QUEUE: &str = "queue";
     pub(super) const CUSTOM_DIR: &str = "custom_dir";
     pub(super) const TUI: &str = "tui";
+    pub(super) const LOG: &str = "log";
+    pub(super) const TRIM_SIZE_KB: &str = "trim_size_kb";
     pub(super) const POLL: &str = "poll";
     pub(super) const METER_HOLD: &str = "meter_hold";
     pub(super) const METER_FALL: &str = "meter_fall";
     pub(super) const METER_FLOOR: &str = "meter_floor";
     pub(super) const METER_LATENCY: &str = "meter_latency";
     pub(super) const METER_FPS: &str = "meter_fps";
+    pub(super) const FAULTS: &str = "faults";
     pub(super) const WINDOW: &str = "window";
     pub(super) const RECORDS: &str = "records";
     pub(super) const FLOOR: &str = "floor";

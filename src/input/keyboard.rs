@@ -29,6 +29,9 @@ impl Stroke {
 /// The keyboard plays the patch's first instrument.
 const INSTRUMENT: usize = 0;
 
+/// Every MIDI pitch, the most notes that can sound at once.
+pub(crate) const PITCHES: usize = 128;
+
 /// How a note ends. Only the keyboard needs this: a terminal may not report
 /// key release, so in `Fixed` mode the poll loop schedules the note-off
 /// itself, after the keymap's `gate`. MIDI has real note-off and never comes
@@ -70,15 +73,18 @@ pub(crate) struct Keyboard {
 }
 
 impl Keyboard {
+    /// Sized up front: a map holds at most one entry per note key in the
+    /// keymap, or one per pitch up to [`PITCHES`], so playing never grows one.
     pub(crate) fn new(keymap: Keymap, gating: Gating) -> Self {
+        let keys = keymap.notes.len();
         Self {
             octave: keymap.octave,
             keymap,
             gating,
-            held: HashMap::new(),
+            held: HashMap::with_capacity(keys),
             sounding: None,
-            release_at: HashMap::new(),
-            pressed_at: HashMap::new(),
+            release_at: HashMap::with_capacity(PITCHES),
+            pressed_at: HashMap::with_capacity(keys),
             stopped_at: None,
             last_key: None,
         }
@@ -181,12 +187,12 @@ impl Keyboard {
         let Key::Char(ch) = key else {
             return;
         };
-        if self.repeated(ch, Instant::now()) {
-            return;
-        }
         let Some(&base) = self.keymap.notes.get(&ch) else {
             return;
         };
+        if self.repeated(ch, Instant::now()) {
+            return;
+        }
         let Some(note) = shift(base, self.octave) else {
             return;
         };
@@ -232,13 +238,13 @@ impl Keyboard {
     /// Call once per poll iteration. Ends every `Fixed` note whose time is up.
     pub(crate) fn tick(&mut self, out: &mut Vec<Event>) {
         let now = Instant::now();
-        let due: Vec<u8> = self
+        // found one at a time rather than collected, which would allocate
+        while let Some(note) = self
             .release_at
             .iter()
-            .filter(|&(_, &at)| now >= at)
+            .find(|&(_, &at)| now >= at)
             .map(|(&note, _)| note)
-            .collect();
-        for note in due {
+        {
             self.end(note, out);
         }
     }

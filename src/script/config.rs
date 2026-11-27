@@ -8,7 +8,7 @@ use std::time::Duration;
 use super::Error;
 
 use super::field;
-use crate::spec::{Budget, Config, TuiConfig};
+use crate::spec::{Budget, Config, LogConfig, TuiConfig};
 
 /// `config.lua` under the config directory.
 const FILE: [&str; 2] = ["synth", "config.lua"];
@@ -129,14 +129,17 @@ pub fn config() -> Result<Config, Error> {
     )
 }
 
-/// Where `config` looks, whether or not a file is there: `synth/config.lua`
-/// under the config directory. `None` when the environment names none.
+/// Where `config` looks, whether or not a file is there:
+/// `$XDG_CONFIG_HOME/synth/config.lua`, else `~/.config/synth/config.lua`,
+/// or `%APPDATA%\synth\config.lua` on Windows. `None` when the
+/// environment names none.
 pub fn config_path() -> Option<PathBuf> {
     Dirs::current().config().map(|dir| under(dir, &FILE))
 }
 
-/// Where the debug log goes: `synth/synth.log` under the state directory.
-/// `None` when the environment names none.
+/// Where the log goes: `$XDG_STATE_HOME/synth/synth.log`, else
+/// `~/.local/state/synth/synth.log`, or `%APPDATA%\synth\synth.log` on
+/// Windows. `None` when the environment names none.
 pub fn log_path() -> Option<PathBuf> {
     Dirs::current().state().map(|dir| under(dir, &LOG))
 }
@@ -184,6 +187,9 @@ fn table(lua: &mlua::Lua, source: &str, name: &str) -> Result<mlua::Table, Error
         });
     };
     super::schema::CONFIG.check(&table, None)?;
+    if let Some(log) = table.get::<Option<mlua::Table>>(field::LOG)? {
+        super::schema::CONFIG_LOG.check(&log, None)?;
+    }
     if let Some(tui) = table.get::<Option<mlua::Table>>(field::TUI)? {
         super::schema::CONFIG_TUI.check(&tui, None)?;
         if let Some(latency) = tui.get::<Option<mlua::Table>>(field::METER_LATENCY)? {
@@ -284,6 +290,7 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
     let (floor, ceil) = ordered(&latency, LATENCY, field::FLOOR, field::CEIL)?;
     // a frame rate is better higher, so its danger comes below its warn
     let fps: mlua::Table = tui.get(field::METER_FPS)?;
+    let log: mlua::Table = table.get(field::LOG)?;
     let (fps_danger, fps_warn) = ordered(&fps, FPS, field::DANGER, field::WARN)?;
     Ok(Config {
         // 0 asks for nothing, the same as leaving it out
@@ -315,6 +322,10 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
                 warn: fps_warn as f32,
                 danger: fps_danger as f32,
             },
+            faults: tui.get(field::FAULTS)?,
+        },
+        log: LogConfig {
+            trim_size_kb: log.get(field::TRIM_SIZE_KB)?,
         },
     })
 }
@@ -430,6 +441,8 @@ mod tests {
         assert_eq!(config.tui.meter_floor_db, -60.0);
         assert_eq!(config.tui.latency_window, Duration::from_secs(5));
         assert_eq!(config.tui.latency_records, 1024);
+        assert_eq!(config.tui.faults, 64);
+        assert_eq!(config.log.trim_size_kb, 1024);
         assert_eq!(config.tui.latency_floor_ms, 0.01);
         assert_eq!(config.tui.latency_ceil_ms, 100.0);
         let budget = |warn, danger| Budget { warn, danger };
@@ -620,6 +633,14 @@ mod tests {
             (
                 "return { tui = { meter_latency = { records = 0 } } }",
                 "config.lua tui meter_latency: `records` is 0; must be 1 to 65536",
+            ),
+            (
+                "return { log = { trim_size_kb = -1 } }",
+                "config.lua log: `trim_size_kb` is -1; must be 0 to 1048576",
+            ),
+            (
+                "return { tui = { faults = 0 } }",
+                "config.lua tui: `faults` is 0; must be 1 to 65536",
             ),
             (
                 "return { tui = { meter_latency = { records = 1.5 } } }",
