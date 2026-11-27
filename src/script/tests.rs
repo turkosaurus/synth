@@ -461,6 +461,14 @@ fn a_patch_can_write_its_own_notes() {
 }
 
 #[test]
+fn a_bare_instrument_has_no_events() {
+    let patch = with_keyboard("synth.keyboard({})").unwrap();
+    assert_eq!(patch.timeline.instruments.len(), 1);
+    assert!(patch.timeline.events.is_empty());
+    assert_eq!(patch.bpm, 0.0, "play refuses a patch with no bpm");
+}
+
+#[test]
 fn the_default_layout_is_named() {
     let patch = with_keyboard("synth.keyboard({})").unwrap();
     assert_eq!(patch.keymap.name.as_deref(), Some("qwerty"));

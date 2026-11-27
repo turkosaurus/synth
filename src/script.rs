@@ -19,7 +19,7 @@ mod structure;
 use crate::spec::{Diagnostic, DiagnosticKind, Freqs, Patch};
 pub use config::{config, config_path, log_path, template as config_template};
 pub use error::Error;
-use feed::{sequence, single, SINGLE};
+use feed::{bare, sequence, SINGLE};
 use keymap::keymap;
 
 #[cfg(test)]
@@ -423,8 +423,7 @@ fn load_in(
         (Some(specs), Some(steps)) => {
             sequence(&lua, &table, &specs, &steps, sample_rate, freqs, keys)
         }
-        // a bare instrument file: one sustained note, so a two-event timeline
-        _ => single(
+        _ => bare(
             lua.unpack(mlua::Value::Table(table)).map_err(Error::from)?,
             sample_rate,
             freqs,

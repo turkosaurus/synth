@@ -9,7 +9,7 @@ The only place `mlua` appears. Loads a patch, checks it, and bakes it into [`spe
 | [`error.rs`](./error.rs) | `Error`: why a patch failed, by variant |
 | [`sandbox.rs`](./sandbox.rs) | the allowlisted environment user Lua runs in |
 | [`bake.rs`](./bake.rs) | instrument to wavetable and envelope |
-| [`feed.rs`](./feed.rs) | single note or sequence to a timeline |
+| [`feed.rs`](./feed.rs) | bare instrument or sequence to a timeline |
 | [`keymap.rs`](./keymap.rs) | keyboard layout to keymap |
 | [`filter.rs`](./filter.rs) | filter table to `Filter` and its report |
 | [`config.rs`](./config.rs) | `config.lua`, read once at startup |
@@ -25,8 +25,8 @@ flowchart TD
     structure --> filter
     structure --> shape{instruments and steps?}
     shape -- yes --> sequence[feed: sequence]
-    shape -- no --> single[feed: single]
-    sequence & single --> bake
+    shape -- no --> bare[feed: bare]
+    sequence & bare --> bake
     bake & freqs & keymap & filter --> Patch[("spec::Patch")]
     schema -. validates .-> bake & filter & keymap
 ```
