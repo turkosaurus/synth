@@ -14,7 +14,9 @@ pub fn width() -> usize {
 /// `event`, a line of the JSON log, as time, level, message, then
 /// `key=value` fields; the fields go one per line, indented, when the
 /// event would run past `width`. With `color`, the level is coloured and
-/// time and keys are dimmed. A line that is not an event passes through.
+/// time and keys are dimmed. A span's close reads as its path, outermost
+/// first, with `busy` and `idle` times. A line that is not an event passes
+/// through.
 pub fn line(event: &str, color: bool, width: usize) -> String {
     let Ok(Value::Object(event)) = serde_json::from_str::<Value>(event) else {
         return event.to_string();
@@ -30,11 +32,21 @@ pub fn line(event: &str, color: bool, width: usize) -> String {
         .get("fields")
         .and_then(Value::as_object)
         .unwrap_or(&empty);
-    let message = fields.get("message").map(value).unwrap_or_default();
+    let mut message = fields.get("message").map(value).unwrap_or_default();
+    let closed = span_path(&event);
+    if let (Some(path), "close") = (&closed, message.as_str()) {
+        message = path.clone();
+    }
     let pairs: Vec<(&str, String)> = fields
         .iter()
         .filter(|(key, _)| *key != "message")
-        .map(|(key, field)| (key.as_str(), value(field)))
+        .map(|(key, field)| {
+            let key = match closed {
+                Some(_) => key.strip_prefix("time.").unwrap_or(key),
+                None => key,
+            };
+            (key, value(field))
+        })
         .collect();
 
     let head = format!("{time} {level:>5} {message}");
@@ -62,6 +74,22 @@ pub fn line(event: &str, color: bool, width: usize) -> String {
         ));
     }
     out
+}
+
+/// `outer > inner` for the span an event is in, its parents first.
+fn span_path(event: &serde_json::Map<String, Value>) -> Option<String> {
+    let name = |span: &Value| span.get("name").and_then(Value::as_str).map(str::to_string);
+    let current = name(event.get("span")?)?;
+    let mut path: Vec<String> = event
+        .get("spans")
+        .and_then(Value::as_array)
+        .map(|spans| spans.iter().filter_map(name).collect())
+        .unwrap_or_default();
+    // some formatters list the current span among its parents
+    if path.last() != Some(&current) {
+        path.push(current);
+    }
+    Some(path.join(" > "))
 }
 
 fn level_color(level: &str) -> Color {
@@ -113,6 +141,15 @@ mod tests {
             assert!(coloured.contains('\x1b'), "{coloured:?}");
         }
         assert!(coloured.contains("underrun"));
+    }
+
+    #[test]
+    fn a_span_close_reads_as_its_path_and_times() {
+        const CLOSE: &str = r#"{"timestamp":"2026-11-27T21:34:37.832011Z","level":"DEBUG","fields":{"message":"close","time.busy":"1.54ms","time.idle":"27.9µs"},"target":"synth::script::bake","span":{"points":2048,"name":"bake_wave"},"spans":[{"path":"\"lua/example.lua\"","name":"load"},{"sample_rate":48000,"name":"bake_instrument"}]}"#;
+        assert_eq!(
+            line(CLOSE, false, 100),
+            "21:34:37.832 DEBUG load > bake_instrument > bake_wave busy=1.54ms idle=27.9µs"
+        );
     }
 
     #[test]

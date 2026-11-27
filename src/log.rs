@@ -112,38 +112,38 @@ impl Drop for Listening {
     }
 }
 
-/// Listens at `path` on a thread of its own, adding each reader that
-/// connects to `socket`. A socket file nobody answers on is left from a
-/// synth that did not exit cleanly, and is replaced; one that answers
-/// belongs to a synth still running, and is left to it.
+/// Listens in `dir`, at a socket named for this process, on a thread of
+/// its own, adding each reader that connects to `socket`. Each synth has
+/// its own, so a second one is live too. Sockets nobody answers on were
+/// left by a synth that did not exit cleanly, and are removed.
 #[cfg(unix)]
-pub fn listen(path: &Path, socket: &Socket) -> anyhow::Result<Listening> {
+pub fn listen(dir: &Path, socket: &Socket) -> anyhow::Result<Listening> {
     use anyhow::Context;
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     use std::os::unix::net::{UnixListener, UnixStream};
 
-    if UnixStream::connect(path).is_ok() {
-        anyhow::bail!("another synth is logging to {}", path.display());
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+        .with_context(|| format!("create {}", dir.display()))?;
+    for stale in sockets(dir) {
+        if UnixStream::connect(&stale).is_err() {
+            let _ = std::fs::remove_file(&stale);
+        }
     }
-    if let Some(dir) = path.parent() {
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)
-            .with_context(|| format!("create {}", dir.display()))?;
-    }
-    match std::fs::remove_file(path) {
+    let path = dir.join(format!("log-{}.sock", std::process::id()));
+    // a reused pid's socket, already found dead above, or racing us
+    match std::fs::remove_file(&path) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => {
             return Err(e).with_context(|| format!("remove {}", path.display()));
         }
         _ => {}
     }
-    let listener = UnixListener::bind(path).with_context(|| format!("bind {}", path.display()))?;
-    let listening = Listening {
-        path: path.to_path_buf(),
-    };
+    let listener = UnixListener::bind(&path).with_context(|| format!("bind {}", path.display()))?;
+    let listening = Listening { path: path.clone() };
     // the state directory fallback may be readable by others
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
         .with_context(|| format!("restrict {}", path.display()))?;
 
     let socket = socket.clone();
@@ -160,25 +160,55 @@ pub fn listen(path: &Path, socket: &Socket) -> anyhow::Result<Listening> {
     Ok(listening)
 }
 
-/// Each line of the log, live from `socket` while synth runs, otherwise
-/// from `file` as it grows, until `line` fails. After the socket closes,
-/// the file is followed from its end, so no line is passed twice.
+/// The live log sockets in `dir`, newest first.
+#[cfg(unix)]
+fn sockets(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("log-") && name.ends_with(".sock")
+        })
+        .map(|entry| {
+            let made = entry.metadata().and_then(|m| m.modified());
+            (made.unwrap_or(std::time::UNIX_EPOCH), entry.path())
+        })
+        .collect();
+    found.sort_by(|a, b| b.cmp(a));
+    found.into_iter().map(|(_, path)| path).collect()
+}
+
+/// The newest synth's socket in `dir` that answers.
+#[cfg(unix)]
+fn newest(dir: &Path) -> Option<std::os::unix::net::UnixStream> {
+    sockets(dir)
+        .iter()
+        .find_map(|path| std::os::unix::net::UnixStream::connect(path).ok())
+}
+
+/// Each line of the log, live from the newest synth's socket in `sockets`
+/// while one runs, otherwise from `file` as it grows, until `line` fails.
+/// After the socket closes, the file is followed from its end, so no line
+/// is passed twice.
 pub fn follow(
-    socket: Option<&Path>,
+    sockets: Option<&Path>,
     file: &Path,
     mut line: impl FnMut(&str) -> io::Result<()>,
 ) -> io::Result<()> {
     let mut from_end = false;
     #[cfg(unix)]
-    if let Some(stream) = socket.and_then(|path| std::os::unix::net::UnixStream::connect(path).ok())
-    {
+    if let Some(stream) = sockets.and_then(newest) {
         for text in BufReader::new(stream).lines() {
             line(&text?)?;
         }
         from_end = true;
     }
     #[cfg(not(unix))]
-    let _ = socket;
+    let _ = sockets;
     tail(file, from_end, &mut line)
 }
 
@@ -222,7 +252,7 @@ fn tail(
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{listen, Socket};
+    use super::{listen, newest, sockets, Socket};
     use std::io::{BufRead, BufReader, Read, Write};
     use std::os::unix::net::UnixStream;
     use std::time::{Duration, Instant};
@@ -283,24 +313,27 @@ mod tests {
         assert_eq!(socket.readers(), 0);
     }
 
+    fn temp(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("synth-log-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     #[test]
     fn a_connected_reader_gets_each_line() {
-        let dir = std::env::temp_dir().join(format!("synth-log-{}", std::process::id()));
-        let path = dir.join("log.sock");
-        // a socket file left by a synth that did not exit is replaced
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(&path, "").unwrap();
+        let dir = temp("listen");
+        // left by a synth that did not exit cleanly
+        let stale = dir.join("log-1.sock");
+        drop(std::os::unix::net::UnixListener::bind(&stale).unwrap());
 
         let socket = Socket::default();
-        let listening = listen(&path, &socket).unwrap();
-        let stream = UnixStream::connect(&path).unwrap();
+        let listening = listen(&dir, &socket).unwrap();
+        assert!(!stale.exists(), "a dead socket is removed");
+        let stream = newest(&dir).expect("our socket answers");
         while socket.readers() == 0 {
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(
-            listen(&path, &Socket::default()).is_err(),
-            "one synth per socket"
-        );
 
         (&socket).write_all(line(1).as_bytes()).unwrap();
         let mut got = String::new();
@@ -308,7 +341,25 @@ mod tests {
         assert_eq!(got, line(1));
 
         drop(listening);
-        assert!(!path.exists());
+        assert!(sockets(&dir).is_empty(), "the socket is removed on exit");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_reader_connects_to_the_newest_live_synth() {
+        use std::os::unix::net::UnixListener;
+        let dir = temp("newest");
+        let old = UnixListener::bind(dir.join("log-100.sock")).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        let new = UnixListener::bind(dir.join("log-200.sock")).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        drop(UnixListener::bind(dir.join("log-300.sock")).unwrap());
+
+        newest(&dir).expect("a live socket");
+        new.set_nonblocking(true).unwrap();
+        old.set_nonblocking(true).unwrap();
+        assert!(new.accept().is_ok(), "the newest that answers");
+        assert!(old.accept().is_err(), "not the older one");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

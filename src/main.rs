@@ -188,8 +188,8 @@ fn log_file(streams: bool) -> anyhow::Result<Option<std::fs::File>> {
 fn live_log(socket: &synth::log::Socket) -> Option<synth::log::Listening> {
     #[cfg(unix)]
     {
-        let path = script::socket_path()?;
-        match synth::log::listen(&path, socket) {
+        let dir = script::socket_dir()?;
+        match synth::log::listen(&dir, socket) {
             Ok(listening) => Some(listening),
             Err(e) => {
                 eprintln!("warning: no live log: {e:#}");
@@ -210,13 +210,13 @@ fn follow_log() -> anyhow::Result<()> {
 
     let file = script::log_path()
         .context("no log directory: set XDG_STATE_HOME or HOME, or APPDATA on Windows")?;
-    let socket = script::socket_path();
+    let sockets = script::socket_dir();
     // escape codes only for a terminal; crossterm also drops them for
     // NO_COLOR
     let color = std::io::stdout().is_terminal();
     let width = view::log::width();
     let mut out = std::io::stdout().lock();
-    let followed = synth::log::follow(socket.as_deref(), &file, |event| {
+    let followed = synth::log::follow(sockets.as_deref(), &file, |event| {
         writeln!(out, "{}", view::log::line(event, color, width))
     });
     match followed {
