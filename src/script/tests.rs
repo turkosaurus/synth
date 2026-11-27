@@ -47,7 +47,13 @@ fn released_after(wave: Vec<f32>, release_ms: f64) -> Instrument {
 
 #[test]
 fn clean_triangle_raises_nothing() {
-    let report = inspect(&instrument_with(wave_from(triangle, 2048)), 1000, &[0], &[]);
+    let report = inspect(
+        &instrument_with(wave_from(triangle, 2048)),
+        1000,
+        &[0],
+        &[],
+        &[],
+    );
     assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     assert_eq!(report.peak, 1.0);
     assert!(report.dc.abs() < 1e-6);
@@ -59,6 +65,7 @@ fn flags_clamping() {
         &instrument_with(wave_from(triangle, 2048)),
         1000,
         &[17],
+        &[],
         &[],
     );
     assert!(report
@@ -75,6 +82,7 @@ fn flags_dc_offset() {
         1000,
         &[0],
         &[],
+        &[],
     );
     assert!(report
         .diagnostics
@@ -89,6 +97,7 @@ fn flags_wrap_discontinuity() {
         &instrument_with(wave_from(|p| 2.0 * p - 1.0, 2048)),
         1000,
         &[0],
+        &[],
         &[],
     );
     assert!(report
@@ -106,6 +115,7 @@ fn a_jump_the_shape_already_makes_is_not_flagged_at_the_wrap() {
         1000,
         &[0],
         &[],
+        &[],
     );
     assert!(!report
         .diagnostics
@@ -119,6 +129,7 @@ fn flags_a_wave_that_never_rises_through_zero() {
         &instrument_with(wave_from(|p| triangle(p) * 0.4 + 0.5, 2048)),
         1000,
         &[0],
+        &[],
         &[],
     );
     assert!(report
@@ -162,6 +173,7 @@ fn flags_weak_peak() {
         1000,
         &[0],
         &[],
+        &[],
     );
     assert!(report
         .diagnostics
@@ -174,7 +186,7 @@ fn flags_zero_release() {
     // sustain outside 0..1 is no longer a warning here: schema::ENVELOPE
     // rejects it before anything is baked
     let instrument = released_after(wave_from(triangle, 2048), 0.0);
-    let report = inspect(&instrument, 1000, &[0], &[]);
+    let report = inspect(&instrument, 1000, &[0], &[], &[]);
     assert!(report
         .diagnostics
         .iter()
@@ -1194,7 +1206,8 @@ fn diagnostics_name_the_line_that_built_the_value() {
         .iter()
         .find(|d| d.message.contains("peaks at only"))
         .expect("a quiet waveform warns");
-    assert_eq!(peak.at.as_deref(), Some("song.lua:5"));
+    // the shape names where it was written, not the instrument using it
+    assert_eq!(peak.at.as_deref(), Some("song.lua:3"));
     let cutoff = &patch.filter_report.as_ref().unwrap().diagnostics[0];
     assert_eq!(cutoff.at.as_deref(), Some("song.lua:8"));
 }
@@ -2098,4 +2111,50 @@ fn a_required_module_is_named_by_its_path() {
     // Lua cuts a long temp path to `...tail`, so only the file name is fixed
     assert!(message.contains("bad.lua:1: inner"), "{message}");
     assert!(!message.contains("[string"), "{message}");
+}
+
+#[test]
+fn only_a_shape_the_patch_wrote_has_a_definition_site() {
+    let lua = mlua::Lua::new();
+    lua_register(&lua, None, None).unwrap();
+    let wave: mlua::Table = lua.load(r#"return require("synth.wave")"#).eval().unwrap();
+    let sine: mlua::Function = wave.get("sine").unwrap();
+    assert_eq!(defined(&sine), None);
+    let own: mlua::Function = lua
+        .load("\n return function(phase) return phase end")
+        .set_name("song.lua")
+        .eval()
+        .unwrap();
+    assert_eq!(defined(&own).as_deref(), Some("song.lua:2"));
+}
+
+#[test]
+fn each_wave_names_where_it_was_written() {
+    let source = r#"
+        local synth = require("synth")
+        local quiet = function(phase) return 0.2 * math.sin(phase * 2 * math.pi) end
+        return synth.instrument({
+            oscillator = synth.osc({ waveforms = { synth.wave.sine, quiet } }),
+        })
+    "#;
+    let patch = load_source(source, "song.lua", 48000).unwrap();
+    let (_, report) = &patch.reports[0];
+    let peak = report
+        .diagnostics
+        .iter()
+        .find(|d| d.message.starts_with("waves[2]: waveform peaks at only"))
+        .expect("the quiet wave warns");
+    assert_eq!(peak.at.as_deref(), Some("song.lua:3"));
+}
+
+#[test]
+fn a_tuning_warning_names_where_the_tuning_was_written() {
+    let custom = with_tuning(
+        "function(note) if note == 0 then return 30000 end return 440 end",
+        48000,
+    )
+    .unwrap();
+    assert_eq!(custom.tuning_diagnostics[0].at.as_deref(), Some("test:3"));
+    let equal = with_tuning("synth.tuning.equal({})", 16000).unwrap();
+    assert_eq!(equal.tuning_diagnostics[0].at, None);
 }

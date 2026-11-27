@@ -355,7 +355,8 @@ pub(super) fn bake_instrument(
         (field::RELEASE_CURVE, release_clamped),
     ];
     // inspect first, so its warnings describe the cycle as written
-    let mut report = inspect(&instrument, sample_rate, &clamped, &curves);
+    let sites: Vec<_> = waves.iter().map(super::defined).collect();
+    let mut report = inspect(&instrument, sample_rate, &clamped, &curves, &sites);
     if let Some((_, count)) = position_mod {
         report.diagnostics.extend(lfo_clamped(count));
     }
@@ -490,6 +491,7 @@ pub(super) fn inspect(
     sample_rate: u32,
     clamped: &[usize],
     curves: &[(&str, usize)],
+    sites: &[Option<String>],
 ) -> Report {
     let rate = f64::from(sample_rate);
     let count = instrument.wave().frame_count();
@@ -512,9 +514,14 @@ pub(super) fn inspect(
         if k == 0 {
             first = (peak, dc, seam);
         }
-        let named = |message: String| match count {
-            1 => shape(message),
-            _ => shape(format!("waves[{}]: {message}", k + 1)),
+        let site = sites.get(k).cloned().flatten();
+        let named = |message: String| {
+            let mut diagnostic = match count {
+                1 => shape(message),
+                _ => shape(format!("waves[{}]: {message}", k + 1)),
+            };
+            diagnostic.at = site.clone();
+            diagnostic
         };
         let clamped = clamped.get(k).copied().unwrap_or(0);
 

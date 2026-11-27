@@ -125,6 +125,18 @@ fn site(lua: &mlua::Lua) -> String {
     at(lua, 2).unwrap_or_else(|| BUILT_IN.to_string())
 }
 
+/// `file:line` where a patch wrote `function`, or `None` for one an embedded
+/// module wrote, so a diagnostic falls back to the constructor's stamp.
+fn defined(function: &mlua::Function) -> Option<String> {
+    let info = function.info();
+    let source = info.source?;
+    if MODULES.iter().any(|(module, _)| *module == source) {
+        return None;
+    }
+    let file = source.strip_prefix('@').unwrap_or(&source);
+    Some(format!("{file}:{}", info.line_defined?))
+}
+
 /// `file:line` of the function `level` calls up the stack, or `None` when
 /// the stack is not that deep.
 fn at(lua: &mlua::Lua, level: usize) -> Option<String> {
@@ -390,7 +402,11 @@ fn load_in(
         }
     };
 
-    let (freqs, tuning_diagnostics) = tune(&to_hz, sample_rate)?;
+    let (freqs, mut tuning_diagnostics) = tune(&to_hz, sample_rate)?;
+    let place = defined(&to_hz);
+    for diagnostic in &mut tuning_diagnostics {
+        diagnostic.at = place.clone();
+    }
 
     // a patch may ship its own layout; otherwise the embedded default
     let layout: mlua::Table = match table.get(field::KEYBOARD)? {
