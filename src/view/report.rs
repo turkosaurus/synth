@@ -56,7 +56,7 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
         None => "platform default".to_string(),
     };
     let ms = |d: std::time::Duration| format!("{} ms", d.as_millis());
-    let budget = |b: crate::spec::Budget| format!("warn {} ms, red {} ms", b.warn_ms, b.danger_ms);
+    let budget = |b: crate::spec::Budget| format!("warn {} ms, red {} ms", b.warn, b.danger);
     let tui = &config.tui;
     table::pairs(
         "config",
@@ -76,6 +76,7 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
             ("meter fall", ms(tui.meter_fall)),
             ("meter floor", format!("{} dB", tui.meter_floor_db)),
             ("latency window", ms(tui.latency_window)),
+            ("latency records", tui.latency_records.to_string()),
             (
                 "latency scale",
                 format!("{} to {} ms", tui.latency_floor_ms, tui.latency_ceil_ms),
@@ -86,7 +87,7 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
             ("latency total", budget(tui.total_budget)),
             (
                 "fps",
-                format!("warn below {}, red below {}", tui.fps_warn, tui.fps_danger),
+                format!("warn below {}, red below {}", tui.fps.warn, tui.fps.danger),
             ),
         ],
         false,

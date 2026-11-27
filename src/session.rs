@@ -20,9 +20,6 @@ use crate::spec::{Config, Event};
 
 pub(crate) use latency::{Latency, Spread, Window};
 
-/// Timing records the callback can push before the view drains them.
-const RECORDS: usize = 1024;
-
 /// What a view sends the session. A view reads its own library's input and
 /// translates it into one of these, so the session never names that library.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -222,7 +219,7 @@ impl Session {
         )
         .with_filter(patch.filter);
 
-        let (stamps, recorder, records) = audio::timing(config.queue, RECORDS);
+        let (stamps, recorder, records) = audio::timing(config.queue, config.tui.latency_records);
         let stats = Arc::new(Stats::default());
         let stream = audio::stream(&output, player, Arc::clone(&stats), Some(recorder))?;
 

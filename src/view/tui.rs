@@ -318,8 +318,8 @@ fn buffer(requested: Option<u32>, got: u32) -> (String, bool) {
 
 fn fps_style(fps: usize, config: &TuiConfig) -> Style {
     match fps {
-        fps if fps < config.fps_danger as usize => Style::new().fg(Color::Red),
-        fps if fps < config.fps_warn as usize => Style::new().fg(Color::Yellow),
+        fps if (fps as f32) < config.fps.danger => Style::new().fg(Color::Red),
+        fps if (fps as f32) < config.fps.warn => Style::new().fg(Color::Yellow),
         _ => Style::new(),
     }
 }
@@ -808,10 +808,7 @@ fn axis(buffer: &mut ratatui::buffer::Buffer, area: Rect, style: Style, scale: S
 /// empty track, a heavy p99 tick, and a light max marker, written over it
 /// the way `shadow` writes, with max winning where they share a cell.
 fn range(frame: &mut Frame, area: Rect, stage: &Stage, scale: Scale) {
-    let (warn, danger) = (
-        scale.at(stage.budget.warn_ms),
-        scale.at(stage.budget.danger_ms),
-    );
+    let (warn, danger) = (scale.at(stage.budget.warn), scale.at(stage.budget.danger));
     let p50 = stage.spread.map_or(0.0, |s| scale.at(ms(s.p50)));
     frame.render_widget(bar(String::new(), p50, warn, danger), area);
 
