@@ -2,6 +2,7 @@
 //! of one it reads. A view reads `Sources`, never a tee, so another stream
 //! joins as one more entry without the view changing.
 
+use std::collections::VecDeque;
 use std::fmt;
 
 use crate::audio::OutputTee;
@@ -93,28 +94,41 @@ impl Stream {
     }
 }
 
-/// Every stream a view can read, and the one it reads now.
+/// Every stream a view can read, the one it reads now, and its newest
+/// samples, which every view of it reads.
 pub(crate) struct Sources {
     streams: Vec<Stream>,
     selection: Selection,
+    /// oldest first, at most `keep` long
+    recent: VecDeque<f32>,
+    keep: usize,
 }
 
 impl Sources {
     /// `streams`, reading `selection`, which must name one of them.
     pub(crate) fn new(streams: Vec<Stream>, selection: Selection) -> Self {
         assert!(selection.stream < streams.len(), "no such stream");
-        Self { streams, selection }
+        Self {
+            streams,
+            selection,
+            recent: VecDeque::new(),
+            keep: 0,
+        }
     }
 
-    pub(crate) fn selection(&self) -> Selection {
-        self.selection
+    /// Hold the newest `samples` of the selection from the next `read` on,
+    /// allocated here, once.
+    pub(crate) fn keep(&mut self, samples: usize) {
+        self.keep = samples;
+        self.recent = VecDeque::with_capacity(samples);
     }
 
-    /// Read `selection` from the next `read` on; one naming no stream is
-    /// ignored.
+    /// Read `selection` from the next `read` on, forgetting the old one's
+    /// samples so no view draws its tail; one naming no stream is ignored.
     pub(crate) fn select(&mut self, selection: Selection) {
-        if selection.stream < self.streams.len() {
+        if selection.stream < self.streams.len() && selection != self.selection {
             self.selection = selection;
+            self.recent.clear();
         }
     }
 
@@ -122,15 +136,29 @@ impl Sources {
         self.streams[self.selection.stream].sample_rate
     }
 
-    /// Drain every stream, handing `out` one sample per frame of the
-    /// selected one, oldest first. The others are drained unread: a full
-    /// tee drops its newest frames and counts them as a fault.
-    pub(crate) fn read(&mut self, mut out: impl FnMut(f32)) {
+    /// Drain every stream, keeping one sample per frame of the selected
+    /// one. All of it, every time, and the others unread: a full tee drops
+    /// its newest frames and counts them as a fault.
+    pub(crate) fn read(&mut self) {
         let selection = self.selection;
+        let (recent, keep) = (&mut self.recent, self.keep);
+        let mut out = |sample| {
+            if recent.len() == keep {
+                recent.pop_front();
+            }
+            if keep > 0 {
+                recent.push_back(sample);
+            }
+        };
         for (i, stream) in self.streams.iter_mut().enumerate() {
             let pick = (i == selection.stream).then_some(selection.pick);
             stream.drain(pick, &mut out);
         }
+    }
+
+    /// The newest samples read from the selection, oldest first.
+    pub(crate) fn recent(&mut self) -> &[f32] {
+        self.recent.make_contiguous()
     }
 }
 
@@ -159,9 +187,9 @@ mod tests {
     }
 
     fn read(sources: &mut Sources) -> Vec<f32> {
-        let mut out = Vec::new();
-        sources.read(|sample| out.push(sample));
-        out
+        sources.keep(8);
+        sources.read();
+        sources.recent().to_vec()
     }
 
     const MIX: Selection = Selection {
@@ -227,7 +255,7 @@ mod tests {
             stream: 3,
             pick: Pick::Mix,
         });
-        assert_eq!(sources.selection(), MIX);
+        assert_eq!(sources.selection, MIX);
     }
 
     #[test]
@@ -236,5 +264,23 @@ mod tests {
         assert_eq!(sources.to_string(), "output mix");
         sources.select(MIX.next(&[2]));
         assert_eq!(sources.to_string(), "output ch 1");
+    }
+
+    #[test]
+    fn recent_keeps_the_newest_samples() {
+        let frames = [(1.0, 1.0), (0.5, 0.5), (0.0, 0.0)];
+        let mut sources = Sources::new(vec![stereo(&frames)], MIX);
+        sources.keep(2);
+        sources.read();
+        assert_eq!(sources.recent(), [0.5, 0.0]);
+    }
+
+    #[test]
+    fn a_new_selection_forgets_the_old_samples() {
+        let mut sources = Sources::new(vec![stereo(&[(1.0, 1.0)])], MIX);
+        sources.keep(4);
+        sources.read();
+        sources.select(MIX.next(&[2]));
+        assert!(sources.recent().is_empty());
     }
 }

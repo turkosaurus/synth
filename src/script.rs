@@ -263,6 +263,9 @@ mod field {
     pub(super) const SCOPE: &str = "scope";
     pub(super) const HISTORY: &str = "history";
     pub(super) const CYCLES: &str = "cycles";
+    pub(super) const SPECTRUM: &str = "spectrum";
+    pub(super) const SIZE: &str = "size";
+    pub(super) const HEIGHT: &str = "height";
     pub(super) const WINDOW: &str = "window";
     pub(super) const RECORDS: &str = "records";
     pub(super) const FLOOR: &str = "floor";

@@ -24,8 +24,10 @@ use crate::session::{
 };
 use crate::spec::{Budget, Freqs, Key, Keymap, TuiConfig};
 
+use super::fft::Transform;
 use super::meter::{self, Activity, Meter};
 use super::scope::{Oscilloscope, Scope};
+use super::spectrum::Spectrum;
 
 const POPUP_FILL: Color = Color::Yellow;
 const POPUP_INK: Color = Color::Black;
@@ -232,7 +234,11 @@ fn drive(
     let mut peak = Meter::new(config.meter_hold, config.meter_fall);
     let mut activity = Activity::default();
     let history = sources.sample_rate() * config.scope_history.as_secs_f32();
-    let mut scope = Scope::new(history.ceil() as usize, config.scope_cycles);
+    let mut scope = Scope::new(config.scope_cycles);
+    let mut transform = Transform::new(config.spectrum_size);
+    // one window for both views: long enough to find the scope's trigger
+    // in, and to fill a transform
+    sources.keep((history.ceil() as usize).max(config.spectrum_size));
     let mut last = Instant::now();
     let mut glance = still.glance;
 
@@ -254,17 +260,20 @@ fn drive(
         let latency = stages(&timing.latency, config);
         let fps = timing.latency.view.per_second();
 
-        if glance.scope != sources.selection() {
-            sources.select(glance.scope);
-            scope.clear();
-        }
-        // all of it, every redraw: a full tee drops the newest frames
-        sources.read(|sample| scope.push(sample));
+        sources.select(glance.scope);
+        sources.read();
+        transform
+            .update(sources.recent())
+            .context("transforming the spectrum")?;
         scope.tune(glance.sounding.and_then(|note| still.freqs.hz(note)));
         let source = sources.to_string();
+        let sample_rate = sources.sample_rate();
+        let recent = sources.recent();
         let view = View {
-            wave: scope.window(sources.sample_rate()),
+            wave: scope.window(recent, sample_rate),
             source: &source,
+            transform: &transform,
+            sample_rate,
             keymap: &still.keymap,
             glance: &glance,
             snap: &snap,
@@ -360,8 +369,11 @@ fn code(key: Key) -> KeyCode {
 struct View<'a> {
     /// the scope's window, oldest first
     wave: &'a [f32],
-    /// what the scope reads, for its title
+    /// what the scope and spectrum read, for their titles
     source: &'a str,
+    transform: &'a Transform,
+    /// the source's, which places its bins in hz
+    sample_rate: f32,
     keymap: &'a Keymap,
     glance: &'a Glance,
     snap: &'a Snapshot,
@@ -479,6 +491,8 @@ fn draw(frame: &mut Frame, view: &View) {
     let View {
         wave,
         source,
+        transform,
+        sample_rate,
         keymap,
         glance,
         snap,
@@ -514,10 +528,33 @@ fn draw(frame: &mut Frame, view: &View) {
             .spacing(Spacing::Overlap(1))
             .areas(input_area);
 
+    let height = config.spectrum_height.round() as u16;
+    let [scope_area, spectrum_area] = Layout::vertical([
+        Constraint::Percentage(100 - height),
+        Constraint::Percentage(height),
+    ])
+    .spacing(Spacing::Overlap(1))
+    .areas(scope_area);
+
     let scope_block = pane().title(format!(" scope: {source} "));
     let scope_inner = scope_block.inner(scope_area);
     frame.render_widget(scope_block, scope_area);
     frame.render_widget(Oscilloscope { wave }, scope_inner);
+
+    let spectrum = Spectrum {
+        amplitudes: transform.amplitudes(),
+        size: transform.size(),
+        sample_rate,
+        floor_db: config.spectrum_floor_db,
+    };
+    let (low, high) = spectrum.axis();
+    let spectrum_block = pane()
+        .title(format!(" spectrum: {source} "))
+        .title_bottom(Line::from(format!(" {low} ")).left_aligned())
+        .title_bottom(Line::from(format!(" {high} ")).right_aligned());
+    let spectrum_inner = spectrum_block.inner(spectrum_area);
+    frame.render_widget(spectrum_block, spectrum_area);
+    frame.render_widget(spectrum, spectrum_inner);
 
     let input_block = pane().title(" input ");
     let input_inner = input_block.inner(input_area);

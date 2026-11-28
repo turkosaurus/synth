@@ -223,6 +223,9 @@ pub enum Error {
         high_value: f64,
     },
 
+    #[error("config.lua tui spectrum: `size` is {size}; must be a power of two")]
+    SpectrumSize { size: usize },
+
     #[error("config.lua tui source: `stream` is {stream:?}; must be one of {expected}")]
     UnknownStream { stream: String, expected: String },
 

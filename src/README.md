@@ -7,8 +7,9 @@
 | [`spec`](./spec) | plain data every module shares; names nothing else in the crate |
 | [`audio`](./audio) | the realtime path: render and device |
 | [`input`](./input) | character keyboard to note events |
-| [`session.rs`](./session.rs) | model, msg, and cmd for a live view; wires device, patch, and ring; `source.rs`: the frame sources a view reads |
+| [`session.rs`](./session.rs) | model, msg, and cmd for a live view; wires device, patch, and ring; `source.rs`: the frame sources a view reads, and their newest samples |
 | [`view`](./view) | tui, reports, prompts |
+| [`approx.rs`](./approx.rs) | `core` stand-ins for std float functions, shared by `audio/fx` and the view's widgets |
 | [`terminal.rs`](./terminal.rs) | raw mode and key release detection |
 | [`install.rs`](./install.rs) | `install`, `uninstall` |
 | [`update.rs`](./update.rs) | `update` from GitHub releases |

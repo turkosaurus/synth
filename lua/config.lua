@@ -23,6 +23,11 @@
 ---@field history? number ms of the source kept to find a trigger in
 ---@field cycles? number cycles of the sounding pitch the window spans
 
+---@class synth.ConfigSpectrum
+---@field size? integer samples per transform, a power of two: finer bins, slower to follow
+---@field floor? number dB, the quietest level the spectrum shows
+---@field height? number percent of the scope pane the spectrum takes
+
 ---@class synth.ConfigTui
 ---@field poll? number ms between redraws and key reads
 ---@field meter_hold? number ms a peak holds before it falls
@@ -33,6 +38,7 @@
 ---@field faults? integer faults each thread queues for the view, allocated once at start
 ---@field source? synth.ConfigSource
 ---@field scope? synth.ConfigScope
+---@field spectrum? synth.ConfigSpectrum
 
 ---@class synth.ConfigLog
 ---@field trim_size_kb? integer KiB; at start, a larger log.jsonl keeps only its newest lines up to this (0: never trim)
@@ -72,6 +78,11 @@ local config = {
 		scope = {
 			history = 250, -- ms of the source kept to find a trigger in
 			cycles = 2, -- cycles of the sounding pitch the window spans
+		},
+		spectrum = {
+			size = 4096, -- samples per transform, a power of two: finer bins, slower to follow
+			floor = -60, -- dB, the quietest level the spectrum shows
+			height = 50, -- percent of the scope pane the spectrum takes
 		},
 	},
 	log = {

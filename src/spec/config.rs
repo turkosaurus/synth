@@ -69,6 +69,12 @@ pub struct TuiConfig {
     pub scope_history: Duration,
     /// Cycles of the sounding pitch the scope's window spans.
     pub scope_cycles: f32,
+    /// Samples per spectrum transform, a power of two.
+    pub spectrum_size: usize,
+    /// The quietest level the spectrum shows, in dB below full scale.
+    pub spectrum_floor_db: f32,
+    /// Percent of the scope pane the spectrum takes.
+    pub spectrum_height: f32,
 }
 
 /// A stream of frames a view can read, by the name `config.lua` gives it.

@@ -232,6 +232,9 @@ fn table(lua: &mlua::Lua, source: &str, name: &str) -> Result<mlua::Table, Error
         if let Some(scope) = tui.get::<Option<mlua::Table>>(field::SCOPE)? {
             super::schema::CONFIG_SCOPE.check(&scope, None)?;
         }
+        if let Some(spectrum) = tui.get::<Option<mlua::Table>>(field::SPECTRUM)? {
+            super::schema::CONFIG_SPECTRUM.check(&spectrum, None)?;
+        }
     }
     Ok(table)
 }
@@ -332,6 +335,11 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
     let log: mlua::Table = table.get(field::LOG)?;
     let source: mlua::Table = tui.get(field::SOURCE)?;
     let scope: mlua::Table = tui.get(field::SCOPE)?;
+    let spectrum: mlua::Table = tui.get(field::SPECTRUM)?;
+    let size: usize = spectrum.get(field::SIZE)?;
+    if !size.is_power_of_two() {
+        return Err(Error::SpectrumSize { size });
+    }
     let within = |table: &mlua::Table, key: &str| -> mlua::Result<Duration> {
         Ok(Duration::from_secs_f64(table.get::<f64>(key)? / 1000.0))
     };
@@ -372,6 +380,9 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
             source_tee: within(&source, field::TEE)?,
             scope_history: within(&scope, field::HISTORY)?,
             scope_cycles: scope.get(field::CYCLES)?,
+            spectrum_size: size,
+            spectrum_floor_db: spectrum.get(field::FLOOR)?,
+            spectrum_height: spectrum.get(field::HEIGHT)?,
         },
         log: LogConfig {
             trim_size_kb: log.get(field::TRIM_SIZE_KB)?,
@@ -512,6 +523,9 @@ mod tests {
         assert_eq!(config.tui.source_tee, Duration::from_millis(100));
         assert_eq!(config.tui.scope_history, Duration::from_millis(250));
         assert_eq!(config.tui.scope_cycles, 2.0);
+        assert_eq!(config.tui.spectrum_size, 4096);
+        assert_eq!(config.tui.spectrum_floor_db, -60.0);
+        assert_eq!(config.tui.spectrum_height, 50.0);
         assert_eq!(config.log.trim_size_kb, 1024);
         assert_eq!(config.tui.latency_floor_ms, 0.01);
         assert_eq!(config.tui.latency_ceil_ms, 100.0);
@@ -731,6 +745,22 @@ mod tests {
             (
                 "return { tui = { scope = { history = 0 } } }",
                 "config.lua tui scope: `history` is 0; must be 1 to 10000",
+            ),
+            (
+                "return { tui = { spectrum = { size = 128 } } }",
+                "config.lua tui spectrum: `size` is 128; must be 256 to 32768",
+            ),
+            (
+                "return { tui = { spectrum = { size = 3000 } } }",
+                "config.lua tui spectrum: `size` is 3000; must be a power of two",
+            ),
+            (
+                "return { tui = { spectrum = { floor = 0 } } }",
+                "config.lua tui spectrum: `floor` is 0; must be below 0",
+            ),
+            (
+                "return { tui = { spectrum = { height = 100 } } }",
+                "config.lua tui spectrum: `height` is 100; must be 1 to 99",
             ),
             (
                 "return { tui = { meter_latency = { records = 1.5 } } }",

@@ -173,6 +173,7 @@ pub(super) const CONFIG_TUI: Schema = Schema {
         optional(field::FAULTS, Ty::Integer, Bound::Between(1.0, 65536.0)),
         optional(field::SOURCE, Ty::Table, Bound::Any),
         optional(field::SCOPE, Ty::Table, Bound::Any),
+        optional(field::SPECTRUM, Ty::Table, Bound::Any),
     ],
 };
 
@@ -196,6 +197,19 @@ pub(super) const CONFIG_SCOPE: Schema = Schema {
         optional(field::HISTORY, Ty::Number, Bound::Between(1.0, 10_000.0)),
         // a window shorter than a quarter cycle shows no shape
         optional(field::CYCLES, Ty::Number, Bound::Between(0.25, 64.0)),
+    ],
+};
+
+pub(super) const CONFIG_SPECTRUM: Schema = Schema {
+    what: "config.lua tui spectrum",
+    fields: &[
+        // transformed every redraw on the UI thread; that it is a power of
+        // two is checked once read
+        optional(field::SIZE, Ty::Integer, Bound::Between(256.0, 32_768.0)),
+        // the spectrum's scale divides by it, and 0 dB is full scale
+        optional(field::FLOOR, Ty::Number, Bound::Below(0.0)),
+        // both panes keep at least a row
+        optional(field::HEIGHT, Ty::Number, Bound::Between(1.0, 99.0)),
     ],
 };
 

@@ -4,8 +4,6 @@
 //! Only `core`, `alloc`, and ratatui's no_std widgets, so it can draw on an
 //! embedded display. Reading the source stays with the runtime.
 
-use alloc::collections::VecDeque;
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
@@ -13,11 +11,8 @@ use ratatui::symbols::Marker;
 use ratatui::widgets::canvas::{Canvas, Line as Segment};
 use ratatui::widgets::Widget;
 
-/// The newest samples of a source, and the pitch last sounded.
+/// The pitch last sounded, and how much of it a window spans.
 pub(crate) struct Scope {
-    /// oldest first, at most `capacity` long
-    history: VecDeque<f32>,
-    capacity: usize,
     /// cycles of the pitch one window spans
     cycles: f32,
     /// kept after the key lifts, so a release tail stays triggered
@@ -25,30 +20,10 @@ pub(crate) struct Scope {
 }
 
 impl Scope {
-    /// A scope keeping the newest `capacity` samples, drawing `cycles` of
-    /// the pitch. A window needs one more cycle than it draws to find its
-    /// trigger in.
-    pub(crate) fn new(capacity: usize, cycles: f32) -> Self {
-        Self {
-            history: VecDeque::with_capacity(capacity),
-            capacity,
-            cycles,
-            hz: None,
-        }
-    }
-
-    /// Keep `sample` as the newest, forgetting the oldest once full.
-    pub(crate) fn push(&mut self, sample: f32) {
-        if self.history.len() == self.capacity {
-            self.history.pop_front();
-        }
-        self.history.push_back(sample);
-    }
-
-    /// Forget what was read, so a new source does not draw the old one's
-    /// tail.
-    pub(crate) fn clear(&mut self) {
-        self.history.clear();
+    /// A scope drawing `cycles` of the pitch. A window needs one more
+    /// cycle of history than it draws to find its trigger in.
+    pub(crate) fn new(cycles: f32) -> Self {
+        Self { cycles, hz: None }
     }
 
     /// The pitch to trigger on; `None` keeps the last one.
@@ -58,11 +33,10 @@ impl Scope {
         }
     }
 
-    /// `cycles` of the pitch last tuned to, starting on the newest rising
-    /// zero crossing that leaves room for all of them; empty before any
-    /// pitch is known.
-    pub(crate) fn window(&mut self, sample_rate: f32) -> &[f32] {
-        let history = self.history.make_contiguous();
+    /// `cycles` of the pitch last tuned to from `history`, oldest first,
+    /// starting on the newest rising zero crossing that leaves room for all
+    /// of them; empty before any pitch is known.
+    pub(crate) fn window<'a>(&self, history: &'a [f32], sample_rate: f32) -> &'a [f32] {
         let Some(hz) = self.hz else {
             return &[];
         };
@@ -160,15 +134,6 @@ mod tests {
         assert_eq!(window(&samples, 20).len(), 10);
     }
 
-    #[test]
-    fn push_keeps_the_newest_samples() {
-        let mut scope = Scope::new(4, 2.0);
-        for sample in 0..6 {
-            scope.push(sample as f32);
-        }
-        assert_eq!(scope.history, [2.0, 3.0, 4.0, 5.0]);
-    }
-
     fn top_row(wave: &[f32]) -> String {
         let area = Rect::new(0, 0, 24, 16);
         let mut buffer = Buffer::empty(area);
@@ -192,16 +157,16 @@ mod tests {
 
     #[test]
     fn the_window_spans_the_configured_cycles() {
-        let mut scope = Scope::new(400, 3.0);
-        scope.history.extend(sine(100.0, 4800.0, 0.0, 400));
+        let mut scope = Scope::new(3.0);
         scope.tune(Some(100.0));
-        assert_eq!(scope.window(4800.0).len(), 144);
+        let history = sine(100.0, 4800.0, 0.0, 400);
+        assert_eq!(scope.window(&history, 4800.0).len(), 144);
     }
 
     #[test]
     fn a_lifted_key_keeps_the_last_pitch() {
-        let mut scope = Scope::new(16, 2.0);
-        assert!(scope.window(48_000.0).is_empty());
+        let mut scope = Scope::new(2.0);
+        assert!(scope.window(&[0.0; 16], 48_000.0).is_empty());
         scope.tune(Some(440.0));
         scope.tune(None);
         assert_eq!(scope.hz, Some(440.0));

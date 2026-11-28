@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="lua stays in script.rs and script/, cpal stays in audio/device.rs, crossterm stays in view/ and terminal.rs, spec/ depends on none of them, view widgets use only core, alloc, and ratatui"
+#MISE description="lua stays in script.rs and script/, cpal stays in audio/device.rs, crossterm stays in view/ and terminal.rs, spec/ depends on none of them, view widgets use only core, alloc, ratatui, and crate::approx"
 set -euo pipefail
 
 failed=0
@@ -23,13 +23,14 @@ if offenders=$(grep -rlE "(crate|mlua|cpal)::" src/spec.rs src/spec/); then
     failed=1
 fi
 
-# view widgets draw on an embedded display too: core, alloc, and ratatui only
-widgets=(src/view/scope.rs)
+# view widgets draw on an embedded display too: core, alloc, ratatui, and
+# the core-only crate::approx
+widgets=(src/view/scope.rs src/view/spectrum.rs)
 for widget in "${widgets[@]}"; do
     body=$(sed '/^#\[cfg(test)\]/,$d' "$widget")
-    if grep -qE "std::|crate::|crossterm" <<<"$body"; then
-        echo "::error title=test:separation::$widget must use only core, alloc, and ratatui"
-        echo "$widget must use only core, alloc, and ratatui" >&2
+    if grep -vE "^use crate::approx;$" <<<"$body" | grep -qE "std::|crate::|crossterm"; then
+        echo "::error title=test:separation::$widget must use only core, alloc, ratatui, and crate::approx"
+        echo "$widget must use only core, alloc, ratatui, and crate::approx" >&2
         failed=1
     fi
 done

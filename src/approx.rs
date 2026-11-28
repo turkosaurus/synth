@@ -1,7 +1,8 @@
-//! Cheap stand-ins for `std` float functions, which `core` lacks.
+//! Cheap stand-ins for `std` float functions, which `core` lacks, shared by
+//! the audio path and the view's widgets.
 //! Each is pinned against `std` in `tests.rs`, so their error is measured.
 
-use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, LN_2};
+use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, LN_2, LOG2_E};
 
 /// `tan(x)` for `x` in `0.0..=0.49 * PI`, which covers every cutoff from
 /// 0 Hz to just under Nyquist.
@@ -43,3 +44,31 @@ pub(crate) fn exp2(x: f32) -> f32 {
     let frac = 1.0 + f * (LN_2 + f * (C2 + f * (C3 + f * (C4 + f * C5))));
     frac * f32::from_bits(((whole + 127) as u32) << 23)
 }
+
+/// `log2(x)` for a normal, positive `x`.
+///
+/// The exponent bits give the whole part. For the mantissa `m`, in 1 to 2,
+/// `ln(m) = 2 atanh(s)` with `s = (m - 1) / (m + 1)`, at most 1/3, so five
+/// terms of its series keep the error under 1e-6.
+pub(crate) fn log2(x: f32) -> f32 {
+    let bits = x.to_bits();
+    let exponent = ((bits >> 23) & 0xff) as i32 - 127;
+    let m = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000);
+    let s = (m - 1.0) / (m + 1.0);
+    let s2 = s * s;
+    let atanh = s * (1.0 + s2 * (1.0 / 3.0 + s2 * (1.0 / 5.0 + s2 * (1.0 / 7.0 + s2 / 9.0))));
+    exponent as f32 + 2.0 * atanh * LOG2_E
+}
+
+/// `ceil(x)` for `x` within `i32`'s range.
+pub(crate) fn ceil(x: f32) -> f32 {
+    let whole = x as i32 as f32;
+    if whole < x {
+        whole + 1.0
+    } else {
+        whole
+    }
+}
+
+#[cfg(test)]
+mod tests;
