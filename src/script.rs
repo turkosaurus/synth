@@ -34,6 +34,7 @@ const LUA_TUNING: &str = include_str!("../lua/tuning.lua");
 const LUA_INSTRUMENT: &str = include_str!("../lua/instrument.lua");
 const LUA_SEQUENCE: &str = include_str!("../lua/sequence.lua");
 const LUA_INPUT: &str = include_str!("../lua/input.lua");
+const LUA_KEYBOARD: &str = include_str!("../lua/input/keyboard.lua");
 const LUA_FILTER: &str = include_str!("../lua/filter.lua");
 const LUA_OSC: &str = include_str!("../lua/osc.lua");
 const LUA_LFO: &str = include_str!("../lua/lfo.lua");
@@ -41,7 +42,7 @@ const LUA_ROOT: &str = include_str!("../lua/synth.lua");
 const LUA_CONSTRUCT: &str = include_str!("../lua/construct.lua");
 
 /// Every embedded module, by the name `require` finds it under.
-const MODULES: [(&str, &str); 12] = [
+const MODULES: [(&str, &str); 13] = [
     (module::CONSTRUCT, LUA_CONSTRUCT),
     (module::SLOPE, LUA_SLOPE),
     (module::WAVE, LUA_WAVE),
@@ -50,6 +51,7 @@ const MODULES: [(&str, &str); 12] = [
     (module::INSTRUMENT, LUA_INSTRUMENT),
     (module::SEQUENCE, LUA_SEQUENCE),
     (module::INPUT, LUA_INPUT),
+    (module::KEYBOARD, LUA_KEYBOARD),
     (module::FILTER, LUA_FILTER),
     (module::OSC, LUA_OSC),
     (module::LFO, LUA_LFO),
@@ -166,6 +168,7 @@ mod module {
     pub(super) const INSTRUMENT: &str = "synth.instrument";
     pub(super) const SEQUENCE: &str = "synth.sequence";
     pub(super) const INPUT: &str = "synth.input";
+    pub(super) const KEYBOARD: &str = "synth.input.keyboard";
     pub(super) const FILTER: &str = "synth.filter";
     pub(super) const OSC: &str = "synth.osc";
     pub(super) const LFO: &str = "synth.lfo";
@@ -422,20 +425,28 @@ fn load_in(
     let (freqs, tuning_diagnostics) = tune(&to_hz, sample_rate)?;
 
     // a patch may ship its own layout; otherwise the embedded default
-    let layout: mlua::Table = match table.get(field::KEYBOARD)? {
+    let input: Option<mlua::Table> = table.get(field::INPUT)?;
+    if let Some(input) = &input {
+        schema::INPUT.check(input, Some(field::INPUT))?;
+    }
+    let keyboard: Option<mlua::Table> = match &input {
+        Some(input) => input.get(field::KEYBOARD)?,
+        None => None,
+    };
+    let layout: mlua::Table = match keyboard {
         Some(table) => table,
         // the module is itself the constructor, so the default layout is
-        // input() rather than the module table
+        // keyboard() rather than the module table
         None => {
-            let input: mlua::Table = require.call(module::INPUT)?;
+            let keyboard: mlua::Table = require.call(module::KEYBOARD)?;
             // a callable table: __call receives the module itself first
-            let call: mlua::Function = input
+            let call: mlua::Function = keyboard
                 .metatable()
                 .ok_or(Error::NotCallable {
-                    what: "synth.input",
+                    what: module::KEYBOARD,
                 })?
                 .get(field::CALL)?;
-            call.call((input, mlua::Value::Nil))?
+            call.call((keyboard, mlua::Value::Nil))?
         }
     };
     let keys = keymap(&lua, &layout)?;

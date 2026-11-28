@@ -37,6 +37,8 @@ enum Expect {
     One(&'static str),
     /// a table of named values, each of this kind
     MapOf(&'static str),
+    /// a plain table whose named fields each hold their own kind
+    Fields(&'static [(&'static str, &'static str)]),
 }
 
 fn expected(parent: &str, key: &str) -> Option<Expect> {
@@ -45,7 +47,7 @@ fn expected(parent: &str, key: &str) -> Option<Expect> {
         ("instrument", "oscillator") => Expect::One("osc"),
         ("osc", "position_mod") => Expect::One("lfo"),
         ("filter", "cutoff_mod") => Expect::One("lfo"),
-        ("instrument" | "sequence", "keyboard") => Expect::One("keyboard"),
+        ("instrument" | "sequence", "input") => Expect::Fields(&[("keyboard", "keyboard")]),
         ("instrument" | "sequence", "filter") => Expect::One("filter"),
         ("sequence", "instruments") => Expect::MapOf("instrument"),
         _ => return None,
@@ -79,7 +81,7 @@ fn check(table: &mlua::Table, kind: &'static str, path: &str) -> Result<(), Erro
 
 /// Fields an instrument may hold only as the patch's root, which reads them.
 /// Anywhere else they would load and be ignored.
-const ROOT_ONLY: [&str; 3] = [field::KEYBOARD, field::TUNING, field::FILTER];
+const ROOT_ONLY: [&str; 3] = [field::INPUT, field::TUNING, field::FILTER];
 
 fn root_only(table: &mlua::Table, path: &str, at: &str) -> Result<(), Error> {
     for key in ROOT_ONLY {
@@ -175,6 +177,23 @@ fn visit(
                             other => format!("{child_path}[{other:?}]"),
                         };
                         match value {
+                            mlua::Value::Table(entry) => check(&entry, kind, &entry_path)?,
+                            other => {
+                                return Err(Error::NotATable {
+                                    what: entry_path,
+                                    expected: kind,
+                                    got: other.type_name(),
+                                })
+                            }
+                        }
+                    }
+                }
+                Some(Expect::Fields(fields)) => {
+                    for (name, kind) in fields {
+                        let entry: mlua::Value = child.raw_get(*name)?;
+                        let entry_path = format!("{child_path}.{name}");
+                        match entry {
+                            mlua::Value::Nil => {}
                             mlua::Value::Table(entry) => check(&entry, kind, &entry_path)?,
                             other => {
                                 return Err(Error::NotATable {

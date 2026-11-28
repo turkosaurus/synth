@@ -18,8 +18,10 @@ return synth.instrument({
 		reference_note = 69,
 		tones = 12,
 	}),
-	keyboard = synth.input({
-		layout = synth.input.qwerty, -- see also: input.lua
-		gate = 400, -- ms; note length when key release is unreported
-	}),
+	input = {
+		keyboard = synth.input.keyboard({
+			layout = synth.input.keyboard.qwerty, -- see also: input/keyboard.lua
+			gate = 400, -- ms; note length when key release is unreported
+		}),
+	},
 })

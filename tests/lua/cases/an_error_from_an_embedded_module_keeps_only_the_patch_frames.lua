@@ -1,4 +1,4 @@
 local synth = require("synth")
 return synth.instrument({
-	keyboard = synth.input({ layout = synth.input.grid({ offest = 7 }) }),
+	input = { keyboard = synth.input.keyboard({ layout = synth.input.keyboard.grid({ offest = 7 }) }) },
 })

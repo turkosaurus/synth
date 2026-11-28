@@ -33,7 +33,7 @@ local sequence = setmetatable({}, {
 ---@field patterns? table<string, synth.Step[]>
 ---@field chain? string[] pattern names, in play order
 ---@field loop? integer times to play the chain
----@field keyboard? synth.Keyboard
+---@field input? synth.Input
 ---@field tuning? synth.Tuning
 ---@field filter? synth.Filter runs on the summed output
 
@@ -46,7 +46,7 @@ local sequence = setmetatable({}, {
 ---@field patterns integer how many patterns were defined
 ---@field chain integer how many names the chain held
 ---@field loop integer
----@field keyboard? synth.Keyboard
+---@field input? synth.Input
 ---@field tuning? synth.Tuning
 ---@field filter? synth.Filter
 
@@ -115,7 +115,7 @@ local known = {
 	chain = true,
 	loop = true,
 	steps = true,
-	keyboard = true,
+	input = true,
 	filter = true,
 	tuning = true,
 }
@@ -159,7 +159,7 @@ new = function(opts)
 		patterns = patterns,
 		chain = #chain,
 		loop = loop,
-		keyboard = opts.keyboard, -- a sequence may ship its own layout
+		input = opts.input, -- a sequence may ship its own devices
 		tuning = opts.tuning, -- and its own tuning
 		filter = opts.filter, -- runs on the summed output
 	}

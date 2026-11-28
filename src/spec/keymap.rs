@@ -23,7 +23,7 @@ pub(crate) enum Key {
     PageDown,
 }
 
-/// Characters mapped to MIDI notes, built from `lua/input.lua`.
+/// Characters mapped to MIDI notes, built from `lua/input/keyboard.lua`.
 #[derive(Clone)]
 pub(crate) struct Keymap {
     pub notes: HashMap<char, u8>,

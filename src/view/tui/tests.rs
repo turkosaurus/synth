@@ -185,7 +185,7 @@ fn help_lists_the_controls_and_no_notes() {
 fn help_reads_quit_off_every_shipped_layout() {
     for layout in ["qwerty", "qwertz", "azerty", "dvorak", "colemak"] {
         let patch = crate::script::tests::with_keyboard(&format!(
-            "synth.input({{ layout = synth.input.{layout} }})"
+            "synth.input.keyboard({{ layout = synth.input.keyboard.{layout} }})"
         ))
         .unwrap();
         let lines: Vec<String> = help(&patch.keymap).iter().map(Line::to_string).collect();

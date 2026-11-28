@@ -107,7 +107,7 @@ fn watch_panics() {
 }
 
 // SIGINT is absent on purpose: raw mode disables ISIG, so ctrl-c arrives as
-// a key event, which quits only where input.lua binds it.
+// a key event, which quits only where input/keyboard.lua binds it.
 #[cfg(unix)]
 fn watch_signals() -> io::Result<()> {
     use signal_hook::consts::{SIGHUP, SIGTERM};
