@@ -1,4 +1,5 @@
--- expect: envelope made at {file}:4: `sustain` is 1.5; must be 0 to 1
+-- expect: envelope made at {file}:5: `sustain` is 1.5; must be 0 to 1
+-- expect-variant: Error::OutOfRange
 local synth = require("synth")
 return synth.instrument({
 	envelope = synth.envelope({ sustain = 1.5 }),

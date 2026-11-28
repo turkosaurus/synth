@@ -142,13 +142,12 @@ fn a_cycle_starts_at_its_first_rise_through_zero() {
 
 #[test]
 fn a_saw_bakes_starting_from_zero_rising() {
-    let source = r#"
-        local instrument = require("synth.instrument")
-        return instrument({
-            oscillator = require("synth.osc")({ waveforms = { function(phase) return 2 * phase - 1 end } }),
-        })
-    "#;
-    let patch = load_source(source, "test", 48000).unwrap();
+    let patch = load_source(
+        &case("a_saw_bakes_starting_from_zero_rising"),
+        "test",
+        48000,
+    )
+    .unwrap();
     let wave = patch.timeline.instruments[0].wave().frame(0);
     assert_eq!(wave[0], 0.0);
     assert!(wave[1] > 0.0);
@@ -413,18 +412,12 @@ fn the_anchor_key_lands_on_its_note() {
 #[test]
 fn changing_offset_keeps_the_anchor_on_pitch() {
     // a mandolin layout: rows a 5th apart instead of a 4th
-    let source = r#"
-        local instrument = require("synth.instrument")
-        local wave = require("synth.wave")
-        local envelope = require("synth.envelope")
-        local keyboard = require("synth.keyboard")
-        return instrument({
-            oscillator = require("synth.osc")({ waveforms = { wave.triangle } }),
-            envelope = envelope({}),
-            keyboard = keyboard({ layout = keyboard.grid({ offset = 7 }) }),
-        })
-    "#;
-    let patch = load_source(source, "test", 48000).unwrap();
+    let patch = load_source(
+        &case("changing_offset_keeps_the_anchor_on_pitch"),
+        "test",
+        48000,
+    )
+    .unwrap();
 
     assert_eq!(patch.keymap.notes.get(&'a'), Some(&69), "anchor holds");
     assert_eq!(patch.keymap.notes.get(&'q'), Some(&76), "a 5th above");
@@ -543,18 +536,13 @@ fn a_layout_brings_its_own_control_keys() {
 
 #[test]
 fn a_keyboard_control_replaces_the_layouts() {
-    let source = r#"
-        local synth = require("synth")
-        local patch = synth.instrument({
-            oscillator = synth.osc({ waveforms = { synth.wave.triangle } }),
-            envelope = synth.envelope({}),
-            keyboard = synth.keyboard({ layout = synth.keyboard.qwerty, octave_up = { "]" } }),
-        })
-        -- the shared layout is copied, not changed
-        assert(synth.keyboard.qwerty.octave_up[1] == "=")
-        return patch
-    "#;
-    let keymap = load_source(source, "test", 48000).unwrap().keymap;
+    let keymap = load_source(
+        &case("a_keyboard_control_replaces_the_layouts"),
+        "test",
+        48000,
+    )
+    .unwrap()
+    .keymap;
 
     assert_eq!(keymap.octave_up, vec![Key::Char(']')]);
     assert_eq!(keymap.octave_down, vec![Key::Char('-'), Key::Char('_')]);
@@ -628,13 +616,12 @@ fn the_frequency_table_covers_every_midi_note() {
 
 #[test]
 fn a_patch_tuning_replaces_equal_temperament() {
-    let source = r#"
-        local synth = require("synth")
-        return synth.instrument({
-            tuning = synth.tuning.equal({ reference_hz = 432, tones = 19 }),
-        })
-    "#;
-    let patch = load_source(source, "test", 48000).unwrap();
+    let patch = load_source(
+        &case("a_patch_tuning_replaces_equal_temperament"),
+        "test",
+        48000,
+    )
+    .unwrap();
     let hz = |note| patch.freqs.hz(note).unwrap();
     assert!((hz(69) - 432.0).abs() < 0.01);
     // 19 steps up is one octave in 19-EDO
@@ -644,15 +631,12 @@ fn a_patch_tuning_replaces_equal_temperament() {
 #[test]
 fn constructors_leave_the_callers_table_alone() {
     // a patch reusing one options table must not find defaults written into it
-    let source = r#"
-        local synth = require("synth")
-        local opts = { attack = 5 }
-        local first = synth.envelope(opts)
-        assert(opts.release == nil, "defaults leaked into the caller's table")
-        assert(first ~= opts, "returned the caller's table")
-        return synth.instrument({ envelope = first })
-    "#;
-    load_source(source, "test", 48000).unwrap();
+    load_source(
+        &case("constructors_leave_the_callers_table_alone"),
+        "test",
+        48000,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -820,16 +804,12 @@ fn any_function_of_t_is_a_curve() {
 
 #[test]
 fn a_curve_outside_0_to_1_is_clamped_and_named() {
-    let source = r#"
-        local synth = require("synth")
-        return synth.instrument({
-            envelope = synth.envelope({
-                attack = 10,
-                attack_curve = function() return 1000 end,
-            }),
-        })
-    "#;
-    let patch = load_source(source, "test", 1000).unwrap();
+    let patch = load_source(
+        &case("a_curve_outside_0_to_1_is_clamped_and_named"),
+        "test",
+        1000,
+    )
+    .unwrap();
     let curve = &patch.timeline.instruments[0].attack().curve;
     assert!(curve.iter().all(|&along| along == 1.0), "{curve:?}");
     let report = &patch.reports[0].1;
@@ -872,17 +852,13 @@ fn bakes_the_triangle_landmarks() {
 // must still match the curve itself, sample by sample
 #[test]
 fn a_stretched_curve_matches_the_curve() {
-    let source = r#"
-        local synth = require("synth")
-        return synth.instrument({
-            envelope = synth.envelope({
-                attack = 2000,
-                attack_curve = synth.slope.exponential(3),
-            }),
-        })
-    "#;
     let rate = 96000.0;
-    let patch = load_source(source, "test", rate as u32).unwrap();
+    let patch = load_source(
+        &case("a_stretched_curve_matches_the_curve"),
+        "test",
+        rate as u32,
+    )
+    .unwrap();
     let attack = levels(patch.timeline.instruments[0].attack(), rate, 0.0, 1.0);
     assert_eq!(attack.len(), 192_000);
     let exact = |t: f64| (1.0 - (-3.0 * t).exp()) / (1.0 - (-3.0f64).exp());
@@ -1073,18 +1049,7 @@ fn full_resonance_reaches_min_damping() {
 
 #[test]
 fn filter_in_sequence_file() {
-    let source = r#"
-        local sequence = require("synth.sequence")
-        local instrument = require("synth.instrument")
-        local filter = require("synth.filter")
-        return sequence({
-            bpm = 60,
-            instruments = { a = instrument({}) },
-            steps = { { note = 69, instrument = "a" } },
-            filter = filter.highpass({ cutoff = 200 }),
-        })
-    "#;
-    let patch = load_source(source, "test", 48000).unwrap();
+    let patch = load_source(&case("filter_in_sequence_file"), "test", 48000).unwrap();
     assert_eq!(patch.filter.unwrap().kind, crate::spec::Kind::Highpass);
 }
 
@@ -1152,12 +1117,12 @@ fn the_root_reexports_every_module() {
 
 #[test]
 fn structure_records_every_constructed_table_by_path() {
-    let source = r#"
-        local synth = require("synth")
-        local tri = synth.instrument({ oscillator = synth.osc({ waveforms = { synth.wave.triangle } }), envelope = synth.envelope({}) })
-        return synth.sequence({ instruments = { tri = tri }, instrument = "tri", steps = { { note = 60 } } })
-    "#;
-    let patch = load_source(source, "song.lua", 48000).unwrap();
+    let patch = load_source(
+        &case("structure_records_every_constructed_table_by_path"),
+        "song.lua",
+        48000,
+    )
+    .unwrap();
     let found: Vec<(&str, &str, &str)> = patch
         .structure
         .iter()
@@ -1181,30 +1146,6 @@ fn the_default_patch_loads_clean() {
     let patch = load_default(48000, None).unwrap();
     assert!(patch.clean(), "default.lua raised warnings");
     assert_eq!(patch.structure[0].kind, "instrument");
-}
-
-#[test]
-fn diagnostics_name_the_line_that_built_the_value() {
-    let source = r#"
-        local synth = require("synth")
-        local quiet = function(phase) return 0.2 * math.sin(phase * 2 * math.pi) end
-        return synth.sequence({
-            instruments = { soft = synth.instrument({ oscillator = synth.osc({ waveforms = { quiet } }) }) },
-            instrument = "soft",
-            steps = { { note = 60 } },
-            filter = synth.filter.lowpass({ cutoff = 5 }),
-        })
-    "#;
-    let patch = load_source(source, "song.lua", 48000).unwrap();
-    let (_, report) = &patch.reports[0];
-    let peak = report
-        .diagnostics
-        .iter()
-        .find(|d| d.message.contains("peaks at only"))
-        .expect("a quiet waveform warns");
-    assert_eq!(peak.at.as_deref(), Some("song.lua:5"));
-    let cutoff = &patch.filter_report.as_ref().unwrap().diagnostics[0];
-    assert_eq!(cutoff.at.as_deref(), Some("song.lua:8"));
 }
 
 /// Calls a constructor module, which is a table with `__call`, as Lua would.
@@ -1232,7 +1173,7 @@ fn every_lua_default_passes_rust_validation() {
 
     // a sequence needs one step to resolve, which takes every step default
     let opts: mlua::Table = lua
-        .load(r#"return { instruments = {}, steps = { {} } }"#)
+        .load(case("every_lua_default_passes_rust_validation"))
         .eval()
         .unwrap();
     let sequence = construct(&lua, "synth.sequence", opts);
@@ -1295,13 +1236,11 @@ fn a_module_name_cannot_leave_its_folder() {
     }
 }
 
-/// Every patch in `tests/lua/reject/` fails to load with the error on its
-/// first line, `-- expect: …`, where `{file}` stands for the file's name.
-/// Each file is loaded under its bare name, so an expected error never
-/// holds a path that differs between machines.
-#[test]
-fn every_rejected_patch_fails_with_its_expected_error() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lua/reject");
+/// The `.lua` files in `tests/lua/{folder}/`, sorted.
+fn lua_files(folder: &str) -> Vec<std::path::PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/lua")
+        .join(folder);
     let mut files: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -1309,13 +1248,39 @@ fn every_rejected_patch_fails_with_its_expected_error() {
         .collect();
     files.sort();
     assert!(!files.is_empty(), "no cases in {}", dir.display());
+    files
+}
 
+/// The Lua in `tests/lua/cases/{name}.lua`.
+fn case(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/lua/cases")
+        .join(format!("{name}.lua"));
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+}
+
+/// `Error::Variant`, the name of the variant `error` holds.
+fn variant(error: &Error) -> String {
+    let debug = format!("{error:?}");
+    let end = debug
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(debug.len());
+    format!("Error::{}", &debug[..end])
+}
+
+/// Every patch in `tests/lua/reject/` fails to load with the error on its
+/// first line, `-- expect: …`, where `{file}` stands for the file's name.
+/// A second line, `-- expect-variant: Error::…`, also names the variant the
+/// error downcasts to. Each file is loaded under its bare name, so an
+/// expected error never holds a path that differs between machines.
+#[test]
+fn every_rejected_patch_fails_with_its_expected_error() {
     let mut failures = Vec::new();
-    for path in &files {
+    for path in &lua_files("reject") {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let source = std::fs::read_to_string(path).unwrap();
-        let Some(expected) = source
-            .lines()
+        let mut lines = source.lines();
+        let Some(expected) = lines
             .next()
             .and_then(|line| line.strip_prefix("-- expect: "))
         else {
@@ -1323,14 +1288,97 @@ fn every_rejected_patch_fails_with_its_expected_error() {
             continue;
         };
         let expected = expected.replace("{file}", &name);
-        match load_source(&source, &name, 48000) {
-            Ok(_) => failures.push(format!("{name}: loaded, expected `{expected}`")),
-            Err(error) => {
-                let message = format!("{error:#}");
-                if !message.contains(&expected) {
-                    failures.push(format!("{name}: expected `{expected}`\n    got {message}"));
-                }
+        let want = lines
+            .next()
+            .and_then(|line| line.strip_prefix("-- expect-variant: "));
+        let error = match load_source(&source, &name, 48000) {
+            Ok(_) => {
+                failures.push(format!("{name}: loaded, expected `{expected}`"));
+                continue;
             }
+            Err(error) => error,
+        };
+        let message = format!("{error:#}");
+        if !message.contains(&expected) {
+            failures.push(format!("{name}: expected `{expected}`\n    got {message}"));
+        }
+        if let Some(want) = want {
+            let got = error
+                .downcast_ref::<Error>()
+                .map_or_else(|| "no typed error".to_string(), variant);
+            if got != want {
+                failures.push(format!("{name}: expected {want}, got {got}: {message}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+/// Every patch in `tests/lua/warn/` loads with exactly the diagnostics its
+/// first lines list, one `-- expect: <kind> <line> <message>` each. `<line>`
+/// is `-` for a diagnostic with no line, and `\t` in a message is a tab.
+#[test]
+fn every_warned_patch_raises_exactly_its_expected_diagnostics() {
+    let mut failures = Vec::new();
+    for path in &lua_files("warn") {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let source = std::fs::read_to_string(path).unwrap();
+        let mut expected: Vec<String> = source
+            .lines()
+            .map_while(|line| line.strip_prefix("-- expect: "))
+            .map(|line| line.replace("\\t", "\t"))
+            .collect();
+        if expected.is_empty() {
+            failures.push(format!("{name}: the first line must be `-- expect: …`"));
+            continue;
+        }
+        let patch = match load_source(&source, &name, 48000) {
+            Ok(patch) => patch,
+            Err(error) => {
+                failures.push(format!("{name}: did not load: {error:#}"));
+                continue;
+            }
+        };
+        let reports = patch
+            .reports
+            .iter()
+            .flat_map(|(_, report)| &report.diagnostics);
+        let filter = patch
+            .filter_report
+            .iter()
+            .flat_map(|report| &report.diagnostics);
+        let found: Vec<_> = patch
+            .tuning_diagnostics
+            .iter()
+            .chain(reports)
+            .chain(filter)
+            .chain(&patch.printed)
+            .collect();
+        let prefix = format!("{name}:");
+        let mut got: Vec<String> = found
+            .iter()
+            .map(|d| {
+                let line =
+                    d.at.as_deref()
+                        .and_then(|at| at.strip_prefix(&prefix))
+                        .unwrap_or("-");
+                format!(
+                    "{} {line} {}",
+                    format!("{:?}", d.kind).to_lowercase(),
+                    d.message
+                )
+            })
+            .collect();
+        expected.sort();
+        got.sort();
+        if got != expected {
+            failures.push(format!("{name}: expected {expected:#?}\n    got {got:#?}"));
+        }
+        let warned = found
+            .iter()
+            .any(|d| d.severity() >= crate::spec::Severity::Warn);
+        if patch.clean() == warned {
+            failures.push(format!("{name}: clean() disagrees with its diagnostics"));
         }
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
@@ -1349,14 +1397,10 @@ fn an_edited_built_in_copy_loads_in_place_of_the_built_in() {
     )
     .unwrap();
 
-    let patch = r#"
-        local synth = require("synth")
-        assert(require("synth.wave").edited, "the edited copy")
-        return synth.instrument({})
-    "#;
-    load_in(patch, "test", 48000, None, Some(&custom)).unwrap();
+    let patch = case("an_edited_built_in_copy_loads_in_place_of_the_built_in");
+    load_in(&patch, "test", 48000, None, Some(&custom)).unwrap();
     // without the custom folder, the built-in loads and has no mark
-    assert!(load_in(patch, "test", 48000, None, None).is_err());
+    assert!(load_in(&patch, "test", 48000, None, None).is_err());
 }
 
 #[test]
@@ -1370,256 +1414,13 @@ fn every_starter_loads_in_one_patch() {
 
 #[test]
 fn constructed_values_share_no_default() {
-    let source = r#"
-        local synth = require("synth")
-        local first = synth.keyboard({})
-        first.layout.notes.a = 0
-        first.stop[1] = "q"
-        assert(synth.keyboard({}).layout.notes.a ~= 0, "layout shared")
-        assert(synth.keyboard({}).stop[1] == "escape", "stop shared")
-        assert(synth.keyboard.qwerty.notes.a ~= 0, "template edited")
-
-        local bass = synth.instrument({})
-        bass.envelope.attack = 999
-        assert(synth.instrument({}).envelope.attack ~= 999, "envelope shared")
-        assert(getmetatable(bass.envelope).kind == "envelope", "stamp lost")
-        return synth.instrument({})
-    "#;
-    load_source(source, "test", 48000).unwrap();
-}
-
-/// The typed reason a patch failed, found through any context added on the
-/// way out.
-fn rejected(source: &str) -> anyhow::Error {
-    load_source(source, "patch.lua", 48000)
-        .err()
-        .expect("the patch should not load")
-}
-
-#[test]
-fn a_step_out_of_range_is_matched_by_variant() {
-    let error = rejected(
-        r#"
-        local synth = require("synth")
-        return synth.sequence({
-            instruments = { a = synth.instrument({}) },
-            instrument = "a",
-            steps = { { note = 60 }, { note = 200 } },
-        })
-        "#,
-    );
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::OutOfRange { what, field: "note", value, .. })
-                if what == "step 2" && *value == 200.0
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn a_keyboard_out_of_range_is_matched_by_variant() {
-    let error = rejected(
-        r#"
-        local synth = require("synth")
-        return synth.instrument({ keyboard = synth.keyboard({ velocity = 0 }) })
-        "#,
-    );
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::OutOfRange { field: "velocity", value, .. }) if *value == 0.0
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn a_cycle_is_matched_by_variant() {
-    let error = rejected(
-        r#"
-        local synth = require("synth")
-        local loop = {}
-        loop.self = loop
-        return synth.instrument({ extra = loop })
-        "#,
-    );
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::Cycle { what }) if what == "extra.self"
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn a_field_of_the_wrong_kind_is_matched_by_variant() {
-    let error = rejected(
-        r#"
-        local synth = require("synth")
-        return synth.instrument({ envelope = synth.keyboard({}) })
-        "#,
-    );
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::WrongKind { what, expected: "envelope", got, .. })
-                if what == "envelope" && got == "keyboard"
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn a_key_bound_to_a_note_and_a_control_is_matched_by_variant() {
-    let error = with_keyboard(
-        r#"synth.keyboard({
-            layout = { notes = { ["="] = 60 }, octave_up = { "=" }, octave_down = {}, help = {} },
-        })"#,
-    )
-    .err()
-    .expect("the patch should not load");
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::KeyConflict {
-                what: "layout.octave_up",
-                key: '=',
-                note: 60
-            })
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn a_note_outside_midi_is_matched_by_variant() {
-    let error = with_keyboard(
-        r#"synth.keyboard({
-            layout = { notes = { a = 128 }, octave_up = {}, octave_down = {}, help = {} },
-        })"#,
-    )
-    .err()
-    .expect("the patch should not load");
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::NoteRange { key, value }) if key == "a" && *value == 128.0
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn a_tuning_that_is_not_a_positive_hz_is_matched_by_variant() {
-    let error = with_tuning(
-        "function(note) if note == 69 then return -440 end return 440 end",
-        48000,
-    )
-    .err()
-    .expect("the patch should not load");
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::TuningHz { note: 69, hz }) if *hz == -440.0
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn a_tuning_that_returns_no_number_is_matched_by_variant() {
-    let error = with_tuning("function(note) return 'a' end", 48000)
-        .err()
-        .expect("the patch should not load");
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::TuningCall { note: 0, .. })
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn an_uncalled_slope_is_matched_by_variant() {
-    let error = rejected(
-        r#"
-        local synth = require("synth")
-        return synth.instrument({
-            envelope = synth.envelope({ attack_curve = synth.slope.exponential }),
-        })
-        "#,
-    );
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::CurveUncalled {
-                field: "attack_curve"
-            })
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn a_curve_that_is_not_finite_is_matched_by_variant_inside_a_sequence() {
-    let error = rejected(
-        r#"
-        local synth = require("synth")
-        local nan = synth.envelope({ decay_curve = function(t) return t / t end })
-        return synth.sequence({
-            instruments = { a = synth.instrument({ envelope = nan }) },
-            instrument = "a",
-            steps = { { note = 60 } },
-        })
-        "#,
-    );
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::CurveNotFinite { field: "decay_curve", t, .. }) if *t == 0.0
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn a_step_naming_an_undefined_instrument_is_matched_by_variant() {
-    let error = rejected(
-        r#"
-        local synth = require("synth")
-        return synth.sequence({
-            instruments = { a = synth.instrument({}) },
-            instrument = "b",
-            steps = { { note = 60 } },
-        })
-        "#,
-    );
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::UndefinedInstrument { step: 1, name }) if name == "b"
-        ),
-        "{error:#}"
-    );
+    load_source(&case("constructed_values_share_no_default"), "test", 48000).unwrap();
 }
 
 #[test]
 fn an_osc_table_bakes_one_frame_per_wave_each_rising_from_zero() {
     let patch = load_source(
-        r#"
-        local synth = require("synth")
-        return synth.instrument({
-            oscillator = synth.osc({
-                waveforms = { synth.wave.sine, synth.wave.saw, synth.wave.square },
-                slopes = { synth.slope.exponential(3) },
-                position = 0.25,
-            }),
-        })
-        "#,
+        &case("an_osc_table_bakes_one_frame_per_wave_each_rising_from_zero"),
         "patch.lua",
         48000,
     )
@@ -1631,48 +1432,6 @@ fn an_osc_table_bakes_one_frame_per_wave_each_rising_from_zero() {
         assert_eq!(rising_zero(wave.frame(k)), Some(0), "frame {k}");
     }
     assert!(patch.clean(), "{:?}", patch.reports[0].1.diagnostics);
-}
-
-#[test]
-fn an_envelope_out_of_range_keeps_its_variant_through_lua() {
-    let error = rejected(
-        r#"
-        local synth = require("synth")
-        local swell = synth.envelope({ sustain = 2 })
-        return synth.sequence({
-            instruments = { a = synth.instrument({ envelope = swell }) },
-            instrument = "a",
-            steps = { { note = 60 } },
-        })
-        "#,
-    );
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::OutOfRange { field: "sustain", value, .. }) if *value == 2.0
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn a_bare_instrument_keeps_its_variant_through_lua() {
-    let error = rejected(
-        r#"
-        local synth = require("synth")
-        return synth.instrument({ envelope = synth.envelope({ sustain = 2 }) })
-        "#,
-    );
-    assert!(
-        matches!(
-            error.downcast_ref::<Error>(),
-            Some(Error::OutOfRange {
-                field: "sustain",
-                ..
-            })
-        ),
-        "{error:#}"
-    );
 }
 
 #[test]
@@ -1691,16 +1450,7 @@ fn a_missing_patch_file_is_matched_by_variant() {
 #[test]
 fn one_waveform_warns_that_slopes_and_position_do_nothing() {
     let patch = load_source(
-        r#"
-        local synth = require("synth")
-        return synth.instrument({
-            oscillator = synth.osc({
-                waveforms = { synth.wave.saw },
-                slopes = { synth.slope.linear() },
-                position = 0.5,
-            }),
-        })
-        "#,
+        &case("one_waveform_warns_that_slopes_and_position_do_nothing"),
         "patch.lua",
         48000,
     )
@@ -1727,15 +1477,7 @@ fn one_waveform_warns_that_slopes_and_position_do_nothing() {
 #[test]
 fn a_position_mod_bakes_an_lfo_that_starts_from_rest() {
     let patch = load_source(
-        r#"
-        local synth = require("synth")
-        return synth.instrument({
-            oscillator = synth.osc({
-                waveforms = { synth.wave.sine, synth.wave.saw },
-                position_mod = synth.lfo({ wave = synth.wave.sine, rate = 0.5, depth = 0.3 }),
-            }),
-        })
-        "#,
+        &case("a_position_mod_bakes_an_lfo_that_starts_from_rest"),
         "patch.lua",
         48000,
     )
@@ -1753,15 +1495,7 @@ fn a_position_mod_bakes_an_lfo_that_starts_from_rest() {
 #[test]
 fn one_waveform_bakes_no_lfo_and_warns_about_position_mod() {
     let patch = load_source(
-        r#"
-        local synth = require("synth")
-        return synth.instrument({
-            oscillator = synth.osc({
-                waveforms = { synth.wave.saw },
-                position_mod = synth.lfo({}),
-            }),
-        })
-        "#,
+        &case("one_waveform_bakes_no_lfo_and_warns_about_position_mod"),
         "patch.lua",
         48000,
     )
@@ -1777,16 +1511,7 @@ fn one_waveform_bakes_no_lfo_and_warns_about_position_mod() {
 #[test]
 fn osc_fills_position_mod_depth_on_a_copy() {
     let patch = load_source(
-        r#"
-        local synth = require("synth")
-        local lfo = synth.lfo({ rate = 0.5 })
-        local osc = synth.osc({
-            waveforms = { synth.wave.sine, synth.wave.saw },
-            position_mod = lfo,
-        })
-        assert(lfo.depth == nil, "osc wrote depth onto the patch's own lfo")
-        return synth.instrument({ oscillator = osc })
-        "#,
+        &case("osc_fills_position_mod_depth_on_a_copy"),
         "patch.lua",
         48000,
     )
@@ -1806,92 +1531,33 @@ fn the_sweep_patch_loads_clean() {
     assert!(patch.clean(), "{:?}", patch.reports[0].1.diagnostics);
 }
 
-/// What `expr` evaluates to inside the sandbox of a state with the modules
+/// What `chunk` returns inside the sandbox of a state with the modules
 /// registered, as a patch would see it.
-fn sandboxed(expr: &str) -> mlua::Value {
+fn sandboxed<T: mlua::FromLuaMulti>(chunk: &str) -> T {
     let lua = mlua::Lua::new();
     lua_register(&lua, None, None).unwrap();
-    sandbox::chunk(&lua, format!("return {expr}"), "test")
-        .unwrap()
-        .eval()
-        .unwrap()
-}
-
-fn assert_gone(expr: &str) {
-    assert!(sandboxed(expr).is_nil(), "{expr} is reachable");
-}
-
-#[test]
-fn io_is_gone() {
-    assert_gone("io");
-}
-
-#[test]
-fn os_is_gone() {
-    assert_gone("os");
-}
-
-#[test]
-fn ffi_is_gone() {
-    assert_gone("ffi");
-    let found = sandboxed(r#"pcall(require, "ffi")"#);
-    assert_eq!(found, mlua::Value::Boolean(false));
-}
-
-#[test]
-fn debug_is_gone() {
-    assert_gone("debug");
-}
-
-#[test]
-fn jit_is_gone() {
-    assert_gone("jit");
-}
-
-#[test]
-fn dofile_is_gone() {
-    assert_gone("dofile");
-}
-
-#[test]
-fn loadfile_is_gone() {
-    assert_gone("loadfile");
-}
-
-#[test]
-fn string_dump_is_gone() {
-    assert_gone("string.dump");
-    // every string reaches the string library through its metatable
-    assert_gone(r#"("").dump"#);
-}
-
-#[test]
-fn package_loadlib_is_gone() {
-    assert_gone("package");
+    sandbox::chunk(&lua, chunk, "test").unwrap().eval().unwrap()
 }
 
 #[test]
 fn package_cpath_is_not_searched() {
-    assert_gone("package");
     let lua = mlua::Lua::new();
     lua_register(&lua, None, None).unwrap();
-    let cpath: String = lua.load("return package.cpath").eval().unwrap();
+    let cpath: String = lua
+        .load(case("package_cpath_is_not_searched"))
+        .eval()
+        .unwrap();
     assert_eq!(cpath, "");
 }
 
 #[test]
-fn getfenv_and_setfenv_are_gone() {
-    // either one reaches the full globals from a sandboxed function
-    assert_gone("getfenv");
-    assert_gone("setfenv");
-}
-
-#[test]
 fn the_globals_table_is_the_sandbox() {
-    assert_eq!(sandboxed("rawequal(_G, _G._G)"), mlua::Value::Boolean(true));
-    assert_gone("_G.io");
-    assert_gone("_G.package");
-    assert_gone("_VERSION");
+    let (same, io, package, version): (bool, mlua::Value, mlua::Value, mlua::Value) =
+        sandboxed(&case("the_globals_table_is_the_sandbox"));
+    assert!(same, "_G is not its own _G");
+    assert!(io.is_nil(), "_G.io is reachable");
+    assert!(package.is_nil(), "_G.package is reachable");
+    assert!(version.is_nil(), "_VERSION is reachable");
 }
 
 #[test]
@@ -1910,27 +1576,29 @@ fn the_kept_globals_are_there() {
         "load",
         "loadstring",
     ] {
-        assert!(!sandboxed(name).is_nil(), "{name} is missing");
+        let found: mlua::Value = sandboxed(&format!("return {name}"));
+        assert!(!found.is_nil(), "{name} is missing");
     }
 }
 
 #[test]
 fn a_loaded_chunk_runs_in_the_sandbox() {
-    assert_gone(r#"load("return io")()"#);
-    assert_gone(r#"loadstring("return os")()"#);
-    let pieces = r#"(function()
-        local parts = { "return ", "1 + 1" }
-        local i = 0
-        return load(function() i = i + 1; return parts[i] end)()
-    end)()"#;
-    assert_eq!(sandboxed(pieces), mlua::Value::Integer(2));
+    let (io, os, pieces): (mlua::Value, mlua::Value, i64) =
+        sandboxed(&case("a_loaded_chunk_runs_in_the_sandbox"));
+    assert!(io.is_nil(), "load reached io");
+    assert!(os.is_nil(), "loadstring reached os");
+    assert_eq!(pieces, 2);
 }
 
 #[test]
 fn load_rejects_a_binary_chunk() {
     let lua = mlua::Lua::new();
     lua_register(&lua, None, None).unwrap();
-    let compiled = lua.load("return 1").into_function().unwrap().dump(true);
+    let compiled = lua
+        .load(case("load_rejects_a_binary_chunk"))
+        .into_function()
+        .unwrap()
+        .dump(true);
     let load: mlua::Function = sandbox::environment(&lua).unwrap().get("load").unwrap();
     let (chunk, message): (mlua::Value, Option<String>) =
         load.call(lua.create_string(&compiled).unwrap()).unwrap();
@@ -1942,70 +1610,8 @@ fn load_rejects_a_binary_chunk() {
 }
 
 #[test]
-fn a_patch_cannot_reach_io() {
-    let Err(error) = load_source("return { io.popen('id') }", "song.lua", 48000) else {
-        panic!("a patch ran io.popen");
-    };
-    assert!(error.to_string().contains("io"), "{error}");
-}
-
-#[test]
 fn a_module_from_disk_runs_in_the_sandbox() {
-    let dir = std::env::temp_dir().join(format!("synth-sandbox-module-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("probe.lua"), "return { io = io, os = os }").unwrap();
-
-    let patch = r#"
-        local probe = require("probe")
-        assert(probe.io == nil and probe.os == nil, "a module reached io or os")
-        return require("synth").instrument({})
-    "#;
-    load_in(patch, "test", 48000, Some(&dir), None).unwrap();
-}
-
-#[test]
-fn print_is_an_info_diagnostic_at_the_callers_line() {
-    let source = r#"
-        local synth = require("synth")
-        print("cutoff", 800)
-        return synth.instrument({})
-    "#;
-    let patch = load_source(source, "song.lua", 48000).unwrap();
-    let printed: Vec<(&str, Option<&str>)> = patch
-        .printed
-        .iter()
-        .map(|d| (d.message.as_str(), d.at.as_deref()))
-        .collect();
-    assert_eq!(printed, vec![("cutoff\t800", Some("song.lua:3"))]);
-    assert_eq!(patch.printed[0].severity(), crate::spec::Severity::Info);
-    assert!(patch.clean(), "printing is not a warning");
-}
-
-#[test]
-fn print_while_baking_names_the_line_inside_the_waveform() {
-    let source = r#"
-        local synth = require("synth")
-        local printed = false
-        local function wave(phase)
-            if not printed then printed = true; print("phase", phase) end
-            return synth.wave.sine(phase)
-        end
-        return synth.instrument({ oscillator = synth.osc({ waveforms = { wave } }) })
-    "#;
-    let patch = load_source(source, "song.lua", 48000).unwrap();
-    assert_eq!(patch.printed.len(), 1, "{:?}", patch.printed);
-    assert_eq!(patch.printed[0].at.as_deref(), Some("song.lua:5"));
-}
-
-#[test]
-fn print_uses_tostring() {
-    let source = r#"
-        print(setmetatable({}, { __tostring = function() return "custom" end }), nil, true)
-        return require("synth").instrument({})
-    "#;
-    let patch = load_source(source, "song.lua", 48000).unwrap();
-    assert_eq!(patch.printed[0].message, "custom\tnil\ttrue");
+    load(&fixture("sandboxed"), 48000, None).unwrap();
 }
 
 /// A custom folder whose `synth/wave.lua` is marked but still matches its
@@ -2023,41 +1629,42 @@ fn custom_with_a_stale_copy(case: &str) -> std::path::PathBuf {
     custom
 }
 
-const NOT_STALE: &str = r#"
-    local synth = require("synth")
-    assert(not require("synth.wave").stale, "a copy matching its base loaded")
-    return synth.instrument({})
-"#;
-
 #[test]
 fn a_copy_matching_its_base_does_not_replace_the_built_in() {
     let custom = custom_with_a_stale_copy("stale-copy");
-    load_in(NOT_STALE, "test", 48000, None, Some(&custom)).unwrap();
+    load_in(
+        &case("a_copy_matching_its_base_is_skipped"),
+        "test",
+        48000,
+        None,
+        Some(&custom),
+    )
+    .unwrap();
 }
 
 #[test]
 fn a_patch_in_the_custom_folder_skips_a_copy_matching_its_base() {
     let custom = custom_with_a_stale_copy("stale-in-folder");
-    load_in(NOT_STALE, "test", 48000, Some(&custom), Some(&custom)).unwrap();
+    load_in(
+        &case("a_copy_matching_its_base_is_skipped"),
+        "test",
+        48000,
+        Some(&custom),
+        Some(&custom),
+    )
+    .unwrap();
 }
 
 #[test]
 fn a_synth_name_with_no_built_in_loads_from_the_custom_folder() {
-    let custom = std::env::temp_dir().join(format!("synth-extra-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&custom);
-    std::fs::create_dir_all(custom.join("synth")).unwrap();
-    std::fs::write(custom.join("synth/extra.lua"), "return { extra = true }").unwrap();
-    let patch = r#"
-        assert(require("synth.extra").extra, "synth.extra from the custom folder")
-        return require("synth").instrument({})
-    "#;
-    load_in(patch, "test", 48000, None, Some(&custom)).unwrap();
+    let custom = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lua/loader/custom");
+    load(&fixture("synth_extra"), 48000, Some(&custom)).unwrap();
 }
 
 #[test]
 fn a_patch_error_names_its_file_without_internal_frames() {
-    let source = "local x = 1\nerror('no tuning for this key')\nreturn {}";
-    let error = load_source(source, "e.lua", 48000).err().expect("error()");
+    let source = case("a_patch_error_names_its_file_without_internal_frames");
+    let error = load_source(&source, "e.lua", 48000).err().expect("error()");
     let message = format!("{error:#}");
     assert!(
         message.contains("e.lua:2: no tuning for this key"),
@@ -2070,11 +1677,13 @@ fn a_patch_error_names_its_file_without_internal_frames() {
 
 #[test]
 fn an_error_from_an_embedded_module_keeps_only_the_patch_frames() {
-    let source = r#"local synth = require("synth")
-return synth.instrument({
-	keyboard = synth.keyboard({ layout = synth.keyboard.grid({ offest = 7 }) }),
-})"#;
-    let error = load_source(source, "g.lua", 48000).err().expect("offest");
+    let error = load_source(
+        &case("an_error_from_an_embedded_module_keeps_only_the_patch_frames"),
+        "g.lua",
+        48000,
+    )
+    .err()
+    .expect("offest");
     let message = format!("{error:#}");
     let frames: Vec<&str> = message
         .lines()
@@ -2095,15 +1704,11 @@ fn a_traceback_of_only_internal_frames_is_dropped() {
 
 #[test]
 fn a_required_module_is_named_by_its_path() {
-    let dir = std::env::temp_dir().join(format!("synth-at-path-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("bad.lua"), "error('inner')\n").unwrap();
-    let error = load_in("return require('bad')", "song.lua", 48000, Some(&dir), None)
+    let error = load(&fixture("bad_module"), 48000, None)
         .err()
         .expect("inner");
-    let _ = std::fs::remove_dir_all(&dir);
     let message = format!("{error:#}");
-    // Lua cuts a long temp path to `...tail`, so only the file name is fixed
+    // Lua cuts a long path to `...tail`, so only the file name is fixed
     assert!(message.contains("bad.lua:1: inner"), "{message}");
     assert!(!message.contains("[string"), "{message}");
 }
