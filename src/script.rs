@@ -246,6 +246,7 @@ mod field {
     pub(super) const BUFFER_FRAMES: &str = "buffer_frames";
     pub(super) const QUEUE: &str = "queue";
     pub(super) const CUSTOM_DIR: &str = "custom_dir";
+    pub(super) const CAPTURE: &str = "capture";
     pub(super) const TUI: &str = "tui";
     pub(super) const LOG: &str = "log";
     pub(super) const TRIM_SIZE_KB: &str = "trim_size_kb";

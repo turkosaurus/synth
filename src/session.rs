@@ -267,7 +267,7 @@ pub struct Session {
     sources: Sources,
     /// Kept only so the stream plays until the session drops.
     _stream: audio::Stream,
-    /// The same, for the input stream when there is one.
+    /// The same, for the capture stream when there is one.
     _capture: Option<audio::Stream>,
 }
 
@@ -316,21 +316,21 @@ impl Session {
         )?;
 
         let mut capture = None;
-        let input = match &output.capture {
+        let captured = match &output.capture {
             Some(device) => {
                 let rate = device.sample_rate as f32;
                 let (tx, tee) = audio::tee(tee_frames(rate), device.channels);
                 capture = audio::capture(&output, tx, meter, Arc::clone(&stats), &mut faults);
                 match capture {
-                    Some(_) => Stream::new(StreamName::Input.name(), rate, tee),
-                    None => Stream::missing(StreamName::Input.name(), sample_rate),
+                    Some(_) => Stream::new(StreamName::Capture.name(), rate, tee),
+                    None => Stream::missing(StreamName::Capture.name(), sample_rate),
                 }
             }
-            None => Stream::missing(StreamName::Input.name(), sample_rate),
+            None => Stream::missing(StreamName::Capture.name(), sample_rate),
         };
         let streams = vec![
             Stream::new(StreamName::Output.name(), sample_rate, output_tee),
-            input,
+            captured,
         ];
         let channels: Vec<usize> = streams.iter().map(Stream::channels).collect();
         let selection = selection(config, &streams)?;
@@ -409,15 +409,15 @@ fn selection(config: &Config, streams: &[Stream]) -> anyhow::Result<Selection> {
     Ok(Selection { stream, pick })
 }
 
-/// The channel `config.lua` gives the input meter, which must be one of the
-/// input's `channels`. With no input there is nothing to check, and the
-/// meter says so.
+/// The channel `config.lua` gives the capture meter, which must be one of
+/// the capture's `channels`. With no capture there is nothing to check, and
+/// the meter says so.
 fn meter_channel(config: &Config, channels: Option<usize>) -> anyhow::Result<Channel> {
-    match (config.input.channel, channels) {
+    match (config.capture.channel, channels) {
         (0, _) | (_, None) => Ok(Channel::All),
         (n, Some(channels)) if n <= channels => Ok(Channel::One(n - 1)),
         (n, Some(channels)) => {
-            anyhow::bail!("config.lua input: channel {n}, but the input has {channels}")
+            anyhow::bail!("config.lua capture: channel {n}, but the capture has {channels}")
         }
     }
 }

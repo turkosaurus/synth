@@ -124,7 +124,7 @@ fn the_defaults_are_the_built_in_file() {
     assert_eq!(config.tui.latency_window, Duration::from_secs(5));
     assert_eq!(config.tui.latency_records, 1024);
     assert_eq!(config.tui.faults, 64);
-    assert_eq!(config.input.channel, 0);
+    assert_eq!(config.capture.channel, 0);
     assert_eq!(config.tui.source_stream, StreamName::Output);
     assert_eq!(config.tui.source_channel, 0);
     assert_eq!(config.tui.source_tee, Duration::from_millis(100));
@@ -334,15 +334,15 @@ fn a_bad_value_is_named() {
         ),
         (
             "return { tui = { source = { stream = 'mic' } } }",
-            "config.lua tui source: `stream` is \"mic\"; must be one of output, input",
+            "config.lua tui source: `stream` is \"mic\"; must be one of output, capture",
         ),
         (
-            "return { input = { channel = 65 } }",
-            "config.lua input: `channel` is 65; must be 0 to 64",
+            "return { capture = { channel = 65 } }",
+            "config.lua capture: `channel` is 65; must be 0 to 64",
         ),
         (
-            "return { input = 1 }",
-            "`input` must be a table",
+            "return { capture = 1 }",
+            "`capture` must be a table",
         ),
         (
             "return { tui = { source = { channel = -1 } } }",
@@ -430,10 +430,10 @@ fn a_config_that_does_not_run_is_matched_by_variant() {
 }
 
 #[test]
-fn the_input_is_a_source_and_its_meter_takes_a_channel() {
+fn the_capture_is_a_source_and_its_meter_takes_a_channel() {
     let config =
-        user("return { input = { channel = 2 }, tui = { source = { stream = 'input' } } }")
+        user("return { capture = { channel = 2 }, tui = { source = { stream = 'capture' } } }")
             .unwrap();
-    assert_eq!(config.input.channel, 2);
-    assert_eq!(config.tui.source_stream, StreamName::Input);
+    assert_eq!(config.capture.channel, 2);
+    assert_eq!(config.tui.source_stream, StreamName::Capture);
 }

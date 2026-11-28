@@ -20,11 +20,11 @@ pub enum Fault {
     Dropped,
     /// output frames found the output tee full
     TeeDropped { frames: u64 },
-    /// the driver reported an error on the input stream, or could not
+    /// the driver reported an error on the capture stream, or could not
     /// open it, which leaves the session without one
-    InputStream(StreamKind),
-    /// input frames found the input tee full
-    InputTeeDropped { frames: u64 },
+    CaptureStream(StreamKind),
+    /// captured frames found the capture tee full
+    CaptureTeeDropped { frames: u64 },
     /// reading input failed, which ends the session
     Input(io::ErrorKind),
 }
@@ -52,8 +52,8 @@ impl fmt::Display for Fault {
             }
             Self::Dropped => f.write_str("event dropped, queue full"),
             Self::TeeDropped { frames } => write!(f, "output tee dropped {frames} frames"),
-            Self::InputStream(kind) => write!(f, "input stream: {kind}"),
-            Self::InputTeeDropped { frames } => write!(f, "input tee dropped {frames} frames"),
+            Self::CaptureStream(kind) => write!(f, "capture stream: {kind}"),
+            Self::CaptureTeeDropped { frames } => write!(f, "capture tee dropped {frames} frames"),
             Self::Input(kind) => write!(f, "reading input: {kind}"),
         }
     }

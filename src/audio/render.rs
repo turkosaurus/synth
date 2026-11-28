@@ -356,7 +356,7 @@ pub struct Tee {
 }
 
 /// A tee holding up to `frames` frames, and the producer for
-/// [`Player::with_output_tee`] or the input stream.
+/// [`Player::with_output_tee`] or the capture stream.
 pub fn tee(frames: usize, channels: usize) -> (rtrb::Producer<f32>, Tee) {
     let (tx, samples) = rtrb::RingBuffer::new(frames * channels);
     (tx, Tee { samples, channels })

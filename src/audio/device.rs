@@ -35,14 +35,14 @@ pub struct Stats {
     output_tee_dropped: AtomicU64,
     /// timing records the callback could not push because their ring was full
     timing_dropped: AtomicU64,
-    /// input frames the input callback could not push to the input tee
-    /// because its ring was full
-    input_tee_dropped: AtomicU64,
+    /// captured frames the capture callback could not push to the capture
+    /// tee because its ring was full
+    capture_tee_dropped: AtomicU64,
     /// reads of input that failed, each of which ends the session
     input_errors: AtomicU64,
     peak_bits: AtomicU32,
-    /// the input meter's channel, written by the input callback
-    input_peak_bits: AtomicU32,
+    /// the capture meter's channel, written by the capture callback
+    capture_peak_bits: AtomicU32,
     /// the most recent callback's deadline, so it describes a callback that
     /// actually ran
     budget_us: AtomicU32,
@@ -62,8 +62,8 @@ impl Stats {
             .fetch_max(peak.abs().to_bits(), Ordering::Relaxed);
     }
 
-    fn record_input_peak(&self, peak: f32) {
-        self.input_peak_bits
+    fn record_capture_peak(&self, peak: f32) {
+        self.capture_peak_bits
             .fetch_max(peak.abs().to_bits(), Ordering::Relaxed);
     }
 
@@ -108,9 +108,9 @@ impl Stats {
             output_tee_dropped: self.output_tee_dropped.load(Ordering::Relaxed),
             timing_dropped: self.timing_dropped.load(Ordering::Relaxed),
             input_errors: self.input_errors.load(Ordering::Relaxed),
-            input_tee_dropped: self.input_tee_dropped.load(Ordering::Relaxed),
+            capture_tee_dropped: self.capture_tee_dropped.load(Ordering::Relaxed),
             peak: self.take_peak(),
-            input_peak: f32::from_bits(self.input_peak_bits.swap(0, Ordering::Relaxed)),
+            capture_peak: f32::from_bits(self.capture_peak_bits.swap(0, Ordering::Relaxed)),
             budget_us: self.budget_us(),
             buffer_frames: self.buffer_frames.load(Ordering::Relaxed),
             output_us: self.output_us.load(Ordering::Relaxed),
@@ -134,10 +134,11 @@ pub struct Snapshot {
     pub output_tee_dropped: u64,
     pub timing_dropped: u64,
     pub input_errors: u64,
-    pub input_tee_dropped: u64,
+    pub capture_tee_dropped: u64,
     pub peak: f32,
-    /// the loudest sample of the input meter's channel, 0.0 with no input
-    pub input_peak: f32,
+    /// the loudest sample of the capture meter's channel, 0.0 with no
+    /// capture
+    pub capture_peak: f32,
     pub budget_us: u32,
     /// frames the most recent callback was handed; 0 before the first
     pub buffer_frames: u32,
@@ -261,19 +262,19 @@ fn capture_config(device: &cpal::Device, buffer_frames: Option<u32>) -> Option<C
     let config = match device.default_input_config() {
         Ok(config) => config,
         Err(error) => {
-            debug!(%error, "no input");
+            debug!(%error, "no capture");
             return None;
         }
     };
     let format = config.sample_format();
     if !readable(format) || config.channels() == 0 {
-        debug!(?format, channels = config.channels(), "input unread");
+        debug!(?format, channels = config.channels(), "capture unread");
         return None;
     }
     let buffer = buffer_size(buffer_frames, config.buffer_size()).unwrap_or_default();
     let sample_rate = config.sample_rate();
     let channels = config.channels() as usize;
-    debug!(sample_rate, channels, ?format, ?buffer, "input");
+    debug!(sample_rate, channels, ?format, ?buffer, "capture");
     Some(Capture {
         config,
         buffer,
@@ -494,7 +495,7 @@ where
     Ok(stream)
 }
 
-/// Build and start the input stream on `output`'s device, pushing every
+/// Build and start the capture stream on `output`'s device, pushing every
 /// frame to `tee` and the peak of `channel` to `stats`. `None` when the
 /// device has no input, or when its stream cannot start, which is counted
 /// and pushed as a fault: the output plays on either way.
@@ -511,21 +512,21 @@ pub fn capture(
     let device = &output.device;
     let shared = Arc::clone(&stats);
     let built = match capture.config.sample_format() {
-        SampleFormat::I16 => build_input::<i16>(device, capture, tee, channel, shared, rings),
-        SampleFormat::I32 => build_input::<i32>(device, capture, tee, channel, shared, rings),
-        _ => build_input::<f32>(device, capture, tee, channel, shared, rings),
+        SampleFormat::I16 => build_capture::<i16>(device, capture, tee, channel, shared, rings),
+        SampleFormat::I32 => build_capture::<i32>(device, capture, tee, channel, shared, rings),
+        _ => build_capture::<f32>(device, capture, tee, channel, shared, rings),
     };
     match built {
         Ok(stream) => Some(stream),
         Err(error) => {
-            debug!(%error, "input stream");
-            stream_error(&stats, &mut faults.ring(), &error, Fault::InputStream);
+            debug!(%error, "capture stream");
+            stream_error(&stats, &mut faults.ring(), &error, Fault::CaptureStream);
             None
         }
     }
 }
 
-/// Which samples of each input frame the input meter reads.
+/// Which samples of each captured frame the capture meter reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Channel {
     /// the loudest of every channel
@@ -534,12 +535,12 @@ pub enum Channel {
     One(usize),
 }
 
-/// What one input callback took.
+/// What one capture callback took.
 #[derive(Debug, Default, PartialEq)]
 struct Taken {
     /// largest finite magnitude on the meter's channel
     peak: f32,
-    /// frames the input tee had no room for
+    /// frames the capture tee had no room for
     dropped: u64,
 }
 
@@ -568,21 +569,21 @@ where
     }
 }
 
-/// Count one input callback's `taken` into `stats`, and push a fault when
+/// Count one capture callback's `taken` into `stats`, and push a fault when
 /// its tee was full.
-fn account_input(stats: &Stats, faults: &mut Reporter, taken: &Taken) {
-    stats.record_input_peak(taken.peak);
+fn account_capture(stats: &Stats, faults: &mut Reporter, taken: &Taken) {
+    stats.record_capture_peak(taken.peak);
     if taken.dropped > 0 {
         stats
-            .input_tee_dropped
+            .capture_tee_dropped
             .fetch_add(taken.dropped, Ordering::Relaxed);
-        faults.push(Fault::InputTeeDropped {
+        faults.push(Fault::CaptureTeeDropped {
             frames: taken.dropped,
         });
     }
 }
 
-fn build_input<T>(
+fn build_capture<T>(
     device: &cpal::Device,
     capture: &Capture,
     mut tee: rtrb::Producer<f32>,
@@ -604,10 +605,17 @@ where
         config,
         move |data: &[T], _: &cpal::InputCallbackInfo| {
             let taken = take(data, channels, channel, &mut tee);
-            account_input(&stats, &mut faults, &taken);
+            account_capture(&stats, &mut faults, &taken);
         },
         // as the output's: counted and kept as a kind, never printed
-        move |error| stream_error(&error_stats, &mut error_faults, &error, Fault::InputStream),
+        move |error| {
+            stream_error(
+                &error_stats,
+                &mut error_faults,
+                &error,
+                Fault::CaptureStream,
+            )
+        },
         None,
     )?;
     stream.play()?;

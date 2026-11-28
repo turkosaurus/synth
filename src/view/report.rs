@@ -72,8 +72,8 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
                 },
             ),
             (
-                "input meter",
-                match config.input.channel {
+                "capture meter",
+                match config.capture.channel {
                     0 => "loudest channel".to_string(),
                     n => format!("channel {n}"),
                 },
@@ -289,9 +289,9 @@ pub fn stats(snap: &Snapshot) -> String {
         output_tee_dropped: _,
         timing_dropped: _,
         input_errors: _,
-        input_tee_dropped: _,
+        capture_tee_dropped: _,
         peak,
-        input_peak: _,
+        capture_peak: _,
         budget_us,
         buffer_frames,
         output_us,

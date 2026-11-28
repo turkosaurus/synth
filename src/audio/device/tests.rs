@@ -175,7 +175,7 @@ fn tee_of(frames: usize, channels: usize) -> (rtrb::Producer<f32>, crate::audio:
 }
 
 #[test]
-fn input_frames_reach_the_tee_as_f32() {
+fn captured_frames_reach_the_tee_as_f32() {
     let (mut tx, mut tee) = tee_of(4, 2);
     let data = [i16::MAX, i16::MIN, 0, 0];
     let taken = take(&data, 2, Channel::All, &mut tx);
@@ -186,7 +186,7 @@ fn input_frames_reach_the_tee_as_f32() {
 }
 
 #[test]
-fn the_input_peak_reads_the_meters_channel() {
+fn the_capture_peak_reads_the_meters_channel() {
     let (mut tx, _tee) = tee_of(8, 2);
     let data = [0.25f32, -0.75, 0.5, 0.1];
     assert_eq!(take(&data, 2, Channel::One(0), &mut tx).peak, 0.5);
@@ -195,7 +195,7 @@ fn the_input_peak_reads_the_meters_channel() {
 }
 
 #[test]
-fn a_non_finite_input_sample_is_left_out_of_the_peak() {
+fn a_non_finite_captured_sample_is_left_out_of_the_peak() {
     let (mut tx, _tee) = tee_of(8, 1);
     let data = [0.5f32, f32::INFINITY, f32::NAN];
     assert_eq!(take(&data, 1, Channel::All, &mut tx).peak, 0.5);
@@ -203,7 +203,7 @@ fn a_non_finite_input_sample_is_left_out_of_the_peak() {
 
 // three frames into room for two: whole frames only, the rest counted
 #[test]
-fn a_full_input_tee_keeps_whole_frames_and_counts_the_rest() {
+fn a_full_capture_tee_keeps_whole_frames_and_counts_the_rest() {
     let (mut tx, tee) = tee_of(2, 2);
     let data = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
     assert_eq!(take(&data, 2, Channel::All, &mut tx).dropped, 1);
@@ -211,7 +211,7 @@ fn a_full_input_tee_keeps_whole_frames_and_counts_the_rest() {
 }
 
 #[test]
-fn a_full_input_tee_is_a_fault_and_its_peak_a_gauge() {
+fn a_full_capture_tee_is_a_fault_and_its_peak_a_gauge() {
     let stats = Stats::default();
     let mut faults = Faults::new(64);
     let mut tx = faults.ring();
@@ -219,32 +219,32 @@ fn a_full_input_tee_is_a_fault_and_its_peak_a_gauge() {
         peak: 0.5,
         dropped: 3,
     };
-    account_input(&stats, &mut tx, &taken);
+    account_capture(&stats, &mut tx, &taken);
     faults.drain();
-    assert_eq!(faults.last(), Some(Fault::InputTeeDropped { frames: 3 }));
+    assert_eq!(faults.last(), Some(Fault::CaptureTeeDropped { frames: 3 }));
     let snap = stats.snapshot();
-    assert_eq!((snap.input_peak, snap.input_tee_dropped), (0.5, 3));
+    assert_eq!((snap.capture_peak, snap.capture_tee_dropped), (0.5, 3));
     let snap = stats.snapshot();
-    assert_eq!((snap.input_peak, snap.input_tee_dropped), (0.0, 3));
+    assert_eq!((snap.capture_peak, snap.capture_tee_dropped), (0.0, 3));
 }
 
 #[test]
-fn an_input_stream_error_is_counted_as_the_inputs() {
+fn a_capture_stream_error_is_counted_as_the_captures() {
     let stats = Stats::default();
     let mut faults = Faults::new(64);
     let mut tx = faults.ring();
     let error = cpal::Error::new(cpal::ErrorKind::DeviceNotAvailable);
-    stream_error(&stats, &mut tx, &error, Fault::InputStream);
+    stream_error(&stats, &mut tx, &error, Fault::CaptureStream);
     faults.drain();
     assert_eq!(
         faults.last(),
-        Some(Fault::InputStream(StreamKind::DeviceGone))
+        Some(Fault::CaptureStream(StreamKind::DeviceGone))
     );
     assert_eq!(stats.snapshot().errors, 1);
 }
 
 #[test]
-fn the_input_callback_never_allocates() {
+fn the_capture_callback_never_allocates() {
     let stats = Stats::default();
     let mut faults = Faults::new(64);
     let mut reporter = faults.ring();
@@ -254,7 +254,7 @@ fn the_input_callback_never_allocates() {
     let info = allocation_counter::measure(|| {
         for _ in 0..room + 1 {
             let taken = take(&data, 2, Channel::One(1), &mut tx);
-            account_input(&stats, &mut reporter, &taken);
+            account_capture(&stats, &mut reporter, &taken);
         }
     });
     assert_eq!(info.count_total, 0);

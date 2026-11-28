@@ -233,7 +233,7 @@ fn drive(
     // business knowing the frame rate a bar falls at
     let mut peak = Meter::new(config.meter_hold, config.meter_fall);
     let mut heard = Meter::new(config.meter_hold, config.meter_fall);
-    let hearing = sources.is_open(StreamName::Input.name());
+    let hearing = sources.is_open(StreamName::Capture.name());
     let mut activity = Activity::default();
     let history = sources.sample_rate() * config.scope_history.as_secs_f32();
     let mut scope = Scope::new(config.scope_cycles);
@@ -253,7 +253,7 @@ fn drive(
         let dt = now - last;
         last = now;
         peak.update(meter::scale(snap.peak, config.meter_floor_db), dt);
-        heard.update(meter::scale(snap.input_peak, config.meter_floor_db), dt);
+        heard.update(meter::scale(snap.capture_peak, config.meter_floor_db), dt);
         activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clipped);
 
         // spread sorts each window, so it is taken before the draw it
@@ -384,7 +384,7 @@ struct View<'a> {
     /// the latest fault, shown beside its count
     fault: Option<Fault>,
     peak: &'a Meter,
-    /// the input's level; `None` when the device has no input open
+    /// the capture's level; `None` when the device has no capture open
     heard: Option<&'a Meter>,
     activity: &'a Activity,
     freqs: &'a Freqs,
@@ -447,10 +447,10 @@ fn fps_style(fps: usize, config: &TuiConfig) -> Style {
 /// The status counter a fault is counted in.
 fn counter(fault: Fault) -> &'static str {
     match fault {
-        Fault::Stream(_) | Fault::InputStream(_) => "errors",
+        Fault::Stream(_) | Fault::CaptureStream(_) => "errors",
         Fault::Overrun { .. } => "overruns",
         Fault::Dropped => "dropped",
-        Fault::TeeDropped { .. } | Fault::InputTeeDropped { .. } => "tee dropped",
+        Fault::TeeDropped { .. } | Fault::CaptureTeeDropped { .. } => "tee dropped",
         Fault::Input(_) => "input errors",
     }
 }
@@ -488,7 +488,7 @@ fn status(
         count("dropped", snap.dropped, Color::Yellow),
         count(
             "tee dropped",
-            snap.output_tee_dropped + snap.input_tee_dropped,
+            snap.output_tee_dropped + snap.capture_tee_dropped,
             Color::Yellow,
         ),
         count("input errors", snap.input_errors, Color::Yellow),
@@ -577,7 +577,7 @@ fn draw(frame: &mut Frame, view: &View) {
     let stats_inner = stats_block.inner(stats_area);
     frame.render_widget(stats_block, stats_area);
 
-    // latency, then graph, then gain, then input, then cpu, then status at the very
+    // latency, then graph, then gain, then capture, then cpu, then status at the very
     // bottom: region order is what stacks them, not the order the widgets
     // are rendered in
     let [latency_area, clip_area, peak_area, heard_area, load_area, status_area] =
@@ -647,7 +647,7 @@ fn draw(frame: &mut Frame, view: &View) {
         )
     };
     frame.render_widget(level("gain", Some(peak)), peak_area);
-    frame.render_widget(level("input", heard), heard_area);
+    frame.render_widget(level("capture", heard), heard_area);
 
     // drawn after the spark, so these land on top of it. the left end is
     // the oldest history, which is the cheapest part of the row to cover:

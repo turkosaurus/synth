@@ -18,12 +18,12 @@ fn each_fault_reads_as_text() {
             "output tee dropped 3 frames",
         ),
         (
-            Fault::InputStream(StreamKind::DeviceGone),
-            "input stream: device gone",
+            Fault::CaptureStream(StreamKind::DeviceGone),
+            "capture stream: device gone",
         ),
         (
-            Fault::InputTeeDropped { frames: 2 },
-            "input tee dropped 2 frames",
+            Fault::CaptureTeeDropped { frames: 2 },
+            "capture tee dropped 2 frames",
         ),
         (
             Fault::Input(io::ErrorKind::UnexpectedEof),

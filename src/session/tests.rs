@@ -183,9 +183,9 @@ fn the_glance_shows_what_a_key_changed() {
     assert!(model.glance().help);
 }
 
-fn config(input_channel: usize) -> Config {
+fn config(capture_channel: usize) -> Config {
     let mut config = crate::script::config_defaults();
-    config.input.channel = input_channel;
+    config.capture.channel = capture_channel;
     config
 }
 
@@ -193,14 +193,14 @@ fn streams() -> Vec<Stream> {
     let (_, tee) = audio::tee(4, 2);
     vec![
         Stream::new("output", 48_000.0, tee),
-        Stream::missing("input", 48_000.0),
+        Stream::missing("capture", 48_000.0),
     ]
 }
 
 #[test]
-fn a_missing_input_can_still_be_the_source() {
+fn a_missing_capture_can_still_be_the_source() {
     let mut config = config(0);
-    config.tui.source_stream = StreamName::Input;
+    config.tui.source_stream = StreamName::Capture;
     config.tui.source_channel = 2;
     let selection = selection(&config, &streams()).unwrap();
     assert_eq!(
@@ -213,21 +213,21 @@ fn a_missing_input_can_still_be_the_source() {
 }
 
 #[test]
-fn the_input_meter_reads_its_channel_or_the_loudest() {
+fn the_capture_meter_reads_its_channel_or_the_loudest() {
     assert_eq!(meter_channel(&config(0), Some(2)).unwrap(), Channel::All);
     assert_eq!(meter_channel(&config(2), Some(2)).unwrap(), Channel::One(1));
 }
 
 #[test]
-fn a_meter_channel_the_input_lacks_is_named() {
+fn a_meter_channel_the_capture_lacks_is_named() {
     let error = meter_channel(&config(3), Some(2)).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "config.lua input: channel 3, but the input has 2"
+        "config.lua capture: channel 3, but the capture has 2"
     );
 }
 
 #[test]
-fn with_no_input_any_meter_channel_plays() {
+fn with_no_capture_any_meter_channel_plays() {
     assert_eq!(meter_channel(&config(3), None).unwrap(), Channel::All);
 }

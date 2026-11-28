@@ -153,25 +153,25 @@ fn a_key_no_binding_names_is_dropped() {
 #[test]
 fn a_level_meter_names_a_stream_that_is_not_open() {
     let meter = Meter::new(Duration::ZERO, Duration::from_millis(1));
-    assert_eq!(level_label("input", None, -60.0), "input none");
+    assert_eq!(level_label("capture", None, -60.0), "capture none");
     assert_eq!(
-        level_label("input", Some(&meter), -60.0),
-        "input    -∞ dB  hold    -∞ dB"
+        level_label("capture", Some(&meter), -60.0),
+        "capture    -∞ dB  hold    -∞ dB"
     );
 }
 
 #[test]
-fn input_tee_drops_count_with_the_outputs() {
+fn capture_tee_drops_count_with_the_outputs() {
     let config = crate::script::config_defaults().tui;
     let snap = Snapshot {
         output_tee_dropped: 1,
-        input_tee_dropped: 2,
+        capture_tee_dropped: 2,
         ..Snapshot::default()
     };
-    let tee = Fault::InputTeeDropped { frames: 2 };
+    let tee = Fault::CaptureTeeDropped { frames: 2 };
     let line = status(&snap, Some(tee), None, 60, &config).to_string();
     assert!(
-        line.contains("tee dropped 3 (last: input tee dropped 2 frames)"),
+        line.contains("tee dropped 3 (last: capture tee dropped 2 frames)"),
         "{line}"
     );
 }

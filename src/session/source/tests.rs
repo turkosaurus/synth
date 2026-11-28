@@ -113,28 +113,28 @@ fn a_new_selection_forgets_the_old_samples() {
 
 #[test]
 fn a_missing_stream_reads_nothing_and_says_so() {
-    let input = Selection {
+    let capture = Selection {
         stream: 1,
         pick: Pick::Mix,
     };
-    let streams = vec![stereo(&[(1.0, 1.0)]), Stream::missing("input", 48_000.0)];
-    let mut sources = Sources::new(streams, input);
+    let streams = vec![stereo(&[(1.0, 1.0)]), Stream::missing("capture", 48_000.0)];
+    let mut sources = Sources::new(streams, capture);
     assert!(read(&mut sources).is_empty());
-    assert_eq!(sources.to_string(), "input (none)");
+    assert_eq!(sources.to_string(), "capture (none)");
     assert!(sources.is_open("output"));
-    assert!(!sources.is_open("input"));
+    assert!(!sources.is_open("capture"));
 }
 
 #[test]
 fn next_passes_over_a_missing_stream_at_its_mix() {
     let channels = [1, 0];
-    let input = MIX.next(&channels);
+    let capture = MIX.next(&channels);
     assert_eq!(
-        input,
+        capture,
         Selection {
             stream: 1,
             pick: Pick::Mix
         }
     );
-    assert_eq!(input.next(&channels), MIX);
+    assert_eq!(capture.next(&channels), MIX);
 }

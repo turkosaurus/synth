@@ -138,14 +138,14 @@ pub(super) const CONFIG: Schema = Schema {
         optional(field::QUEUE, Ty::Integer, Bound::AtLeast(16.0)),
         // "" is the default folder; anything else is checked when resolved
         optional(field::CUSTOM_DIR, Ty::Text, Bound::Any),
-        optional(field::INPUT, Ty::Table, Bound::Any),
+        optional(field::CAPTURE, Ty::Table, Bound::Any),
         optional(field::TUI, Ty::Table, Bound::Any),
         optional(field::LOG, Ty::Table, Bound::Any),
     ],
 };
 
-pub(super) const CONFIG_INPUT: Schema = Schema {
-    what: "config.lua input",
+pub(super) const CONFIG_CAPTURE: Schema = Schema {
+    what: "config.lua capture",
     fields: &[
         // 0 is every channel; the device's channel count is checked when
         // it opens
