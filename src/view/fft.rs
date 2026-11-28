@@ -7,8 +7,7 @@ use std::sync::Arc;
 use realfft::num_complex::Complex;
 use realfft::{FftError, RealFftPlanner, RealToComplex};
 
-/// Amplitude per bin of the newest `size` samples handed to
-/// [`Transform::update`].
+/// Amplitude per bin of the newest `size` samples handed to [`Transform::update`].
 pub(crate) struct Transform {
     size: usize,
     window: Vec<f32>,
@@ -23,8 +22,7 @@ pub(crate) struct Transform {
 }
 
 impl Transform {
-    /// Transforms of `size` samples, which must be even so the last bin is
-    /// nyquist.
+    /// Transforms of `size` samples, which must be even so the last bin is nyquist.
     pub(crate) fn new(size: usize) -> Self {
         assert!(
             size >= 2 && size.is_multiple_of(2),
@@ -49,8 +47,7 @@ impl Transform {
         }
     }
 
-    /// Transform the newest `size` of `recent`, oldest first; fewer are
-    /// led by silence.
+    /// Transform the newest `size` of `recent`, oldest first; fewer are led by silence.
     pub(crate) fn update(&mut self, recent: &[f32]) -> Result<(), FftError> {
         let newest = &recent[recent.len().saturating_sub(self.size)..];
         let silence = self.size - newest.len();
