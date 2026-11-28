@@ -8,6 +8,6 @@ pub(crate) mod meter;
 pub mod prompt;
 pub mod report;
 pub(crate) mod scope;
+pub(crate) mod spectrum;
 pub(crate) mod table;
 pub mod tui;
-pub(crate) mod widget;

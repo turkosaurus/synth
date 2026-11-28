@@ -12,7 +12,6 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect, Spacing};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::merge::MergeStrategy;
 use ratatui::text::{Line, Span};
-
 use ratatui::widgets::{
     Block, Cell, Clear, Gauge, Paragraph, RenderDirection, Row, Sparkline, SparklineBar, Table,
 };
@@ -27,9 +26,8 @@ use crate::spec::{Budget, Freqs, Key, Keymap, TuiConfig};
 
 use super::fft::Transform;
 use super::meter::{self, Activity, Meter};
-use super::scope::Scope;
-use super::widget::scope::oscilloscope;
-use super::widget::spectrum::Spectrum;
+use super::scope::{Oscilloscope, Scope};
+use super::spectrum::Spectrum;
 
 const POPUP_FILL: Color = Color::Yellow;
 const POPUP_INK: Color = Color::Black;
@@ -540,20 +538,25 @@ fn draw(frame: &mut Frame, view: &View) {
     .spacing(Spacing::Overlap(1))
     .areas(scope_area);
 
-    frame.render_widget(
-        oscilloscope(wave).block(pane().title(format!(" scope: {source} "))),
-        scope_area,
-    );
-    frame.render_widget(
-        Spectrum {
-            amplitudes: transform.amplitudes(),
-            size: transform.size(),
-            sample_rate,
-            floor_db: config.spectrum_floor_db,
-            block: pane().title(format!(" spectrum: {source} ")),
-        },
-        spectrum_area,
-    );
+    let scope_block = pane().title(format!(" scope: {source} "));
+    let scope_inner = scope_block.inner(scope_area);
+    frame.render_widget(scope_block, scope_area);
+    frame.render_widget(Oscilloscope { wave }, scope_inner);
+
+    let spectrum = Spectrum {
+        amplitudes: transform.amplitudes(),
+        size: transform.size(),
+        sample_rate,
+        floor_db: config.spectrum_floor_db,
+    };
+    let (low, high) = spectrum.axis();
+    let spectrum_block = pane()
+        .title(format!(" spectrum: {source} "))
+        .title_bottom(Line::from(format!(" {low} ")).left_aligned())
+        .title_bottom(Line::from(format!(" {high} ")).right_aligned());
+    let spectrum_inner = spectrum_block.inner(spectrum_area);
+    frame.render_widget(spectrum_block, spectrum_area);
+    frame.render_widget(spectrum, spectrum_inner);
 
     let input_block = pane().title(" input ");
     let input_inner = input_block.inner(input_area);
