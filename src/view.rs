@@ -2,9 +2,11 @@
 //! handed and does no work of its own.
 
 pub(crate) mod diff;
+pub mod log;
 pub(crate) mod meter;
 pub mod prompt;
 pub mod report;
+pub(crate) mod scope;
 pub(crate) mod spectrum;
 pub(crate) mod table;
 pub mod tui;

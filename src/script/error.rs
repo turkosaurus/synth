@@ -211,6 +211,24 @@ pub enum Error {
     )]
     CustomDirRelative { setting: String },
 
+    /// Two settings each in bounds, but in the wrong order.
+    #[error(
+        "{what}: `{low}` is {low_value}, `{high}` is {high_value}; `{low}` must be below `{high}`"
+    )]
+    ConfigOrder {
+        what: String,
+        low: &'static str,
+        low_value: f64,
+        high: &'static str,
+        high_value: f64,
+    },
+
+    #[error("config.lua tui spectrum: `size` is {size}; must be a power of two")]
+    SpectrumSize { size: usize },
+
+    #[error("config.lua tui source: `stream` is {stream:?}; must be one of {expected}")]
+    UnknownStream { stream: String, expected: String },
+
     #[error("{what} is not callable")]
     NotCallable { what: &'static str },
 

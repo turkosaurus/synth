@@ -4,11 +4,15 @@
 //! Both play [`crate::spec`] data, which `script` bakes.
 
 mod device;
+mod fault;
 mod fx;
 mod render;
+mod timing;
 
 pub use device::{open, stream, Error, Output, Snapshot, Stats, Stream};
+pub use fault::{Fault, Faults, Reporter, Stamped, StreamKind};
 pub use render::{output_tee, Feed, OutputTee, Player};
+pub use timing::{timing, Origin, Record, Recorder, Stamp};
 
 /// The callback's render step, for `benches/` only: a bench links the
 /// crate from outside, so it sees only what is public.

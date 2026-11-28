@@ -1,6 +1,8 @@
 //! Drives a `Session` and draws it.
 
 use std::io::Stdout;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::Thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -9,19 +11,24 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Flex, Layout, Rect, Spacing};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::merge::MergeStrategy;
-use ratatui::text::Line;
+use ratatui::symbols::Marker;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::canvas::{self, Canvas, Line as Segment};
 use ratatui::widgets::{
     Block, Cell, Clear, Gauge, Paragraph, RenderDirection, Row, Sparkline, SparklineBar, Table,
 };
 use ratatui::{Frame, Terminal};
 
-use crate::audio::{OutputTee, Snapshot};
-use crate::input::keyboard::{Gating, Keyboard, Kind, Stroke};
-use crate::session::{Msg, Session};
-use crate::spec::{Freqs, Key, TuiConfig};
+use crate::audio::{Fault, Faults, Snapshot, Stats};
+use crate::input::keyboard::{Gating, Kind, Stroke};
+use crate::session::{
+    Glance, Input, Latency, Msg, Session, Sources, Split, Spread, Timing, Window,
+};
+use crate::spec::{Budget, Freqs, Key, Keymap, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
-use super::spectrum::{self, Spectrum};
+use super::scope::Scope;
+use super::spectrum::Spectrum;
 
 const POPUP_FILL: Color = Color::Yellow;
 const POPUP_INK: Color = Color::Black;
@@ -31,10 +38,24 @@ const LABEL_WIDTH: u16 = 6;
 const INPUT_WIDTH: u16 = LABEL_WIDTH + COLUMN_GAP + VALUE_WIDTH + 2;
 const COLUMN_GAP: u16 = 2;
 const SPARK_ROWS: u16 = 2;
-const STATS_ROWS: u16 = 3 + SPARK_ROWS;
+const METER_ROWS: u16 = 3 + SPARK_ROWS;
+/// the header and four stages
+const LATENCY_ROWS: u16 = 5;
+const STATS_ROWS: u16 = METER_ROWS + LATENCY_ROWS;
+const STAGE_WIDTH: u16 = 7;
+const NUMBER_WIDTH: u16 = 7;
+/// Below this the bar keeps only the p99 column; below the next, only
+/// numbers.
+const LATENCY_FULL: u16 = 60;
+const LATENCY_BAR: u16 = 40;
+/// Glances the input thread can hand over before the view takes them.
+const GLANCES: usize = 4;
+/// Keys taken from the terminal per read; any more wait for the next.
+const KEYS: usize = 64;
 
 /// Draw `session` and feed it keys until the player quits.
 pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
+    crate::terminal::require()?;
     let gating = session.model().keyboard.gating();
 
     // built before enter(), so a failure here needs no teardown.
@@ -44,84 +65,247 @@ pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
 
     // restores the terminal on every way out of here, a panic included
     let _restore = crate::terminal::enter(gating)?;
-    drive(&mut terminal, session, gating, config)
+
+    // the view's own copies of what never changes while playing,
+    // so the draw loop shares nothing with the input thread but the ring
+    let model = session.model();
+    let still = Still {
+        keymap: model.keyboard.keymap().clone(),
+        freqs: model.freqs.clone(),
+        gating,
+        glance: model.glance(),
+    };
+    let Split {
+        input,
+        timing,
+        stats,
+        faults,
+        sources,
+    } = session.split();
+    let lent = Lent {
+        stats,
+        timing,
+        faults,
+        sources,
+    };
+
+    // a ring rather than a lock on the keyboard: a push never waits, so a
+    // key is never held up behind a draw, and the view only ever needs the
+    // latest copy. unpark wakes the view to draw it at once.
+    let (tx, rx) = rtrb::RingBuffer::new(GLANCES);
+    let view = std::thread::current();
+    let done = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let reader = std::thread::Builder::new()
+            .name("input".into())
+            .spawn_scoped(scope, || {
+                let read = read(input, &mut Console, config.poll, &done, tx, &view);
+                view.unpark();
+                read
+            })
+            .context("spawning input thread")?;
+        let drawn = drive(&mut terminal, lent, &still, rx, config);
+        done.store(true, Ordering::Relaxed);
+        let read = reader
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        drawn.and(read)
+    })
 }
 
+/// Where the input thread's keys come from.
+trait Source {
+    /// Wait up to `wait` for a key, then append keys already queued, each
+    /// with when it was read, while `out` has spare capacity. An error ends
+    /// the session: a terminal that failed once is not retried.
+    fn keys(&mut self, wait: Duration, out: &mut Vec<(KeyEvent, Instant)>) -> anyhow::Result<()>;
+}
+
+/// The terminal, through crossterm.
+struct Console;
+
+impl Source for Console {
+    fn keys(&mut self, wait: Duration, out: &mut Vec<(KeyEvent, Instant)>) -> anyhow::Result<()> {
+        if !event::poll(wait).context("polling terminal")? {
+            return Ok(());
+        }
+        while out.len() < out.capacity()
+            && event::poll(Duration::ZERO).context("polling terminal")?
+        {
+            if let event::Event::Key(key) = event::read().context("reading key")? {
+                out.push((key, Instant::now()));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Read keys as they arrive and push their notes to the ring at once, then
+/// hand the view a fresh `Glance` whenever one changed, waking `view`.
+fn read(
+    input: &mut Input,
+    source: &mut impl Source,
+    poll: Duration,
+    done: &AtomicBool,
+    mut tx: rtrb::Producer<Glance>,
+    view: &Thread,
+) -> anyhow::Result<()> {
+    let mut shown = input.model().glance();
+    let mut keys = Vec::with_capacity(KEYS);
+    loop {
+        // SIGTERM and SIGHUP only set a flag; leaving here restores the
+        // terminal through the same path as the quit key
+        if crate::terminal::interrupted() || done.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
+        // poll bounds the wait so Fixed note-offs still fall due on time
+        keys.clear();
+        if let Err(error) = source.keys(poll, &mut keys) {
+            input.read_failed(io_kind(&error));
+            return Err(error);
+        }
+        for &(key, read) in &keys {
+            let Some(stroke) = stroke(key) else {
+                continue;
+            };
+            if input.update(Msg::Key(stroke, read)).is_break() {
+                return Ok(());
+            }
+        }
+
+        if input.update(Msg::Tick).is_break() {
+            return Ok(());
+        }
+
+        // the view has gone, so there is no one left to play for
+        if tx.is_abandoned() {
+            return Ok(());
+        }
+        let glance = input.model().glance();
+        // a full ring is offered the same glance again next poll
+        if glance != shown && tx.push(glance).is_ok() {
+            shown = glance;
+            view.unpark();
+        }
+    }
+}
+
+fn io_kind(error: &anyhow::Error) -> std::io::ErrorKind {
+    error
+        .downcast_ref::<std::io::Error>()
+        .map_or(std::io::ErrorKind::Other, std::io::Error::kind)
+}
+
+/// What the view draws from that stays put while playing.
+struct Still {
+    keymap: Keymap,
+    freqs: Freqs,
+    gating: Gating,
+    /// before the first key
+    glance: Glance,
+}
+
+/// The parts of a session the view reads while the input thread has the
+/// rest.
+struct Lent<'a> {
+    stats: &'a Stats,
+    timing: &'a mut Timing,
+    faults: &'a mut Faults,
+    sources: &'a mut Sources,
+}
+
+/// Redraw every `poll`, and at once when the input thread reports a change,
+/// until it stops.
 fn drive(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    session: &mut Session,
-    gating: Gating,
+    lent: Lent,
+    still: &Still,
+    mut rx: rtrb::Consumer<Glance>,
     config: &TuiConfig,
 ) -> anyhow::Result<()> {
+    let Lent {
+        stats,
+        timing,
+        faults,
+        sources,
+    } = lent;
     // ballistics are the view's, not the device's: the callback has no
     // business knowing the frame rate a bar falls at
     let mut peak = Meter::new(config.meter_hold, config.meter_fall);
     let mut activity = Activity::default();
-    let mut spectrum = Spectrum::new();
+    let history = sources.sample_rate() * config.scope_history.as_secs_f32();
+    let mut scope = Scope::new(history.ceil() as usize, config.scope_cycles);
+    let mut spectrum = Spectrum::new(config.spectrum_size);
     let mut last = Instant::now();
+    let mut glance = still.glance;
 
     loop {
-        // SIGTERM and SIGHUP only set a flag; leaving here restores the
-        // terminal through the same path as the quit key
-        if crate::terminal::interrupted() {
-            return Ok(());
-        }
-
         // one snapshot() per frame gauges reset,
         // so widgets must share one capture
-        let snap = session.stats.snapshot();
+        let snap = stats.snapshot();
 
         let now = Instant::now();
         let dt = now - last;
         last = now;
         peak.update(meter::scale(snap.peak, config.meter_floor_db), dt);
         activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clipped);
-        drain(&mut session.output_tee, &mut spectrum);
-        spectrum.update().context("transforming the spectrum")?;
 
-        let model = session.model();
+        // spread sorts each window, so it is taken before the draw it
+        // would otherwise be counted in
+        timing.drain(now);
+        faults.drain();
+        let latency = stages(&timing.latency, config);
+        let fps = timing.latency.view.per_second();
+
+        if glance.scope != sources.selection() {
+            sources.select(glance.scope);
+            scope.clear();
+            spectrum.clear();
+        }
+        // all of it each time: a full tee drops the newest frames rather
+        // than the oldest
+        sources.read(|sample| {
+            scope.push(sample);
+            spectrum.push(sample);
+        });
+        spectrum.update().context("transforming the spectrum")?;
+        scope.tune(glance.sounding.and_then(|note| still.freqs.hz(note)));
+        let source = sources.to_string();
         let view = View {
-            keyboard: &model.keyboard,
+            wave: scope.window(sources.sample_rate()),
+            source: &source,
+            spectrum: &spectrum,
+            sample_rate: sources.sample_rate(),
+            keymap: &still.keymap,
+            glance: &glance,
             snap: &snap,
+            fault: faults.last(),
             peak: &peak,
             activity: &activity,
-            freqs: &model.freqs,
-            spectrum: &spectrum,
-            sample_rate: model.sample_rate,
-            gating,
-            help: model.help,
+            freqs: &still.freqs,
+            gating: still.gating,
             floor_db: config.meter_floor_db,
+            latency: &latency,
+            fps,
+            requested: timing.requested,
+            config,
         };
         terminal.draw(|frame| draw(frame, &view))?;
+        timing.drawn(Instant::now());
 
-        if event::poll(config.poll)? {
-            // drain immediately
-            while event::poll(Duration::ZERO)? {
-                let event::Event::Key(key) = event::read()? else {
-                    continue;
-                };
-                let Some(stroke) = stroke(key) else {
-                    continue;
-                };
-                if session.update(Msg::Key(stroke)).is_break() {
-                    return Ok(());
-                }
-            }
+        // woken early by a glance, or by the input thread ending
+        std::thread::park_timeout(config.poll);
+        // only the latest copy matters
+        while let Ok(next) = rx.pop() {
+            glance = next;
         }
-
-        if session.update(Msg::Tick).is_break() {
+        // quit, an interrupt, or an input error, which the caller reports;
+        // drained once more for a fault the input thread pushed on its way out
+        if rx.is_abandoned() {
+            faults.drain();
             return Ok(());
         }
-    }
-}
-
-/// Move everything the output tee holds into `spectrum`.
-fn drain(tee: &mut OutputTee, spectrum: &mut Spectrum) {
-    let channels = tee.channels;
-    let slots = tee.samples.slots();
-    if let Ok(chunk) = tee.samples.read_chunk(slots - slots % channels) {
-        // the first channel only: the callback writes one sample to all
-        spectrum.extend(chunk.into_iter().step_by(channels));
     }
 }
 
@@ -186,37 +370,151 @@ fn code(key: Key) -> KeyCode {
 /// and whatever a second screen needs will land here too.
 #[derive(Clone, Copy)]
 struct View<'a> {
-    keyboard: &'a Keyboard,
+    /// the scope's window, oldest first
+    wave: &'a [f32],
+    /// what the scope and spectrum read, for their titles
+    source: &'a str,
+    spectrum: &'a Spectrum,
+    /// the source's, which places its bins in hz
+    sample_rate: f32,
+    keymap: &'a Keymap,
+    glance: &'a Glance,
     snap: &'a Snapshot,
+    /// the latest fault, shown beside its count
+    fault: Option<Fault>,
     peak: &'a Meter,
     activity: &'a Activity,
     freqs: &'a Freqs,
-    spectrum: &'a Spectrum,
-    sample_rate: u32,
     gating: Gating,
-    help: bool,
     /// the meter's floor, from `config.lua`
     floor_db: f32,
+    latency: &'a [Stage],
+    /// frames drawn in the last second
+    fps: usize,
+    /// frames per callback asked of the device; `None` left it to the
+    /// platform
+    requested: Option<u32>,
+    config: &'a TuiConfig,
+}
+
+/// One latency row: a stage, its spread, and its budget.
+struct Stage {
+    name: &'static str,
+    spread: Option<Spread<Duration>>,
+    budget: Budget,
+}
+
+/// The stages in signal order, then their per-key total.
+fn stages(latency: &Latency, config: &TuiConfig) -> Vec<Stage> {
+    let stage = |name, window: &Window<Duration>, budget| Stage {
+        name,
+        spread: window.spread(),
+        budget,
+    };
+    vec![
+        stage("input", &latency.input, config.input_budget),
+        stage("render", &latency.render, config.render_budget),
+        stage("output", &latency.output, config.output_budget),
+        stage("total", &latency.total, config.total_budget),
+    ]
+}
+
+/// The buffer the device gave, and whether it differs from the one asked
+/// for. `got` is 0 before the first callback.
+fn buffer(requested: Option<u32>, got: u32) -> (String, bool) {
+    let shown = match got {
+        0 => "—".to_string(),
+        frames => frames.to_string(),
+    };
+    match requested {
+        None => (format!("buffer {shown} (default)"), false),
+        Some(asked) if got == 0 || got == asked => (format!("buffer {asked}"), false),
+        Some(asked) => (format!("buffer {shown} (asked {asked})"), true),
+    }
+}
+
+fn fps_style(fps: usize, config: &TuiConfig) -> Style {
+    match fps {
+        fps if (fps as f32) < config.fps.danger => Style::new().fg(Color::Red),
+        fps if (fps as f32) < config.fps.warn => Style::new().fg(Color::Yellow),
+        _ => Style::new(),
+    }
+}
+
+/// The status counter a fault is counted in.
+fn counter(fault: Fault) -> &'static str {
+    match fault {
+        Fault::Stream(_) => "errors",
+        Fault::Overrun { .. } => "overruns",
+        Fault::Dropped => "dropped",
+        Fault::TeeDropped { .. } => "tee dropped",
+        Fault::Input(_) => "input errors",
+    }
+}
+
+/// The one status line: fault counters, the latest fault beside its own,
+/// the buffer, and the view's rate. An unplugged device or a stalled
+/// callback otherwise looks like a quiet synth, so each counter takes
+/// colour once it moves.
+fn status(
+    snap: &Snapshot,
+    fault: Option<Fault>,
+    requested: Option<u32>,
+    fps: usize,
+    config: &TuiConfig,
+) -> Line<'static> {
+    let count = |name: &str, n: u64, colour: Color| {
+        let style = match n {
+            0 => Style::new(),
+            _ => Style::new().fg(colour),
+        };
+        let text = match fault {
+            Some(fault) if counter(fault) == name => format!("{name} {n} (last: {fault})  "),
+            _ => format!("{name} {n}  "),
+        };
+        Span::styled(text, style)
+    };
+    let (buffer, differs) = buffer(requested, snap.buffer_frames);
+    let buffer_style = match differs {
+        true => Style::new().fg(Color::Yellow),
+        false => Style::new(),
+    };
+    Line::from(vec![
+        count("errors", snap.errors, Color::Red),
+        count("overruns", snap.overruns, Color::Red),
+        count("dropped", snap.dropped, Color::Yellow),
+        count("tee dropped", snap.output_tee_dropped, Color::Yellow),
+        count("input errors", snap.input_errors, Color::Yellow),
+        Span::styled(buffer, buffer_style),
+        Span::styled(format!("  view {fps} fps"), fps_style(fps, config)),
+    ])
 }
 
 fn draw(frame: &mut Frame, view: &View) {
     let View {
-        keyboard,
+        wave,
+        source,
+        spectrum,
+        sample_rate,
+        keymap,
+        glance,
         snap,
+        fault,
         peak,
         activity,
         freqs,
-        spectrum,
-        sample_rate,
         gating,
-        help,
         floor_db,
+        latency,
+        fps,
+        requested,
+        config,
     } = *view;
 
     let footer = vec![Line::from("(ctrl-c) quit | (?) help")];
 
-    // stats is sized to exactly what it draws: the cpu, gain, and fault
-    // rows, the two-row sparkline, and its own borders. input takes what is left, so
+    // stats is sized to exactly what it draws: the taller of the meters and
+    // the latency table, and its own borders. input takes what is left, so
     // the graphs stay put while the window grows.
     let [input_area, stats_area, footer_area] = Layout::vertical([
         Constraint::Min(0),
@@ -233,38 +531,54 @@ fn draw(frame: &mut Frame, view: &View) {
             .spacing(Spacing::Overlap(1))
             .areas(input_area);
 
-    let [scope_area, spectrum_area] = Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)])
-        .spacing(Spacing::Overlap(1))
-        .areas(scope_area);
+    let height = config.spectrum_height.round() as u16;
+    let [scope_area, spectrum_area] = Layout::vertical([
+        Constraint::Percentage(100 - height),
+        Constraint::Percentage(height),
+    ])
+    .spacing(Spacing::Overlap(1))
+    .areas(scope_area);
 
     frame.render_widget(
-        Paragraph::new("TODO")
-            .centered()
-            .style(Style::new().fg(Color::DarkGray))
-            .block(pane().title(" scope ")),
+        oscilloscope(wave).block(pane().title(format!(" scope: {source} "))),
         scope_area,
     );
-    spectrum_pane(frame, spectrum_area, spectrum, sample_rate, floor_db);
+    spectrum_pane(
+        frame,
+        spectrum_area,
+        spectrum,
+        source,
+        sample_rate,
+        config.spectrum_floor_db,
+    );
 
     let input_block = pane().title(" input ");
     let input_inner = input_block.inner(input_area);
     frame.render_widget(input_block, input_area);
-    frame.render_widget(state(keyboard, freqs, gating), input_inner);
+    frame.render_widget(state(keymap, glance, freqs, gating), input_inner);
     // bound so its inner area can be split: the gauges and the sparkline sit
     // inside one border rather than carrying one each
     let stats_block = pane().title(" stats ");
     let stats_inner = stats_block.inner(stats_area);
     frame.render_widget(stats_block, stats_area);
 
-    // graph, then gain, then cpu, then faults at the very bottom: region
-    // order is what stacks them, not the order the widgets are rendered in
-    let [clip_area, peak_area, load_area, fault_area] = Layout::vertical([
+    // latency, then graph, then gain, then cpu, then status at the very
+    // bottom: region order is what stacks them, not the order the widgets
+    // are rendered in
+    let [latency_area, clip_area, peak_area, load_area, status_area] = Layout::vertical([
+        Constraint::Length(LATENCY_ROWS),
         Constraint::Length(SPARK_ROWS),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
     .areas(stats_inner);
+    let scale = Scale {
+        floor_ms: config.latency_floor_ms,
+        ceil_ms: config.latency_ceil_ms,
+    };
+    latency_rows(frame, latency_area, latency, scale);
+    frame.render_widget(status(snap, fault, requested, fps, config), status_area);
 
     frame.render_widget(
         Sparkline::default()
@@ -303,15 +617,6 @@ fn draw(frame: &mut Frame, view: &View) {
             0.9,
         ),
         load_area,
-    );
-    // an unplugged device or a stalled callback otherwise looks like a
-    // quiet synth
-    frame.render_widget(
-        Line::from(format!(
-            "errors {}  overruns {}  dropped {}",
-            snap.errors, snap.overruns, snap.dropped
-        )),
-        fault_area,
     );
     // peak is logarithmic, so the thresholds are dB, placed on whatever
     // floor the scale has
@@ -353,26 +658,54 @@ fn draw(frame: &mut Frame, view: &View) {
     );
 
     // last, so it lands on top of everything already drawn
-    if help {
-        overlay(frame, keyboard);
+    if glance.help {
+        overlay(frame, keymap);
     }
 }
 
-/// The output's spectrum, one bar per column, labelled with the
+/// `wave` across the whole width on a fixed -1..1 axis, so clipping reads as
+/// a flat top rather than being scaled away. Braille gives each cell 2x4
+/// dots, and joining samples keeps a high pitch from drawing as dots.
+fn oscilloscope(wave: &[f32]) -> Canvas<'_, impl Fn(&mut canvas::Context) + '_> {
+    Canvas::default()
+        .marker(Marker::Braille)
+        .x_bounds([0.0, wave.len().saturating_sub(1).max(1) as f64])
+        .y_bounds([-1.0, 1.0])
+        .paint(move |ctx| {
+            ctx.draw(&Segment::new(
+                0.0,
+                0.0,
+                wave.len() as f64,
+                0.0,
+                Color::DarkGray,
+            ));
+            ctx.layer();
+            for (x, pair) in wave.windows(2).enumerate() {
+                ctx.draw(&Segment::new(
+                    x as f64,
+                    f64::from(pair[0]),
+                    x as f64 + 1.0,
+                    f64::from(pair[1]),
+                    Color::Green,
+                ));
+            }
+        })
+}
+
+/// The source's spectrum, one bar per column, labelled with the
 /// frequencies at either end of its log axis.
 fn spectrum_pane(
     frame: &mut Frame,
     area: Rect,
     spectrum: &Spectrum,
-    sample_rate: u32,
+    source: &str,
+    sample_rate: f32,
     floor_db: f32,
 ) {
-    let bin = sample_rate as f32 / spectrum::SIZE as f32;
-    let nyquist = sample_rate as f32 / 2.0;
     let block = pane()
-        .title(" spectrum ")
-        .title_bottom(Line::from(format!(" {} ", hz(bin))).left_aligned())
-        .title_bottom(Line::from(format!(" {} ", hz(nyquist))).right_aligned());
+        .title(format!(" spectrum: {source} "))
+        .title_bottom(Line::from(format!(" {} ", hz(spectrum.bin_hz(sample_rate)))).left_aligned())
+        .title_bottom(Line::from(format!(" {} ", hz(sample_rate / 2.0))).right_aligned());
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -413,12 +746,12 @@ fn pane() -> Block<'static> {
 }
 
 /// The keymap, over the top of whatever is behind it.
-fn overlay(frame: &mut Frame, keyboard: &Keyboard) {
+fn overlay(frame: &mut Frame, keymap: &Keymap) {
     let [area] = Layout::horizontal([Constraint::Length(34)])
         .flex(Flex::Center)
         .areas(frame.area());
-    // five bindings plus the two border rows
-    let [area] = Layout::vertical([Constraint::Length(7)])
+    // six bindings plus the two border rows
+    let [area] = Layout::vertical([Constraint::Length(8)])
         .flex(Flex::Center)
         .areas(area);
 
@@ -435,7 +768,7 @@ fn overlay(frame: &mut Frame, keyboard: &Keyboard) {
         .style(Style::new().fg(POPUP_INK).bg(POPUP_FILL))
         .title(Line::from(" keymap ").style(Style::new().add_modifier(Modifier::BOLD)))
         .title_bottom(" (/) close ");
-    frame.render_widget(bindings(keyboard).block(block), area);
+    frame.render_widget(bindings(keymap).block(block), area);
 }
 
 /// Darken the band one cell down and right of `area`, keeping the symbols
@@ -462,8 +795,7 @@ fn shadow(frame: &mut Frame, area: Rect) {
 /// A table rather than padded strings: the two columns are measured from
 /// the content, and `Flex::Center` sits the pair in the middle of whatever
 /// width the popup has instead of pinning them left.
-fn bindings(keyboard: &Keyboard) -> Table<'static> {
-    let keymap = keyboard.keymap();
+fn bindings(keymap: &Keymap) -> Table<'static> {
     let keys = |keys: &[Key]| {
         keys.iter()
             .map(|&key| code(key).to_string())
@@ -475,6 +807,7 @@ fn bindings(keyboard: &Keyboard) -> Table<'static> {
         ("octave up", keys(&keymap.octave_up)),
         ("octave down", keys(&keymap.octave_down)),
         ("silence", keys(&keymap.stop)),
+        ("scope source", keys(&keymap.scope)),
         ("help", keys(&keymap.help)),
         ("quit", "ctrl-c or ctrl-d".to_string()),
     ];
@@ -501,11 +834,7 @@ fn bindings(keyboard: &Keyboard) -> Table<'static> {
 /// bar is clamped while the caller's label keeps the true figure: an
 /// excursion reads past full instead of disappearing.
 fn bar(label: String, value: f32, warn: f32, danger: f32) -> Gauge<'static> {
-    let colour = match value {
-        value if value < warn => Color::Green,
-        value if value < danger => Color::Yellow,
-        _ => Color::Red,
-    };
+    let colour = health(value, warn, danger);
     Gauge::default()
         .label(label)
         // fg fills, bg is the empty track; one style covers both
@@ -516,6 +845,15 @@ fn bar(label: String, value: f32, warn: f32, danger: f32) -> Gauge<'static> {
         .ratio(value.clamp(0.0, 1.0) as f64)
 }
 
+/// Green, then yellow at `warn`, then red at `danger`.
+fn health(value: f32, warn: f32, danger: f32) -> Color {
+    match value {
+        value if value < warn => Color::Green,
+        value if value < danger => Color::Yellow,
+        _ => Color::Red,
+    }
+}
+
 /// Live input state as a centred table.
 ///
 /// Colour carries meaning rather than decoration: the label column is dim so
@@ -523,10 +861,10 @@ fn bar(label: String, value: f32, warn: f32, danger: f32) -> Gauge<'static> {
 /// because it is modal state that is easy to forget, and `fixed` gating is
 /// yellow because it means the terminal will not report key release, so note
 /// length is not the player's choice.
-fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
+fn state(keymap: &Keymap, glance: &Glance, freqs: &Freqs, gating: Gating) -> Table<'static> {
     let dim = Style::new().fg(Color::DarkGray);
 
-    let note = match keyboard.sounding() {
+    let note = match glance.sounding {
         // the patch's tuning defines frequency
         Some(note) => {
             let hz = freqs.hz(note).unwrap_or(0.0);
@@ -538,8 +876,8 @@ fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
         None => ("—".to_string(), dim),
     };
 
-    let (octave, at_start) = keyboard.octave();
-    let (low, high) = keyboard.reach();
+    let (octave, at_start) = glance.octave;
+    let (low, high) = glance.reach;
     let octave = (
         format!("{octave:+}  ({low:+}..{high:+})"),
         // dim at the start, so the row lights up only once it has moved
@@ -553,17 +891,16 @@ fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
     let gating = match gating {
         Gating::Held => ("gated".to_string(), dim),
         Gating::Fixed => (
-            format!("{}ms", keyboard.keymap().gate.as_millis()),
+            format!("{}ms", keymap.gate.as_millis()),
             Style::new().fg(Color::Yellow),
         ),
     };
 
-    let char = match keyboard.last_key() {
+    let char = match glance.last_key {
         Some(ch) => (ch.to_string(), Style::new().fg(Color::Reset)),
         None => ("—".to_string(), dim),
     };
 
-    let keymap = keyboard.keymap();
     let layout = match keymap.name.as_deref() {
         Some(name) => (name.to_string(), Style::new().fg(Color::Reset)),
         // a patch supplying its own notes without a name
@@ -589,6 +926,145 @@ fn state(keyboard: &Keyboard, freqs: &Freqs, gating: Gating) -> Table<'static> {
         ],
     )
     .column_spacing(COLUMN_GAP)
+}
+
+/// A number column's header, and the value it shows.
+type Column = (&'static str, fn(&Spread<Duration>) -> Duration);
+
+/// Which number columns a latency row shows, and whether it has a bar,
+/// for the width it has.
+fn latency_columns(width: u16) -> (&'static [Column], bool) {
+    const ALL: [Column; 3] = [("p50", |s| s.p50), ("p99", |s| s.p99), ("max", |s| s.max)];
+    const P99: [Column; 1] = [("p99", |s| s.p99)];
+    match width {
+        width if width >= LATENCY_FULL => (&ALL, true),
+        width if width >= LATENCY_BAR => (&P99, true),
+        _ => (&ALL, false),
+    }
+}
+
+/// The header, then one row per stage: label, numbers in ms, and a bar on
+/// one log scale shared by every row, so bars compare across rows.
+fn latency_rows(frame: &mut Frame, area: Rect, stages: &[Stage], scale: Scale) {
+    let dim = Style::new().fg(Color::DarkGray);
+    let (columns, has_bar) = latency_columns(area.width);
+    let mut widths = vec![Constraint::Length(STAGE_WIDTH)];
+    widths.extend(columns.iter().map(|_| Constraint::Length(NUMBER_WIDTH)));
+    widths.push(Constraint::Min(0));
+    let split = |row: Rect| Layout::horizontal(widths.clone()).spacing(1).split(row);
+    let right = |text: String| Line::from(text).right_aligned();
+
+    let mut rows = area.rows();
+    let Some(header) = rows.next() else {
+        return;
+    };
+    let cells = split(header);
+    frame.render_widget(Line::from("latency").style(dim), cells[0]);
+    for ((name, _), &cell) in columns.iter().zip(&cells[1..]) {
+        frame.render_widget(right((*name).to_string()).style(dim), cell);
+    }
+    if has_bar {
+        axis(frame.buffer_mut(), cells[cells.len() - 1], dim, scale);
+    }
+
+    for (stage, row) in stages.iter().zip(rows) {
+        let cells = split(row);
+        frame.render_widget(Line::from(stage.name).style(dim), cells[0]);
+        for ((_, pick), &cell) in columns.iter().zip(&cells[1..]) {
+            let text = match &stage.spread {
+                Some(spread) => format!("{:.2}", ms(pick(spread))),
+                None => "—".to_string(),
+            };
+            frame.render_widget(right(text), cell);
+        }
+        if has_bar {
+            range(frame, cells[cells.len() - 1], stage, scale);
+        }
+    }
+}
+
+fn ms(at: Duration) -> f32 {
+    at.as_secs_f32() * 1e3
+}
+
+/// The latency bars' shared log scale, from `config.lua`.
+#[derive(Clone, Copy)]
+struct Scale {
+    floor_ms: f32,
+    ceil_ms: f32,
+}
+
+impl Scale {
+    fn at(self, ms: f32) -> f32 {
+        meter::ms_scale(ms, self.floor_ms, self.ceil_ms)
+    }
+
+    fn decades(self) -> Vec<f32> {
+        meter::decades(self.floor_ms, self.ceil_ms)
+    }
+}
+
+/// The cell `scaled` falls in across `width`.
+fn cell_at(scaled: f32, width: u16) -> u16 {
+    ((scaled * f32::from(width)) as u16).min(width.saturating_sub(1))
+}
+
+/// Decade labels across the bar column, each left out where it would run
+/// into the one before or off the end.
+fn axis(buffer: &mut ratatui::buffer::Buffer, area: Rect, style: Style, scale: Scale) {
+    let mut free = area.left();
+    let decades = scale.decades();
+    for (n, &decade) in decades.iter().enumerate() {
+        let mut label = meter::decade_label(decade);
+        if n + 1 == decades.len() {
+            label.push_str("ms");
+        }
+        let width = label.chars().count() as u16;
+        let x = (area.left() + cell_at(scale.at(decade), area.width))
+            .min(area.right().saturating_sub(width));
+        if x >= free && x + width <= area.right() {
+            buffer.set_string(x, area.top(), &label, style);
+            free = x + width + 1;
+        }
+    }
+}
+
+/// p50 as the fill, coloured by the stage's budget; then decade ticks on the
+/// empty track, a heavy p99 tick, and a light max marker, written over it
+/// the way `shadow` writes, with max winning where they share a cell.
+fn range(frame: &mut Frame, area: Rect, stage: &Stage, scale: Scale) {
+    let (warn, danger) = (scale.at(stage.budget.warn), scale.at(stage.budget.danger));
+    let p50 = stage.spread.map_or(0.0, |s| scale.at(ms(s.p50)));
+    frame.render_widget(bar(String::new(), p50, warn, danger), area);
+
+    let buffer = frame.buffer_mut();
+    let y = area.top();
+    let filled = p50 * f32::from(area.width);
+    let inner = scale
+        .decades()
+        .into_iter()
+        .filter(|&decade| decade > scale.floor_ms && decade < scale.ceil_ms);
+    for decade in inner {
+        let at = cell_at(scale.at(decade), area.width);
+        if f32::from(at) < filled {
+            continue;
+        }
+        if let Some(cell) = buffer.cell_mut((area.left() + at, y)) {
+            cell.set_symbol("·");
+        }
+    }
+
+    let Some(spread) = stage.spread else {
+        return;
+    };
+    let p99 = scale.at(ms(spread.p99));
+    let marks = [("┃", health(p99, warn, danger)), ("│", Color::Gray)];
+    for ((symbol, colour), at) in marks.into_iter().zip([p99, scale.at(ms(spread.max))]) {
+        let x = area.left() + cell_at(at, area.width);
+        if let Some(cell) = buffer.cell_mut((x, y)) {
+            cell.set_symbol(symbol).set_fg(colour);
+        }
+    }
 }
 
 fn name(note: u8) -> String {
@@ -623,6 +1099,149 @@ mod tests {
         for k in keys {
             assert_eq!(key(code(k)), Some(k));
         }
+    }
+
+    #[test]
+    fn an_unset_buffer_reads_as_the_default() {
+        assert_eq!(buffer(None, 256), ("buffer 256 (default)".into(), false));
+        assert_eq!(buffer(None, 0), ("buffer — (default)".into(), false));
+    }
+
+    #[test]
+    fn a_buffer_given_as_asked_shows_once() {
+        assert_eq!(buffer(Some(256), 256), ("buffer 256".into(), false));
+        assert_eq!(buffer(Some(256), 0), ("buffer 256".into(), false));
+    }
+
+    #[test]
+    fn a_buffer_other_than_asked_names_both_and_warns() {
+        assert_eq!(
+            buffer(Some(128), 512),
+            ("buffer 512 (asked 128)".into(), true)
+        );
+    }
+
+    #[test]
+    fn a_slow_view_warns_then_turns_red() {
+        let config = crate::script::config_defaults().tui;
+        let style = |fps| fps_style(fps, &config);
+        assert_eq!(style(60), Style::new());
+        assert_eq!(style(30), Style::new());
+        assert_eq!(style(29), Style::new().fg(Color::Yellow));
+        assert_eq!(style(24), Style::new().fg(Color::Yellow));
+        assert_eq!(style(23), Style::new().fg(Color::Red));
+    }
+
+    /// Hands out each scripted result in turn, then fails.
+    struct Script(Vec<anyhow::Result<Vec<KeyEvent>>>);
+
+    impl Source for Script {
+        fn keys(&mut self, _: Duration, out: &mut Vec<(KeyEvent, Instant)>) -> anyhow::Result<()> {
+            if self.0.is_empty() {
+                anyhow::bail!("script ran out");
+            }
+            let keys = self.0.remove(0)?;
+            out.extend(keys.into_iter().map(|key| (key, Instant::now())));
+            Ok(())
+        }
+    }
+
+    fn reads(script: Script) -> anyhow::Result<()> {
+        let mut input = Input::detached(crate::session::tests::model());
+        let (tx, _rx) = rtrb::RingBuffer::new(GLANCES);
+        let mut script = script;
+        read(
+            &mut input,
+            &mut script,
+            Duration::ZERO,
+            &AtomicBool::new(false),
+            tx,
+            &std::thread::current(),
+        )
+    }
+
+    #[test]
+    fn the_latest_fault_shows_beside_its_count() {
+        let config = crate::script::config_defaults().tui;
+        let snap = Snapshot {
+            errors: 1,
+            ..Snapshot::default()
+        };
+        let underrun = Fault::Stream(crate::audio::StreamKind::Underrun);
+        let line = status(&snap, Some(underrun), None, 60, &config).to_string();
+        assert!(
+            line.starts_with("errors 1 (last: underrun)  overruns 0  "),
+            "{line}"
+        );
+        let line = status(&snap, None, None, 60, &config).to_string();
+        assert!(line.starts_with("errors 1  overruns 0  "), "{line}");
+    }
+
+    #[test]
+    fn tee_drops_and_input_errors_have_counts_that_warn() {
+        let config = crate::script::config_defaults().tui;
+        let snap = Snapshot {
+            output_tee_dropped: 3,
+            ..Snapshot::default()
+        };
+        let tee = Fault::TeeDropped { frames: 3 };
+        let line = status(&snap, Some(tee), None, 60, &config);
+        let span = |name: &str| {
+            line.spans
+                .iter()
+                .find(|span| span.content.starts_with(name))
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            span("tee dropped").content,
+            "tee dropped 3 (last: output tee dropped 3 frames)  "
+        );
+        assert_eq!(span("tee dropped").style, Style::new().fg(Color::Yellow));
+        assert_eq!(span("input errors").content, "input errors 0  ");
+        assert_eq!(span("input errors").style, Style::new());
+    }
+
+    #[test]
+    fn an_input_error_keeps_its_kind() {
+        let error = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))
+            .context("reading key");
+        assert_eq!(io_kind(&error), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(io_kind(&anyhow::anyhow!("eof")), std::io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn an_input_error_ends_the_read_loop() {
+        let script = Script(vec![Ok(vec![]), Err(anyhow::anyhow!("eof"))]);
+        let err = reads(script).unwrap_err();
+        assert_eq!(err.to_string(), "eof");
+    }
+
+    #[test]
+    fn ctrl_c_ends_the_read_loop() {
+        let quit = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(reads(Script(vec![Ok(vec![quit])])).is_ok());
+    }
+
+    fn top_row(wave: &[f32]) -> String {
+        let area = Rect::new(0, 0, 24, 16);
+        let mut buffer = ratatui::buffer::Buffer::empty(area);
+        ratatui::widgets::Widget::render(oscilloscope(wave), area, &mut buffer);
+        (0..area.width)
+            .map(|x| buffer[(x, 0)].symbol().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn clipping_draws_a_flat_top() {
+        let sine = |gain: f32| -> Vec<f32> {
+            (0..96)
+                .map(|i| (gain * (std::f32::consts::TAU * i as f32 / 96.0).sin()).clamp(-1.0, 1.0))
+                .collect()
+        };
+        let lit = |row: String| row.chars().filter(|c| *c != ' ' && *c != '⠀').count();
+        let (clean, clipped) = (top_row(&sine(1.0)), top_row(&sine(4.0)));
+        assert!(lit(clipped) > 2 * lit(clean));
     }
 
     #[test]

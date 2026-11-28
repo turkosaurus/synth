@@ -139,6 +139,20 @@ pub(super) const CONFIG: Schema = Schema {
         // "" is the default folder; anything else is checked when resolved
         optional(field::CUSTOM_DIR, Ty::Text, Bound::Any),
         optional(field::TUI, Ty::Table, Bound::Any),
+        optional(field::LOG, Ty::Table, Bound::Any),
+    ],
+};
+
+pub(super) const CONFIG_LOG: Schema = Schema {
+    what: "config.lua log",
+    fields: &[
+        // KiB; 0 never trims, and a trim reads the kept part into memory
+        // once at start, so the ceiling is 1 GiB
+        optional(
+            field::TRIM_SIZE_KB,
+            Ty::Integer,
+            Bound::Between(0.0, 1_048_576.0),
+        ),
     ],
 };
 
@@ -152,6 +166,78 @@ pub(super) const CONFIG_TUI: Schema = Schema {
         optional(field::METER_FALL, Ty::Number, Bound::Above(0.0)),
         // the meter's scale divides by it, and 0 dB is full scale
         optional(field::METER_FLOOR, Ty::Number, Bound::Below(0.0)),
+        optional(field::METER_LATENCY, Ty::Table, Bound::Any),
+        optional(field::METER_FPS, Ty::Table, Bound::Any),
+        // one ring per producing thread, allocated when the stream opens;
+        // a full ring loses the record, never the count
+        optional(field::FAULTS, Ty::Integer, Bound::Between(1.0, 65536.0)),
+        optional(field::SOURCE, Ty::Table, Bound::Any),
+        optional(field::SCOPE, Ty::Table, Bound::Any),
+        optional(field::SPECTRUM, Ty::Table, Bound::Any),
+    ],
+};
+
+pub(super) const CONFIG_SOURCE: Schema = Schema {
+    what: "config.lua tui source",
+    fields: &[
+        // a name, checked against the streams once read
+        optional(field::STREAM, Ty::Text, Bound::Any),
+        // 0 is the mix; the device's channel count is checked when it opens
+        optional(field::CHANNEL, Ty::Integer, Bound::Between(0.0, 64.0)),
+        // ms; one ring per stream, allocated when the session opens and
+        // drained every redraw, so it needs only outlast a slow frame
+        optional(field::TEE, Ty::Number, Bound::Between(1.0, 10_000.0)),
+    ],
+};
+
+pub(super) const CONFIG_SCOPE: Schema = Schema {
+    what: "config.lua tui scope",
+    fields: &[
+        // ms; allocated once, and searched for a trigger every redraw
+        optional(field::HISTORY, Ty::Number, Bound::Between(1.0, 10_000.0)),
+        // a window shorter than a quarter cycle shows no shape
+        optional(field::CYCLES, Ty::Number, Bound::Between(0.25, 64.0)),
+    ],
+};
+
+pub(super) const CONFIG_SPECTRUM: Schema = Schema {
+    what: "config.lua tui spectrum",
+    fields: &[
+        // transformed every redraw on the UI thread; that it is a power of
+        // two is checked once read
+        optional(field::SIZE, Ty::Integer, Bound::Between(256.0, 32_768.0)),
+        // the spectrum's scale divides by it, and 0 dB is full scale
+        optional(field::FLOOR, Ty::Number, Bound::Below(0.0)),
+        // both panes keep at least a row
+        optional(field::HEIGHT, Ty::Number, Bound::Between(1.0, 99.0)),
+    ],
+};
+
+pub(super) const CONFIG_LATENCY: Schema = Schema {
+    what: "config.lua tui meter_latency",
+    fields: &[
+        optional(field::WINDOW, Ty::Number, Bound::Above(0.0)),
+        // one ring, allocated when the session opens; the view drains it
+        // every frame, so far fewer than the maximum are ever waiting
+        optional(field::RECORDS, Ty::Integer, Bound::Between(1.0, 65536.0)),
+        // the log scale divides by both ends; their order is checked once
+        // both are known
+        optional(field::FLOOR, Ty::Number, Bound::Above(0.0)),
+        optional(field::CEIL, Ty::Number, Bound::Above(0.0)),
+        optional(field::INPUT, Ty::Table, Bound::Any),
+        optional(field::RENDER, Ty::Table, Bound::Any),
+        optional(field::OUTPUT, Ty::Table, Bound::Any),
+        optional(field::TOTAL, Ty::Table, Bound::Any),
+    ],
+};
+
+/// A stage's budget in ms, or the view's frame rate thresholds. Their
+/// order is checked once both are known, since it differs between them.
+pub(super) const CONFIG_BUDGET: Schema = Schema {
+    what: "config.lua budget",
+    fields: &[
+        optional(field::WARN, Ty::Number, Bound::AtLeast(0.0)),
+        optional(field::DANGER, Ty::Number, Bound::AtLeast(0.0)),
     ],
 };
 
@@ -161,6 +247,8 @@ pub(super) const KEYBOARD: Schema = Schema {
         // its name and notes are checked by keymap
         field(field::LAYOUT, Ty::Table, Bound::Any),
         field(field::STOP, Ty::Table, Bound::Any),
+        // optional, so a keyboard table written before it still loads
+        optional(field::SCOPE, Ty::Table, Bound::Any),
         // a zero gate would end each note on the poll after it starts
         field(field::GATE, Ty::Number, Bound::Above(0.0)),
         // zero turns autorepeat detection off

@@ -10,6 +10,8 @@ use crate::spec::{Key, Keymap};
 struct KeyboardConfig {
     layout: Layout,
     stop: Vec<String>,
+    #[serde(default)]
+    scope: Vec<String>,
     // ms, implied rather than spelled in the Lua name
     #[serde(rename = "gate")]
     gate_ms: f64,
@@ -72,6 +74,9 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> Result<Keymap, Err
         return Err(Error::NoStopKey);
     }
 
+    // may be empty, like help
+    let scope = bindings(config.scope, "scope")?;
+
     let octave_up = bindings(config.layout.octave_up, "layout.octave_up")?;
     let octave_down = bindings(config.layout.octave_down, "layout.octave_down")?;
     // may be empty: a layout that would rather not spend a key on it
@@ -84,6 +89,7 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> Result<Keymap, Err
         ("layout.octave_up", &octave_up),
         ("layout.octave_down", &octave_down),
         ("stop", &stop),
+        ("scope", &scope),
         ("layout.help", &help),
     ] {
         for key in keys {
@@ -107,6 +113,7 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> Result<Keymap, Err
         octave_up,
         octave_down,
         stop,
+        scope,
         help,
         gate: std::time::Duration::from_secs_f64(config.gate_ms / 1000.0),
         autorepeat: std::time::Duration::from_secs_f64(config.autorepeat_ms / 1000.0),

@@ -8,14 +8,16 @@ use std::time::Duration;
 use super::Error;
 
 use super::field;
-use crate::spec::{Config, TuiConfig};
+use crate::spec::{Budget, Config, LogConfig, StreamName, TuiConfig};
 
 /// `config.lua` under the config directory.
 const FILE: [&str; 2] = ["synth", "config.lua"];
 /// The custom folder under the data directory.
 const CUSTOM: [&str; 2] = ["synth", "custom"];
 /// The debug log under the state directory.
-const LOG: [&str; 2] = ["synth", "synth.log"];
+const LOG: [&str; 2] = ["synth", "log.jsonl"];
+/// The live log under the runtime directory.
+const SOCKET: [&str; 2] = ["synth", "log.sock"];
 
 /// Where the config, data, and state directories are, from the environment. The XDG
 /// variables win wherever they are set; otherwise Unix uses the XDG spec's
@@ -25,6 +27,7 @@ struct Dirs {
     xdg_config: Option<OsString>,
     xdg_data: Option<OsString>,
     xdg_state: Option<OsString>,
+    xdg_runtime: Option<OsString>,
     home: Option<OsString>,
     /// Windows' roaming application data, for config, the custom folder, and the log
     appdata: Option<OsString>,
@@ -48,6 +51,7 @@ impl Dirs {
             xdg_config: env::var_os("XDG_CONFIG_HOME"),
             xdg_data: env::var_os("XDG_DATA_HOME"),
             xdg_state: env::var_os("XDG_STATE_HOME"),
+            xdg_runtime: env::var_os("XDG_RUNTIME_DIR"),
             home: env::var_os("HOME"),
             appdata: env::var_os("APPDATA"),
             userprofile: env::var_os("USERPROFILE"),
@@ -82,6 +86,16 @@ impl Dirs {
             true => absolute(&self.appdata),
             false => Some(absolute(&self.home)?.join(".local").join("state")),
         })
+    }
+
+    /// `$XDG_RUNTIME_DIR`, else `$XDG_STATE_HOME`, else `~/.local/state`,
+    /// since no session manager sets a runtime directory on macOS. `None` on
+    /// Windows, which has no Unix socket for it.
+    fn runtime(&self) -> Option<PathBuf> {
+        match self.windows {
+            true => None,
+            false => absolute(&self.xdg_runtime).or_else(|| self.state()),
+        }
     }
 }
 
@@ -129,16 +143,28 @@ pub fn config() -> Result<Config, Error> {
     )
 }
 
-/// Where `config` looks, whether or not a file is there: `synth/config.lua`
-/// under the config directory. `None` when the environment names none.
+/// Where `config` looks, whether or not a file is there:
+/// `$XDG_CONFIG_HOME/synth/config.lua`, else `~/.config/synth/config.lua`,
+/// or `%APPDATA%\synth\config.lua` on Windows. `None` when the
+/// environment names none.
 pub fn config_path() -> Option<PathBuf> {
     Dirs::current().config().map(|dir| under(dir, &FILE))
 }
 
-/// Where the debug log goes: `synth/synth.log` under the state directory.
-/// `None` when the environment names none.
+/// Where the log goes: `$XDG_STATE_HOME/synth/log.jsonl`, else
+/// `~/.local/state/synth/log.jsonl`, or `%APPDATA%\synth\log.jsonl` on
+/// Windows. `None` when the environment names none.
 pub fn log_path() -> Option<PathBuf> {
     Dirs::current().state().map(|dir| under(dir, &LOG))
+}
+
+/// Where the live log listens: `$XDG_RUNTIME_DIR/synth/log.sock`, private
+/// to the user and cleared at logout, so no stale socket outlives the
+/// session. Without it, `$XDG_STATE_HOME/synth/log.sock`, else
+/// `~/.local/state/synth/log.sock`.
+/// `None` when the environment names none, and always on Windows.
+pub fn socket_path() -> Option<PathBuf> {
+    Dirs::current().runtime().map(|dir| under(dir, &SOCKET))
 }
 
 /// The file's source, or `None` when there is no file.
@@ -152,6 +178,12 @@ fn read(path: &Path) -> Result<Option<String>, Error> {
 
 /// The defaults, with `user` (source and name) laid over them. Both run in
 /// one bare Lua state: `config.lua` needs none of the `synth` modules.
+/// The built-in file's settings alone, for tests elsewhere in the crate.
+#[cfg(test)]
+pub(crate) fn defaults() -> Config {
+    resolve(None).expect("the built-in config.lua loads")
+}
+
 fn resolve(user: Option<(&str, &str)>) -> Result<Config, Error> {
     let lua = mlua::Lua::new();
     let base = table(&lua, TEMPLATE, TEMPLATE_NAME)?;
@@ -178,8 +210,31 @@ fn table(lua: &mlua::Lua, source: &str, name: &str) -> Result<mlua::Table, Error
         });
     };
     super::schema::CONFIG.check(&table, None)?;
+    if let Some(log) = table.get::<Option<mlua::Table>>(field::LOG)? {
+        super::schema::CONFIG_LOG.check(&log, None)?;
+    }
     if let Some(tui) = table.get::<Option<mlua::Table>>(field::TUI)? {
         super::schema::CONFIG_TUI.check(&tui, None)?;
+        if let Some(latency) = tui.get::<Option<mlua::Table>>(field::METER_LATENCY)? {
+            super::schema::CONFIG_LATENCY.check(&latency, Some(LATENCY))?;
+            for stage in STAGES {
+                if let Some(budget) = latency.get::<Option<mlua::Table>>(stage)? {
+                    super::schema::CONFIG_BUDGET.check(&budget, Some(&stage_name(stage)))?;
+                }
+            }
+        }
+        if let Some(fps) = tui.get::<Option<mlua::Table>>(field::METER_FPS)? {
+            super::schema::CONFIG_BUDGET.check(&fps, Some(FPS))?;
+        }
+        if let Some(source) = tui.get::<Option<mlua::Table>>(field::SOURCE)? {
+            super::schema::CONFIG_SOURCE.check(&source, None)?;
+        }
+        if let Some(scope) = tui.get::<Option<mlua::Table>>(field::SCOPE)? {
+            super::schema::CONFIG_SCOPE.check(&scope, None)?;
+        }
+        if let Some(spectrum) = tui.get::<Option<mlua::Table>>(field::SPECTRUM)? {
+            super::schema::CONFIG_SPECTRUM.check(&spectrum, None)?;
+        }
     }
     Ok(table)
 }
@@ -218,11 +273,77 @@ fn custom_dir(setting: &str, dirs: &Dirs) -> Result<Option<PathBuf>, Error> {
     Ok(Some(path))
 }
 
+/// `low` and `high` from `table`, once `low` is known to be below `high`.
+/// `what` names the table in the error.
+fn ordered(
+    table: &mlua::Table,
+    what: &str,
+    low: &'static str,
+    high: &'static str,
+) -> Result<(f64, f64), Error> {
+    let (low_value, high_value): (f64, f64) = (table.get(low)?, table.get(high)?);
+    if low_value >= high_value {
+        return Err(Error::ConfigOrder {
+            what: what.to_string(),
+            low,
+            low_value,
+            high,
+            high_value,
+        });
+    }
+    Ok((low_value, high_value))
+}
+
+/// The tables under `tui` and their names, for checks and errors.
+const LATENCY: &str = "config.lua tui meter_latency";
+const FPS: &str = "config.lua tui meter_fps";
+const STAGES: [&str; 4] = [field::INPUT, field::RENDER, field::OUTPUT, field::TOTAL];
+
+fn stage_name(stage: &str) -> String {
+    format!("{LATENCY} {stage}")
+}
+
+/// A stage's budget, whose warn comes below its danger.
+fn budget(latency: &mlua::Table, stage: &str) -> Result<Budget, Error> {
+    let table: mlua::Table = latency.get(stage)?;
+    let (warn, danger) = ordered(&table, &stage_name(stage), field::WARN, field::DANGER)?;
+    Ok(Budget {
+        warn: warn as f32,
+        danger: danger as f32,
+    })
+}
+
+fn stream(name: &str) -> Result<StreamName, Error> {
+    StreamName::ALL
+        .into_iter()
+        .find(|stream| stream.name() == name)
+        .ok_or_else(|| Error::UnknownStream {
+            stream: name.to_string(),
+            expected: StreamName::ALL.map(StreamName::name).join(", "),
+        })
+}
+
 fn settings(table: &mlua::Table) -> Result<Config, Error> {
     let tui: mlua::Table = table.get(field::TUI)?;
     let ms = |key: &str| -> mlua::Result<Duration> {
         Ok(Duration::from_secs_f64(tui.get::<f64>(key)? / 1000.0))
     };
+    let latency: mlua::Table = tui.get(field::METER_LATENCY)?;
+    let (floor, ceil) = ordered(&latency, LATENCY, field::FLOOR, field::CEIL)?;
+    // a frame rate is better higher, so its danger comes below its warn
+    let fps: mlua::Table = tui.get(field::METER_FPS)?;
+    let log: mlua::Table = table.get(field::LOG)?;
+    let source: mlua::Table = tui.get(field::SOURCE)?;
+    let scope: mlua::Table = tui.get(field::SCOPE)?;
+    let spectrum: mlua::Table = tui.get(field::SPECTRUM)?;
+    let size: usize = spectrum.get(field::SIZE)?;
+    if !size.is_power_of_two() {
+        return Err(Error::SpectrumSize { size });
+    }
+    let within = |table: &mlua::Table, key: &str| -> mlua::Result<Duration> {
+        Ok(Duration::from_secs_f64(table.get::<f64>(key)? / 1000.0))
+    };
+    let (fps_danger, fps_warn) = ordered(&fps, FPS, field::DANGER, field::WARN)?;
     Ok(Config {
         // 0 asks for nothing, the same as leaving it out
         buffer_frames: table
@@ -241,6 +362,30 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
             meter_hold: ms(field::METER_HOLD)?,
             meter_fall: ms(field::METER_FALL)?,
             meter_floor_db: tui.get(field::METER_FLOOR)?,
+            latency_window: Duration::from_secs_f64(latency.get::<f64>(field::WINDOW)? / 1000.0),
+            latency_records: latency.get(field::RECORDS)?,
+            latency_floor_ms: floor as f32,
+            latency_ceil_ms: ceil as f32,
+            input_budget: budget(&latency, field::INPUT)?,
+            render_budget: budget(&latency, field::RENDER)?,
+            output_budget: budget(&latency, field::OUTPUT)?,
+            total_budget: budget(&latency, field::TOTAL)?,
+            fps: Budget {
+                warn: fps_warn as f32,
+                danger: fps_danger as f32,
+            },
+            faults: tui.get(field::FAULTS)?,
+            source_stream: stream(&source.get::<String>(field::STREAM)?)?,
+            source_channel: source.get(field::CHANNEL)?,
+            source_tee: within(&source, field::TEE)?,
+            scope_history: within(&scope, field::HISTORY)?,
+            scope_cycles: scope.get(field::CYCLES)?,
+            spectrum_size: size,
+            spectrum_floor_db: spectrum.get(field::FLOOR)?,
+            spectrum_height: spectrum.get(field::HEIGHT)?,
+        },
+        log: LogConfig {
+            trim_size_kb: log.get(field::TRIM_SIZE_KB)?,
         },
     })
 }
@@ -273,6 +418,7 @@ mod tests {
             xdg_config: xdg.map(var),
             xdg_data: xdg.map(var),
             xdg_state: xdg.map(var),
+            xdg_runtime: xdg.map(var),
             home: home.map(var),
             appdata: None,
             userprofile: None,
@@ -286,6 +432,7 @@ mod tests {
             xdg_config: None,
             xdg_data: None,
             xdg_state: None,
+            xdg_runtime: None,
             home: None,
             appdata: appdata.map(var),
             userprofile: userprofile.map(var),
@@ -319,12 +466,26 @@ mod tests {
     #[test]
     fn the_log_prefers_xdg_state() {
         let log = |xdg, home| unix(xdg, home).state().map(|dir| under(dir, &LOG));
-        assert_eq!(log(Some("/x"), Some("/h")), Some(abs("/x/synth/synth.log")));
+        assert_eq!(log(Some("/x"), Some("/h")), Some(abs("/x/synth/log.jsonl")));
         assert_eq!(
             log(None, Some("/h")),
-            Some(abs("/h/.local/state/synth/synth.log"))
+            Some(abs("/h/.local/state/synth/log.jsonl"))
         );
         assert_eq!(log(Some("x"), None), None);
+    }
+
+    #[test]
+    fn the_socket_prefers_xdg_runtime_then_state() {
+        let socket = |dirs: Dirs| dirs.runtime().map(|dir| under(dir, &SOCKET));
+        assert_eq!(
+            socket(unix(Some("/x"), Some("/h"))),
+            Some(abs("/x/synth/log.sock"))
+        );
+        assert_eq!(
+            socket(unix(None, Some("/h"))),
+            Some(abs("/h/.local/state/synth/log.sock"))
+        );
+        assert_eq!(socket(windows(Some("/appdata"), None)), None);
     }
 
     fn user(source: &str) -> Result<Config, Error> {
@@ -354,6 +515,26 @@ mod tests {
         assert_eq!(config.tui.meter_hold, Duration::from_millis(560));
         assert_eq!(config.tui.meter_fall, Duration::from_millis(280));
         assert_eq!(config.tui.meter_floor_db, -60.0);
+        assert_eq!(config.tui.latency_window, Duration::from_secs(5));
+        assert_eq!(config.tui.latency_records, 1024);
+        assert_eq!(config.tui.faults, 64);
+        assert_eq!(config.tui.source_stream, StreamName::Output);
+        assert_eq!(config.tui.source_channel, 0);
+        assert_eq!(config.tui.source_tee, Duration::from_millis(100));
+        assert_eq!(config.tui.scope_history, Duration::from_millis(250));
+        assert_eq!(config.tui.scope_cycles, 2.0);
+        assert_eq!(config.tui.spectrum_size, 4096);
+        assert_eq!(config.tui.spectrum_floor_db, -60.0);
+        assert_eq!(config.tui.spectrum_height, 50.0);
+        assert_eq!(config.log.trim_size_kb, 1024);
+        assert_eq!(config.tui.latency_floor_ms, 0.01);
+        assert_eq!(config.tui.latency_ceil_ms, 100.0);
+        let budget = |warn, danger| Budget { warn, danger };
+        assert_eq!(config.tui.input_budget, budget(1.0, 5.0));
+        assert_eq!(config.tui.render_budget, budget(5.0, 10.0));
+        assert_eq!(config.tui.output_budget, budget(10.0, 20.0));
+        assert_eq!(config.tui.total_budget, budget(10.0, 20.0));
+        assert_eq!(config.tui.fps, budget(30.0, 24.0));
     }
 
     #[test]
@@ -372,6 +553,19 @@ mod tests {
         assert_eq!(config.tui.poll, defaults.tui.poll);
         assert_eq!(config.tui.meter_hold, defaults.tui.meter_hold);
         assert_eq!(config.buffer_frames, defaults.buffer_frames);
+    }
+
+    #[test]
+    fn a_nested_budget_changes_only_what_it_sets() {
+        let config =
+            user("return { tui = { meter_latency = { render = { warn = 6 } } } }").unwrap();
+        let defaults = resolve(None).unwrap();
+        assert_eq!(config.tui.render_budget.warn, 6.0);
+        assert_eq!(
+            config.tui.render_budget.danger,
+            defaults.tui.render_budget.danger
+        );
+        assert_eq!(config.tui.latency_window, defaults.tui.latency_window);
     }
 
     #[test]
@@ -515,6 +709,86 @@ mod tests {
             (
                 "return { tui = { meter_floor = 0 } }",
                 "`meter_floor` is 0; must be below 0",
+            ),
+            (
+                "return { tui = { meter_latency = { window = 0 } } }",
+                "config.lua tui meter_latency: `window` is 0; must be above 0",
+            ),
+            (
+                "return { tui = { meter_latency = { records = 0 } } }",
+                "config.lua tui meter_latency: `records` is 0; must be 1 to 65536",
+            ),
+            (
+                "return { log = { trim_size_kb = -1 } }",
+                "config.lua log: `trim_size_kb` is -1; must be 0 to 1048576",
+            ),
+            (
+                "return { tui = { faults = 0 } }",
+                "config.lua tui: `faults` is 0; must be 1 to 65536",
+            ),
+            (
+                "return { tui = { source = { stream = 'input' } } }",
+                "config.lua tui source: `stream` is \"input\"; must be one of output",
+            ),
+            (
+                "return { tui = { source = { channel = -1 } } }",
+                "config.lua tui source: `channel` is -1; must be 0 to 64",
+            ),
+            (
+                "return { tui = { source = { tee = 0 } } }",
+                "config.lua tui source: `tee` is 0; must be 1 to 10000",
+            ),
+            (
+                "return { tui = { scope = { cycles = 0 } } }",
+                "config.lua tui scope: `cycles` is 0; must be 0.25 to 64",
+            ),
+            (
+                "return { tui = { scope = { history = 0 } } }",
+                "config.lua tui scope: `history` is 0; must be 1 to 10000",
+            ),
+            (
+                "return { tui = { spectrum = { size = 128 } } }",
+                "config.lua tui spectrum: `size` is 128; must be 256 to 32768",
+            ),
+            (
+                "return { tui = { spectrum = { size = 3000 } } }",
+                "config.lua tui spectrum: `size` is 3000; must be a power of two",
+            ),
+            (
+                "return { tui = { spectrum = { floor = 0 } } }",
+                "config.lua tui spectrum: `floor` is 0; must be below 0",
+            ),
+            (
+                "return { tui = { spectrum = { height = 100 } } }",
+                "config.lua tui spectrum: `height` is 100; must be 1 to 99",
+            ),
+            (
+                "return { tui = { meter_latency = { records = 1.5 } } }",
+                "`records` must be a whole number",
+            ),
+            (
+                "return { tui = { meter_latency = { floor = 0 } } }",
+                "`floor` is 0; must be above 0",
+            ),
+            (
+                "return { tui = { meter_latency = { floor = 100 } } }",
+                "config.lua tui meter_latency: `floor` is 100, `ceil` is 100; `floor` must be below `ceil`",
+            ),
+            (
+                "return { tui = { meter_latency = { render = { warn = 10 } } } }",
+                "config.lua tui meter_latency render: `warn` is 10, `danger` is 10; `warn` must be below `danger`",
+            ),
+            (
+                "return { tui = { meter_latency = { input = { wran = 1 } } } }",
+                "config.lua tui meter_latency input: unknown field `wran`",
+            ),
+            (
+                "return { tui = { meter_fps = { danger = 30 } } }",
+                "config.lua tui meter_fps: `danger` is 30, `warn` is 30; `danger` must be below `warn`",
+            ),
+            (
+                "return { tui = { meter_latency = { windw = 1 } } }",
+                "unknown field `windw`",
             ),
             ("return { tui = { pol = 16 } }", "unknown field `pol`"),
             ("return 256", "must return a table, got integer"),

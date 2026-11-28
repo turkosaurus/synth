@@ -6,21 +6,32 @@
 //! A view reads the model and sends messages, but never builds a session,
 //! so a second view can reuse this wiring unchanged.
 
+mod latency;
+mod source;
+
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
-use crate::audio::{self, Feed, OutputTee, Player, Stats};
-use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke};
+use crate::audio::{self, Fault, Faults, Feed, Origin, Player, Record, Reporter, Stamp, Stats};
+use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke, PITCHES};
 use crate::script;
-use crate::spec::{Config, Event};
+use crate::spec::{Config, Event, StreamName};
+
+pub(crate) use latency::{Latency, Spread, Window};
+pub(crate) use source::{Pick, Selection, Sources, Stream};
+
+/// The most events one message makes: a tick can end every pitch at once.
+const EVENTS: usize = PITCHES;
 
 /// What a view sends the session. A view reads its own library's input and
 /// translates it into one of these, so the session never names that library.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Msg {
-    Key(Stroke),
-    /// Once per frame: ends every `Fixed` note whose time is up.
+    /// A key, and when it was read.
+    Key(Stroke, Instant),
+    /// Once per poll: ends every `Fixed` note whose time is up.
     Tick,
 }
 
@@ -28,7 +39,8 @@ pub(crate) enum Msg {
 /// no ring or device.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Cmd {
-    Play(Event),
+    /// an event, and what caused it, carried to the push so it can be timed
+    Play(Event, Origin),
 }
 
 /// Everything a view reads. A view gets only `&Model`, so `update` is the
@@ -37,58 +49,220 @@ pub(crate) struct Model {
     pub(crate) keyboard: Keyboard,
     /// The same baked table the player reads, copied for the view.
     pub(crate) freqs: crate::spec::Freqs,
-    /// The device's, in hz, which places the output tee's frames in time.
-    pub(crate) sample_rate: u32,
     /// Whether the help overlay is up.
     pub(crate) help: bool,
+    /// What the scope reads.
+    pub(crate) scope: Selection,
+    /// Each frame source's channel count, for moving `scope` through them.
+    pub(crate) streams: Vec<usize>,
 }
 
 impl Model {
-    fn update(&mut self, msg: Msg, cmds: &mut Vec<Cmd>) -> ControlFlow<()> {
-        let mut events = Vec::new();
-        let flow = match msg {
-            Msg::Key(stroke) => {
+    /// Apply `msg`, appending what it asks for to `cmds`. `events` is
+    /// scratch, empty on entry and on return.
+    fn update(
+        &mut self,
+        msg: Msg,
+        events: &mut Vec<Event>,
+        cmds: &mut Vec<Cmd>,
+    ) -> ControlFlow<()> {
+        let (flow, origin) = match msg {
+            Msg::Key(stroke, read) => {
                 // the overlay owns the keyboard while it is up: no key
                 // reaches the note grid, so nothing can be left sounding
                 // behind it. quit still works, and the help key toggles.
                 let outcome = if self.help {
                     self.keyboard.global(stroke)
                 } else {
-                    self.keyboard.handle(stroke, &mut events)
+                    self.keyboard.handle(stroke, events)
                 };
-                match outcome {
+                let flow = match outcome {
                     Outcome::Quit => ControlFlow::Break(()),
                     Outcome::Help => {
                         self.help = !self.help;
                         ControlFlow::Continue(())
                     }
+                    Outcome::Scope => {
+                        self.scope = self.scope.next(&self.streams);
+                        ControlFlow::Continue(())
+                    }
                     Outcome::Continue => ControlFlow::Continue(()),
-                }
+                };
+                (flow, Origin::Key { read })
             }
             Msg::Tick => {
                 // a no-op when Held
-                self.keyboard.tick(&mut events);
-                ControlFlow::Continue(())
+                self.keyboard.tick(events);
+                (ControlFlow::Continue(()), Origin::Release)
             }
         };
-        cmds.extend(events.into_iter().map(Cmd::Play));
+        cmds.extend(events.drain(..).map(|event| Cmd::Play(event, origin)));
         flow
+    }
+
+    pub(crate) fn glance(&self) -> Glance {
+        Glance {
+            sounding: self.keyboard.sounding(),
+            last_key: self.keyboard.last_key(),
+            octave: self.keyboard.octave(),
+            reach: self.keyboard.reach(),
+            help: self.help,
+            scope: self.scope,
+        }
     }
 }
 
-/// Frames the output tee holds: at 48 kHz about a third of a second, so a
-/// redraw that runs late still finds the newest frames rather than a ring
-/// that filled and dropped them.
-const OUTPUT_TEE_FRAMES: usize = 16_384;
+/// The part of the model that changes while playing, copied out so a view on
+/// another thread can draw it without sharing the keyboard.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Glance {
+    pub(crate) sounding: Option<u8>,
+    pub(crate) last_key: Option<char>,
+    /// The current shift, and whether it is the one the keyboard started at.
+    pub(crate) octave: (i32, bool),
+    /// The lowest and highest shift the octave keys can reach.
+    pub(crate) reach: (i32, i32),
+    pub(crate) help: bool,
+    pub(crate) scope: Selection,
+}
+
+/// The model and the ring producers: everything a message touches.
+///
+/// `Send` and apart from the stream, so whichever thread reads input owns it
+/// and pushes each event the moment it is read. Its scratch is allocated
+/// here, so that thread never allocates.
+pub(crate) struct Input {
+    model: Model,
+    /// The ring's producer; the consumer lives in the audio callback.
+    tx: rtrb::Producer<Event>,
+    /// One stamp per event in `tx`, pushed just before it.
+    stamps: rtrb::Producer<Stamp>,
+    stats: Arc<Stats>,
+    faults: Reporter,
+    events: Vec<Event>,
+    cmds: Vec<Cmd>,
+}
+
+impl Input {
+    fn new(
+        model: Model,
+        tx: rtrb::Producer<Event>,
+        stamps: rtrb::Producer<Stamp>,
+        stats: Arc<Stats>,
+        faults: Reporter,
+    ) -> Self {
+        Self {
+            model,
+            tx,
+            stamps,
+            stats,
+            faults,
+            events: Vec::with_capacity(EVENTS),
+            cmds: Vec::with_capacity(EVENTS),
+        }
+    }
+
+    pub(crate) fn model(&self) -> &Model {
+        &self.model
+    }
+
+    /// Apply `msg`, then carry out what it asked for; `Break` once the
+    /// player has quit.
+    pub(crate) fn update(&mut self, msg: Msg) -> ControlFlow<()> {
+        let mut cmds = std::mem::take(&mut self.cmds);
+        let flow = self.model.update(msg, &mut self.events, &mut cmds);
+        for cmd in cmds.drain(..) {
+            self.run(cmd);
+        }
+        self.cmds = cmds;
+        flow
+    }
+
+    /// Count a failed read of input, which ends the session, and report
+    /// its kind to the view.
+    pub(crate) fn read_failed(&mut self, kind: std::io::ErrorKind) {
+        self.stats.record_input_error();
+        self.faults.push(Fault::Input(kind));
+    }
+
+    fn run(&mut self, cmd: Cmd) {
+        match cmd {
+            // the queue is bounded; a full queue means the audio thread has
+            // stalled, and dropping an event is better than blocking input
+            Cmd::Play(event, origin) => {
+                // checked together, so a stamp is never left without its
+                // event; nothing else pushes, so room cannot shrink after
+                if self.stamps.slots() == 0 || self.tx.slots() == 0 {
+                    self.dropped();
+                    return;
+                }
+                let pushed = Instant::now();
+                // the stamp goes first, so the callback never pops an
+                // event whose stamp is not there yet
+                if self.stamps.push(Stamp { pushed, origin }).is_err()
+                    || self.tx.push(event).is_err()
+                {
+                    self.dropped();
+                }
+            }
+        }
+    }
+
+    fn dropped(&mut self) {
+        self.stats.record_dropped();
+        self.faults.push(Fault::Dropped);
+    }
+}
+
+#[cfg(test)]
+impl Input {
+    /// An input over `model` whose rings nothing reads.
+    pub(crate) fn detached(model: Model) -> Self {
+        let (tx, _) = rtrb::RingBuffer::new(16);
+        let (stamps, _, _) = audio::timing(16, 1);
+        Self::new(
+            model,
+            tx,
+            stamps,
+            Arc::new(Stats::default()),
+            Faults::new(1).ring(),
+        )
+    }
+}
+
+/// The view's side of timing: what the callback records, folded into
+/// windows, and the view's own draw rate.
+pub(crate) struct Timing {
+    pub(crate) latency: Latency,
+    /// Frames per callback asked of the device; `None` left it to the
+    /// platform.
+    pub(crate) requested: Option<u32>,
+    records: rtrb::Consumer<Record>,
+}
+
+impl Timing {
+    /// The view finished drawing a frame at `at`.
+    pub(crate) fn drawn(&mut self, at: Instant) {
+        self.latency.view.push(at);
+    }
+
+    /// Fold in every record the callback has pushed, as of `now`.
+    pub(crate) fn drain(&mut self, now: Instant) {
+        while let Ok(record) = self.records.pop() {
+            self.latency.record(now, record);
+        }
+        self.latency.prune(now);
+    }
+}
 
 /// A patch playing live on the default output device.
 pub struct Session {
-    model: Model,
+    input: Input,
+    timing: Timing,
     pub(crate) stats: Arc<Stats>,
-    /// Every frame the callback writes, for the view to drain.
-    pub(crate) output_tee: OutputTee,
-    /// The ring's producer; the consumer lives in the audio callback.
-    tx: rtrb::Producer<Event>,
+    faults: Faults,
+    /// The frames a view can read, off the audio thread.
+    sources: Sources,
     /// Kept only so the stream plays until the session drops.
     _stream: audio::Stream,
 }
@@ -110,65 +284,110 @@ impl Session {
 
         // the producer stays here; the consumer moves into the audio callback
         let (tx, rx) = rtrb::RingBuffer::<Event>::new(config.queue);
-        let (tee_tx, output_tee) = audio::output_tee(OUTPUT_TEE_FRAMES, output.channels);
+        let sample_rate = output.sample_rate as f32;
+        let tee_frames = (sample_rate * config.tui.source_tee.as_secs_f32()).ceil() as usize;
+        let (tee_tx, output_tee) = audio::output_tee(tee_frames.max(1), output.channels);
         let player = Player::new(
             Feed::Live {
                 instruments: patch.timeline.instruments,
                 events: rx,
             },
             patch.freqs,
-            output.sample_rate as f32,
+            sample_rate,
         )
         .with_filter(patch.filter)
         .with_output_tee(tee_tx);
+        let streams = vec![Stream::new(
+            StreamName::Output.name(),
+            sample_rate,
+            output_tee,
+        )];
+        let channels: Vec<usize> = streams.iter().map(Stream::channels).collect();
+        let selection = selection(config, &streams)?;
 
+        let (stamps, recorder, records) = audio::timing(config.queue, config.tui.latency_records);
         let stats = Arc::new(Stats::default());
-        let stream = audio::stream(&output, player, Arc::clone(&stats))?;
+        let mut faults = Faults::new(config.tui.faults);
+        let stream = audio::stream(
+            &output,
+            player,
+            Arc::clone(&stats),
+            Some(recorder),
+            &mut faults,
+        )?;
 
         Ok(Self {
-            model: Model {
-                keyboard: Keyboard::new(patch.keymap, gating),
-                freqs,
-                sample_rate: output.sample_rate,
-                help: false,
+            input: Input::new(
+                Model {
+                    keyboard: Keyboard::new(patch.keymap, gating),
+                    freqs,
+                    help: false,
+                    scope: selection,
+                    streams: channels,
+                },
+                tx,
+                stamps,
+                Arc::clone(&stats),
+                faults.ring(),
+            ),
+            timing: Timing {
+                latency: Latency::new(config.tui.latency_window),
+                requested: output.requested(),
+                records,
             },
             stats,
-            output_tee,
-            tx,
+            faults,
+            sources: Sources::new(streams, selection),
             _stream: stream,
         })
     }
 
     pub(crate) fn model(&self) -> &Model {
-        &self.model
+        self.input.model()
     }
 
-    /// Apply `msg`, then carry out what it asked for; `Break` once the
-    /// player has quit.
-    pub(crate) fn update(&mut self, msg: Msg) -> ControlFlow<()> {
-        let mut cmds = Vec::new();
-        let flow = self.model.update(msg, &mut cmds);
-        for cmd in cmds {
-            self.run(cmd);
-        }
-        flow
-    }
-
-    fn run(&mut self, cmd: Cmd) {
-        match cmd {
-            // the queue is bounded; a full queue means the audio thread has
-            // stalled, and dropping an event is better than blocking the UI
-            Cmd::Play(event) => {
-                if self.tx.push(event).is_err() {
-                    self.stats.record_dropped();
-                }
-            }
+    /// The input side, lent to the thread that reads keys, beside the timing,
+    /// stats, and faults the view keeps.
+    pub(crate) fn split(&mut self) -> Split<'_> {
+        Split {
+            input: &mut self.input,
+            timing: &mut self.timing,
+            stats: &self.stats,
+            faults: &mut self.faults,
+            sources: &mut self.sources,
         }
     }
 }
 
+/// A session lent out in parts: the input to the thread that reads keys,
+/// the rest to the view.
+pub(crate) struct Split<'a> {
+    pub(crate) input: &'a mut Input,
+    pub(crate) timing: &'a mut Timing,
+    pub(crate) stats: &'a Stats,
+    pub(crate) faults: &'a mut Faults,
+    pub(crate) sources: &'a mut Sources,
+}
+
+/// The source `config.lua` starts the scope on, which must be one of
+/// `streams`.
+fn selection(config: &Config, streams: &[Stream]) -> anyhow::Result<Selection> {
+    let name = config.tui.source_stream.name();
+    let stream = streams
+        .iter()
+        .position(|stream| stream.name == name)
+        .ok_or_else(|| anyhow::anyhow!("config.lua tui source: stream {name:?} is not open"))?;
+    let channels = streams[stream].channels();
+    let pick = match config.tui.source_channel {
+        0 => Pick::Mix,
+        n if n <= channels => Pick::Channel(n - 1),
+        n => anyhow::bail!("config.lua tui source: channel {n}, but {name} has {channels}"),
+    };
+    Ok(Selection { stream, pick })
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -176,13 +395,14 @@ mod tests {
     use crate::input::keyboard::Kind;
     use crate::spec::{Key, Keymap};
 
-    fn model() -> Model {
+    pub(crate) fn model() -> Model {
         let keymap = Keymap {
             notes: HashMap::from([('a', 60)]),
             name: None,
             octave_up: vec![],
             octave_down: vec![],
             stop: vec![],
+            scope: vec![Key::Tab],
             help: vec![Key::Char('?')],
             gate: Duration::ZERO,
             autorepeat: Duration::ZERO,
@@ -195,27 +415,58 @@ mod tests {
         Model {
             keyboard: Keyboard::new(keymap, Gating::Held),
             freqs: crate::spec::Freqs::unchecked([0.0; 128]),
-            sample_rate: 48_000,
             help: false,
+            scope: Selection {
+                stream: 0,
+                pick: Pick::Mix,
+            },
+            streams: vec![2],
         }
     }
 
     fn key(ch: char, ctrl: bool) -> Msg {
-        Msg::Key(Stroke {
-            key: Key::Char(ch),
-            kind: Kind::Press,
-            ctrl,
-        })
+        Msg::Key(
+            Stroke {
+                key: Key::Char(ch),
+                kind: Kind::Press,
+                ctrl,
+            },
+            read(),
+        )
+    }
+
+    // one instant for every key, so a test can name the trigger it expects
+    fn read() -> Instant {
+        static READ: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        *READ.get_or_init(Instant::now)
     }
 
     fn send(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         let mut cmds = Vec::new();
-        let _ = model.update(msg, &mut cmds);
+        let _ = model.update(msg, &mut Vec::new(), &mut cmds);
         cmds
     }
 
     fn quits(model: &mut Model, msg: Msg) -> bool {
-        model.update(msg, &mut Vec::new()).is_break()
+        model
+            .update(msg, &mut Vec::new(), &mut Vec::new())
+            .is_break()
+    }
+
+    #[test]
+    fn the_scope_key_moves_the_scope() {
+        let mut model = model();
+        let tab = Msg::Key(
+            Stroke {
+                key: Key::Tab,
+                kind: Kind::Press,
+                ctrl: false,
+            },
+            read(),
+        );
+        assert!(send(&mut model, tab).is_empty());
+        assert_eq!(model.scope.pick, Pick::Channel(0));
+        assert_eq!(model.glance().scope, model.scope);
     }
 
     #[test]
@@ -223,12 +474,27 @@ mod tests {
         let mut model = model();
         assert_eq!(
             send(&mut model, key('a', false)),
-            vec![Cmd::Play(Event::NoteOn {
-                instrument: 0,
-                note: 60,
-                velocity: 100,
-            })]
+            vec![Cmd::Play(
+                Event::NoteOn {
+                    instrument: 0,
+                    note: 60,
+                    velocity: 100,
+                },
+                Origin::Key { read: read() },
+            )]
         );
+    }
+
+    #[test]
+    fn a_drawn_frame_is_counted() {
+        let (_, _, records) = audio::timing(1, 1);
+        let mut timing = Timing {
+            latency: Latency::new(Duration::from_secs(5)),
+            requested: None,
+            records,
+        };
+        timing.drawn(Instant::now());
+        assert_eq!(timing.latency.view.per_second(), 1);
     }
 
     #[test]
@@ -248,5 +514,62 @@ mod tests {
         assert!(quits(&mut model, key('c', true)));
         send(&mut model, key('?', false));
         assert!(quits(&mut model, key('c', true)));
+    }
+
+    #[test]
+    fn input_never_allocates_and_reports_a_full_queue() {
+        let mut fixed = model();
+        // a zero gate is due at the next tick
+        fixed.keyboard = Keyboard::new(fixed.keyboard.keymap().clone(), Gating::Fixed);
+        for model in [model(), fixed] {
+            never_allocates(model);
+        }
+    }
+
+    fn never_allocates(model: Model) {
+        let (tx, _events) = rtrb::RingBuffer::new(1);
+        let (stamps, _, _) = audio::timing(1, 1);
+        let mut faults = Faults::new(1);
+        let stats = Arc::new(Stats::default());
+        let mut input = Input::new(model, tx, stamps, Arc::clone(&stats), faults.ring());
+        let release = Msg::Key(
+            Stroke {
+                key: Key::Char('a'),
+                kind: Kind::Release,
+                ctrl: false,
+            },
+            read(),
+        );
+        let info = allocation_counter::measure(|| {
+            // the note-on fills the queue, so its note-off is dropped,
+            // from the release when Held and the tick when Fixed
+            let _ = input.update(key('a', false));
+            let _ = input.update(release);
+            let _ = input.update(Msg::Tick);
+            let _ = input.update(key('?', false));
+        });
+        assert_eq!(info.count_total, 0);
+        assert_eq!(stats.snapshot().dropped, 1);
+        faults.drain();
+        assert_eq!(faults.last(), Some(Fault::Dropped));
+    }
+
+    #[test]
+    fn input_can_be_owned_by_another_thread() {
+        fn send<T: Send>() {}
+        send::<Input>();
+    }
+
+    #[test]
+    fn the_glance_shows_what_a_key_changed() {
+        let mut model = model();
+        let before = model.glance();
+        send(&mut model, key('a', false));
+        let after = model.glance();
+        assert_eq!(after.sounding, Some(60));
+        assert_eq!(after.last_key, Some('a'));
+        assert_ne!(before, after);
+        send(&mut model, key('?', false));
+        assert!(model.glance().help);
     }
 }

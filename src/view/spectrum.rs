@@ -1,5 +1,5 @@
-//! Live spectrum: the newest [`SIZE`] samples of the output, Hann windowed
-//! and transformed on the UI thread, read out on a log frequency axis.
+//! Live spectrum: the newest samples of a frame source, Hann windowed and
+//! transformed on the UI thread, read out on a log frequency axis.
 //! Pure arithmetic, so it is tested without a terminal or a device, the way
 //! `meter` is.
 
@@ -10,13 +10,10 @@ use realfft::{FftError, RealFftPlanner, RealToComplex};
 
 use super::meter;
 
-/// Samples per transform. At 48 kHz a bin is 11.7 Hz wide, fine enough to
-/// tell low notes apart; 1024 would be 46.9 Hz.
-pub(crate) const SIZE: usize = 4096;
-
-/// The newest [`SIZE`] samples, and their amplitude per bin once
+/// The newest `size` samples, and their amplitude per bin once
 /// [`Spectrum::update`] has transformed them.
 pub(crate) struct Spectrum {
+    size: usize,
     /// a circular buffer whose oldest sample is at `next`
     history: Vec<f32>,
     next: usize,
@@ -32,33 +29,51 @@ pub(crate) struct Spectrum {
 }
 
 impl Spectrum {
-    pub(crate) fn new() -> Self {
-        let fft = RealFftPlanner::<f32>::new().plan_fft_forward(SIZE);
-        // periodic rather than symmetric: the frame repeats every SIZE
+    /// Transforms of `size` samples, which must be even so the last bin is
+    /// nyquist.
+    pub(crate) fn new(size: usize) -> Self {
+        assert!(
+            size >= 2 && size.is_multiple_of(2),
+            "odd spectrum size {size}"
+        );
+        let fft = RealFftPlanner::<f32>::new().plan_fft_forward(size);
+        // periodic rather than symmetric: the frame repeats every `size`
         // samples as far as the transform is concerned
-        let window: Vec<f32> = (0..SIZE)
-            .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / SIZE as f32).cos())
+        let window: Vec<f32> = (0..size)
+            .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / size as f32).cos())
             .collect();
         let gain = 2.0 / window.iter().sum::<f32>();
         Self {
-            history: vec![0.0; SIZE],
+            size,
+            history: vec![0.0; size],
             next: 0,
             window,
             gain,
             input: fft.make_input_vec(),
             output: fft.make_output_vec(),
             scratch: fft.make_scratch_vec(),
-            amplitudes: vec![0.0; SIZE / 2 + 1],
+            amplitudes: vec![0.0; size / 2 + 1],
             fft,
         }
     }
 
-    /// Fold in samples, oldest first; only the newest [`SIZE`] are kept.
-    pub(crate) fn extend(&mut self, samples: impl IntoIterator<Item = f32>) {
-        for sample in samples {
-            self.history[self.next] = sample;
-            self.next = (self.next + 1) % SIZE;
-        }
+    /// The width of one bin at `sample_rate`, and the lowest frequency the
+    /// axis shows.
+    pub(crate) fn bin_hz(&self, sample_rate: f32) -> f32 {
+        sample_rate / self.size as f32
+    }
+
+    /// Fold in one sample; only the newest `size` are kept.
+    pub(crate) fn push(&mut self, sample: f32) {
+        self.history[self.next] = sample;
+        self.next = (self.next + 1) % self.size;
+    }
+
+    /// Forget what was read, so a new source does not show the old one's
+    /// spectrum.
+    pub(crate) fn clear(&mut self) {
+        self.history.fill(0.0);
+        self.next = 0;
     }
 
     /// Transform the samples held now.
@@ -85,7 +100,8 @@ impl Spectrum {
     /// position. Starting at one bin rather than DC keeps every column a
     /// frequency the transform can resolve.
     pub(crate) fn columns(&self, width: usize, floor_db: f32) -> Vec<f32> {
-        let top = (SIZE / 2) as f32;
+        let nyquist = self.size / 2;
+        let top = nyquist as f32;
         // column edges in bins: 1 at the left, nyquist at the right
         let edge = |column: usize| top.powf(column as f32 / width as f32);
         (0..width)
@@ -94,7 +110,7 @@ impl Spectrum {
                 let first = low.ceil() as usize;
                 // the last column takes nyquist, which no edge passes
                 let last = if column + 1 == width {
-                    SIZE / 2
+                    nyquist
                 } else {
                     (high.ceil() as usize).saturating_sub(1)
                 };
@@ -116,8 +132,9 @@ impl Spectrum {
 
 #[cfg(test)]
 mod tests {
-    use super::{Spectrum, SIZE};
+    use super::Spectrum;
 
+    const SIZE: usize = 4096;
     const FLOOR_DB: f32 = -60.0;
 
     fn sine(bin: f32, amplitude: f32) -> impl Iterator<Item = f32> {
@@ -126,8 +143,8 @@ mod tests {
     }
 
     fn transformed(samples: impl IntoIterator<Item = f32>) -> Spectrum {
-        let mut spectrum = Spectrum::new();
-        spectrum.extend(samples);
+        let mut spectrum = Spectrum::new(SIZE);
+        samples.into_iter().for_each(|sample| spectrum.push(sample));
         spectrum.update().unwrap();
         spectrum
     }
@@ -169,9 +186,9 @@ mod tests {
 
     #[test]
     fn only_the_newest_samples_are_transformed() {
-        let mut spectrum = Spectrum::new();
-        spectrum.extend(sine(50.0, 1.0));
-        spectrum.extend(sine(400.0, 1.0));
+        let mut spectrum = Spectrum::new(SIZE);
+        sine(50.0, 1.0).for_each(|sample| spectrum.push(sample));
+        sine(400.0, 1.0).for_each(|sample| spectrum.push(sample));
         spectrum.update().unwrap();
         near(spectrum.amplitudes[400], 1.0);
         assert!(
@@ -200,7 +217,7 @@ mod tests {
 
     #[test]
     fn the_last_column_reaches_nyquist() {
-        let mut spectrum = Spectrum::new();
+        let mut spectrum = Spectrum::new(SIZE);
         spectrum.amplitudes[SIZE / 2] = 1.0;
         let columns = spectrum.columns(40, FLOOR_DB);
         assert_eq!(columns.last(), Some(&1.0));
@@ -208,9 +225,29 @@ mod tests {
 
     #[test]
     fn every_column_draws_when_columns_outnumber_low_bins() {
-        let mut spectrum = Spectrum::new();
+        let mut spectrum = Spectrum::new(SIZE);
         spectrum.amplitudes.fill(1.0);
         let columns = spectrum.columns(400, FLOOR_DB);
         assert!(columns.iter().all(|&column| column == 1.0), "{columns:?}");
+    }
+
+    #[test]
+    fn a_smaller_size_still_reads_full_scale() {
+        let mut spectrum = Spectrum::new(256);
+        (0..256)
+            .map(|i| (std::f32::consts::TAU * 10.0 * i as f32 / 256.0).sin())
+            .for_each(|sample| spectrum.push(sample));
+        spectrum.update().unwrap();
+        near(spectrum.amplitudes[10], 1.0);
+        near(spectrum.bin_hz(48_000.0), 187.5);
+    }
+
+    #[test]
+    fn clear_forgets_the_old_source() {
+        let mut spectrum = transformed(sine(100.0, 1.0));
+        spectrum.clear();
+        spectrum.update().unwrap();
+        let columns = spectrum.columns(80, FLOOR_DB);
+        assert!(columns.iter().all(|&column| column == 0.0), "{columns:?}");
     }
 }
