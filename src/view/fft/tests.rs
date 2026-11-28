@@ -73,10 +73,10 @@ fn fewer_samples_than_the_size_are_led_by_silence() {
 
 #[test]
 fn a_frame_never_allocates_after_setup() {
-    use crate::audio::output_tee;
+    use crate::audio::tee;
     use crate::session::{Pick, Selection, Sources, Stream};
 
-    let (mut tx, tee) = output_tee(64, 2);
+    let (mut tx, tee) = tee(64, 2);
     let selection = Selection {
         stream: 0,
         pick: Pick::Mix,

@@ -797,13 +797,13 @@ fn instruments_do_not_share_voices() {
     assert_eq!(player.next(), 0.5);
 }
 
-fn drain(output_tee: &mut OutputTee) -> Vec<f32> {
+fn drain(output_tee: &mut Tee) -> Vec<f32> {
     std::iter::from_fn(|| output_tee.samples.pop().ok()).collect()
 }
 
 #[test]
 fn the_output_tee_gets_every_channel_of_every_frame() {
-    let (tx, mut rx) = output_tee(4, 2);
+    let (tx, mut rx) = tee(4, 2);
     let mut player = player(flat_instrument()).with_output_tee(tx);
     let mut out = [0.0f32; 8];
     let tally = fill(&mut out, 2, &mut player);
@@ -816,7 +816,7 @@ fn the_output_tee_gets_every_channel_of_every_frame() {
 // a reader that never reads must cost the callback frames, not time
 #[test]
 fn a_full_output_tee_drops_and_counts_frames() {
-    let (tx, mut rx) = output_tee(3, 2);
+    let (tx, mut rx) = tee(3, 2);
     let mut player = player(flat_instrument()).with_output_tee(tx);
     let mut out = [0.0f32; 8];
 
@@ -830,7 +830,7 @@ fn a_full_output_tee_drops_and_counts_frames() {
 #[test]
 fn the_output_tee_never_takes_part_of_a_frame() {
     let (tx, samples) = rtrb::RingBuffer::new(5);
-    let mut rx = OutputTee {
+    let mut rx = Tee {
         samples,
         channels: 2,
     };
@@ -843,7 +843,7 @@ fn the_output_tee_never_takes_part_of_a_frame() {
 
 #[test]
 fn fill_with_an_output_tee_never_allocates() {
-    let (tx, _rx) = output_tee(3, 2);
+    let (tx, _rx) = tee(3, 2);
     let mut player = player(flat_instrument()).with_output_tee(tx);
     let mut out = [0.0f32; 8];
     let info = allocation_counter::measure(|| {

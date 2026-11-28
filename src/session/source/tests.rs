@@ -1,8 +1,8 @@
 use super::*;
-use crate::audio::output_tee;
+use crate::audio::tee;
 
 fn stereo(frames: &[(f32, f32)]) -> Stream {
-    let (mut tx, tee) = output_tee(8, 2);
+    let (mut tx, tee) = tee(8, 2);
     for &(left, right) in frames {
         tx.push(left).unwrap();
         tx.push(right).unwrap();
@@ -47,7 +47,10 @@ fn every_stream_is_drained_and_only_the_selected_one_read() {
         },
     );
     assert_eq!(read(&mut sources), [0.5, 0.5]);
-    assert!(sources.streams.iter().all(|s| s.tee.samples.slots() == 0));
+    assert!(sources
+        .streams
+        .iter()
+        .all(|s| s.tee.as_ref().unwrap().samples.slots() == 0));
 }
 
 #[test]
@@ -106,4 +109,32 @@ fn a_new_selection_forgets_the_old_samples() {
     sources.read();
     sources.select(MIX.next(&[2]));
     assert!(sources.recent().is_empty());
+}
+
+#[test]
+fn a_missing_stream_reads_nothing_and_says_so() {
+    let input = Selection {
+        stream: 1,
+        pick: Pick::Mix,
+    };
+    let streams = vec![stereo(&[(1.0, 1.0)]), Stream::missing("input", 48_000.0)];
+    let mut sources = Sources::new(streams, input);
+    assert!(read(&mut sources).is_empty());
+    assert_eq!(sources.to_string(), "input (none)");
+    assert!(sources.is_open("output"));
+    assert!(!sources.is_open("input"));
+}
+
+#[test]
+fn next_passes_over_a_missing_stream_at_its_mix() {
+    let channels = [1, 0];
+    let input = MIX.next(&channels);
+    assert_eq!(
+        input,
+        Selection {
+            stream: 1,
+            pick: Pick::Mix
+        }
+    );
+    assert_eq!(input.next(&channels), MIX);
 }

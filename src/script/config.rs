@@ -8,7 +8,7 @@ use std::time::Duration;
 use super::Error;
 
 use super::field;
-use crate::spec::{Budget, Config, LogConfig, StreamName, TuiConfig};
+use crate::spec::{Budget, Config, InputConfig, LogConfig, StreamName, TuiConfig};
 
 /// `config.lua` under the config directory.
 const FILE: [&str; 2] = ["synth", "config.lua"];
@@ -210,6 +210,9 @@ fn table(lua: &mlua::Lua, source: &str, name: &str) -> Result<mlua::Table, Error
         });
     };
     super::schema::CONFIG.check(&table, None)?;
+    if let Some(input) = table.get::<Option<mlua::Table>>(field::INPUT)? {
+        super::schema::CONFIG_INPUT.check(&input, None)?;
+    }
     if let Some(log) = table.get::<Option<mlua::Table>>(field::LOG)? {
         super::schema::CONFIG_LOG.check(&log, None)?;
     }
@@ -333,6 +336,7 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
     // a frame rate is better higher, so its danger comes below its warn
     let fps: mlua::Table = tui.get(field::METER_FPS)?;
     let log: mlua::Table = table.get(field::LOG)?;
+    let input: mlua::Table = table.get(field::INPUT)?;
     let source: mlua::Table = tui.get(field::SOURCE)?;
     let scope: mlua::Table = tui.get(field::SCOPE)?;
     let spectrum: mlua::Table = tui.get(field::SPECTRUM)?;
@@ -357,6 +361,9 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
                 .unwrap_or_default(),
             &Dirs::current(),
         )?,
+        input: InputConfig {
+            channel: input.get(field::CHANNEL)?,
+        },
         tui: TuiConfig {
             poll: ms(field::POLL)?,
             meter_hold: ms(field::METER_HOLD)?,

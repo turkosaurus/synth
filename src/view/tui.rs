@@ -22,7 +22,7 @@ use crate::input::keyboard::{Gating, Kind, Stroke};
 use crate::session::{
     Glance, Input, Latency, Msg, Session, Sources, Split, Spread, Timing, Window,
 };
-use crate::spec::{Budget, Freqs, Key, Keymap, TuiConfig};
+use crate::spec::{Budget, Freqs, Key, Keymap, StreamName, TuiConfig};
 
 use super::fft::Transform;
 use super::meter::{self, Activity, Meter};
@@ -37,7 +37,7 @@ const LABEL_WIDTH: u16 = 6;
 const INPUT_WIDTH: u16 = LABEL_WIDTH + COLUMN_GAP + VALUE_WIDTH + 2;
 const COLUMN_GAP: u16 = 2;
 const SPARK_ROWS: u16 = 2;
-const METER_ROWS: u16 = 3 + SPARK_ROWS;
+const METER_ROWS: u16 = 4 + SPARK_ROWS;
 /// the header and four stages
 const LATENCY_ROWS: u16 = 5;
 const STATS_ROWS: u16 = METER_ROWS + LATENCY_ROWS;
@@ -232,6 +232,8 @@ fn drive(
     // ballistics are the view's, not the device's: the callback has no
     // business knowing the frame rate a bar falls at
     let mut peak = Meter::new(config.meter_hold, config.meter_fall);
+    let mut heard = Meter::new(config.meter_hold, config.meter_fall);
+    let hearing = sources.is_open(StreamName::Input.name());
     let mut activity = Activity::default();
     let history = sources.sample_rate() * config.scope_history.as_secs_f32();
     let mut scope = Scope::new(config.scope_cycles);
@@ -251,6 +253,7 @@ fn drive(
         let dt = now - last;
         last = now;
         peak.update(meter::scale(snap.peak, config.meter_floor_db), dt);
+        heard.update(meter::scale(snap.input_peak, config.meter_floor_db), dt);
         activity.update(meter::scale(snap.peak, config.meter_floor_db), snap.clipped);
 
         // spread sorts each window, so it is taken before the draw it
@@ -279,6 +282,7 @@ fn drive(
             snap: &snap,
             fault: faults.last(),
             peak: &peak,
+            heard: hearing.then_some(&heard),
             activity: &activity,
             freqs: &still.freqs,
             gating: still.gating,
@@ -380,6 +384,8 @@ struct View<'a> {
     /// the latest fault, shown beside its count
     fault: Option<Fault>,
     peak: &'a Meter,
+    /// the input's level; `None` when the device has no input open
+    heard: Option<&'a Meter>,
     activity: &'a Activity,
     freqs: &'a Freqs,
     gating: Gating,
@@ -441,10 +447,10 @@ fn fps_style(fps: usize, config: &TuiConfig) -> Style {
 /// The status counter a fault is counted in.
 fn counter(fault: Fault) -> &'static str {
     match fault {
-        Fault::Stream(_) => "errors",
+        Fault::Stream(_) | Fault::InputStream(_) => "errors",
         Fault::Overrun { .. } => "overruns",
         Fault::Dropped => "dropped",
-        Fault::TeeDropped { .. } => "tee dropped",
+        Fault::TeeDropped { .. } | Fault::InputTeeDropped { .. } => "tee dropped",
         Fault::Input(_) => "input errors",
     }
 }
@@ -480,7 +486,11 @@ fn status(
         count("errors", snap.errors, Color::Red),
         count("overruns", snap.overruns, Color::Red),
         count("dropped", snap.dropped, Color::Yellow),
-        count("tee dropped", snap.output_tee_dropped, Color::Yellow),
+        count(
+            "tee dropped",
+            snap.output_tee_dropped + snap.input_tee_dropped,
+            Color::Yellow,
+        ),
         count("input errors", snap.input_errors, Color::Yellow),
         Span::styled(buffer, buffer_style),
         Span::styled(format!("  view {fps} fps"), fps_style(fps, config)),
@@ -498,6 +508,7 @@ fn draw(frame: &mut Frame, view: &View) {
         snap,
         fault,
         peak,
+        heard,
         activity,
         freqs,
         gating,
@@ -566,17 +577,19 @@ fn draw(frame: &mut Frame, view: &View) {
     let stats_inner = stats_block.inner(stats_area);
     frame.render_widget(stats_block, stats_area);
 
-    // latency, then graph, then gain, then cpu, then status at the very
+    // latency, then graph, then gain, then input, then cpu, then status at the very
     // bottom: region order is what stacks them, not the order the widgets
     // are rendered in
-    let [latency_area, clip_area, peak_area, load_area, status_area] = Layout::vertical([
-        Constraint::Length(LATENCY_ROWS),
-        Constraint::Length(SPARK_ROWS),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .areas(stats_inner);
+    let [latency_area, clip_area, peak_area, heard_area, load_area, status_area] =
+        Layout::vertical([
+            Constraint::Length(LATENCY_ROWS),
+            Constraint::Length(SPARK_ROWS),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(stats_inner);
     let scale = Scale {
         floor_ms: config.latency_floor_ms,
         ceil_ms: config.latency_ceil_ms,
@@ -625,19 +638,16 @@ fn draw(frame: &mut Frame, view: &View) {
     // peak is logarithmic, so the thresholds are dB, placed on whatever
     // floor the scale has
     let at = |db: f32| meter::scale(10f32.powf(db / 20.0), floor_db);
-    frame.render_widget(
+    let level = |name, meter: Option<&Meter>| {
         bar(
-            format!(
-                "gain {} dB  hold {} dB",
-                meter::db_label(peak.level(), floor_db),
-                meter::db_label(peak.hold(), floor_db),
-            ),
-            peak.level(),
+            level_label(name, meter, floor_db),
+            meter.map_or(0.0, Meter::level),
             at(-12.0),
             at(-0.6),
-        ),
-        peak_area,
-    );
+        )
+    };
+    frame.render_widget(level("gain", Some(peak)), peak_area);
+    frame.render_widget(level("input", heard), heard_area);
 
     // drawn after the spark, so these land on top of it. the left end is
     // the oldest history, which is the cheapest part of the row to cover:
@@ -777,6 +787,19 @@ fn bar(label: String, value: f32, warn: f32, danger: f32) -> Gauge<'static> {
         // rather than rounding away to an empty bar
         .use_unicode(true)
         .ratio(value.clamp(0.0, 1.0) as f64)
+}
+
+/// A level meter's label: its level and hold, or that its stream is not
+/// open.
+fn level_label(name: &str, meter: Option<&Meter>, floor_db: f32) -> String {
+    match meter {
+        Some(meter) => format!(
+            "{name} {} dB  hold {} dB",
+            meter::db_label(meter.level(), floor_db),
+            meter::db_label(meter.hold(), floor_db),
+        ),
+        None => format!("{name} none"),
+    }
 }
 
 /// Green, then yellow at `warn`, then red at `danger`.

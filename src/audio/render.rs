@@ -348,18 +348,18 @@ pub enum Feed {
     },
 }
 
-/// The reader's end of an output tee: output frames, `channels` samples
-/// each, interleaved as the device takes them.
-pub struct OutputTee {
+/// The reader's end of a tee: a stream's frames, `channels` samples each,
+/// interleaved as the device has them.
+pub struct Tee {
     pub samples: rtrb::Consumer<f32>,
     pub channels: usize,
 }
 
-/// An output tee holding up to `frames` frames, and the producer for
-/// [`Player::with_output_tee`].
-pub fn output_tee(frames: usize, channels: usize) -> (rtrb::Producer<f32>, OutputTee) {
+/// A tee holding up to `frames` frames, and the producer for
+/// [`Player::with_output_tee`] or the input stream.
+pub fn tee(frames: usize, channels: usize) -> (rtrb::Producer<f32>, Tee) {
     let (tx, samples) = rtrb::RingBuffer::new(frames * channels);
-    (tx, OutputTee { samples, channels })
+    (tx, Tee { samples, channels })
 }
 
 /// A feed's events once its instruments are in pools.
@@ -640,7 +640,7 @@ const CLIP: f32 = 1.0;
 pub(super) fn fill(out: &mut [f32], channels: usize, player: &mut Player) -> Tally {
     let mut tally = render(out, channels, player);
     if let Some(output_tee) = &mut player.output_tee {
-        tally.output_tee_dropped = push(output_tee, out, channels);
+        tally.output_tee_dropped = push(output_tee, out.iter().copied(), channels);
     }
     tally
 }
@@ -662,14 +662,18 @@ fn render(out: &mut [f32], channels: usize, player: &mut Player) -> Tally {
     }
 }
 
-/// Copies whole frames of `out` into `output_tee`, as many as it has room
+/// Copies whole frames of `samples` into `tee`, as many as it has room
 /// for, and returns how many frames it had no room for. Writing only whole
 /// frames keeps the reader's channels aligned whatever the ring's size.
-fn push(output_tee: &mut rtrb::Producer<f32>, out: &[f32], channels: usize) -> u64 {
-    let frames = out.len() / channels;
-    let room = frames.min(output_tee.slots() / channels);
-    if let Ok(chunk) = output_tee.write_chunk_uninit(room * channels) {
-        chunk.fill_from_iter(out.iter().copied());
+pub(super) fn push(
+    tee: &mut rtrb::Producer<f32>,
+    samples: impl ExactSizeIterator<Item = f32>,
+    channels: usize,
+) -> u64 {
+    let frames = samples.len() / channels;
+    let room = frames.min(tee.slots() / channels);
+    if let Ok(chunk) = tee.write_chunk_uninit(room * channels) {
+        chunk.fill_from_iter(samples);
     }
     (frames - room) as u64
 }

@@ -95,7 +95,12 @@ fn a_stream_error_keeps_its_kind() {
     let stats = Stats::default();
     let mut faults = Faults::new(64);
     let mut tx = faults.ring();
-    stream_error(&stats, &mut tx, &cpal::Error::new(cpal::ErrorKind::Xrun));
+    stream_error(
+        &stats,
+        &mut tx,
+        &cpal::Error::new(cpal::ErrorKind::Xrun),
+        Fault::Stream,
+    );
     faults.drain();
     assert_eq!(faults.last(), Some(Fault::Stream(StreamKind::Underrun)));
     assert_eq!(stats.snapshot().errors, 1);
@@ -113,7 +118,7 @@ fn faults_never_allocate_whether_the_ring_has_room_or_is_full() {
     let info = allocation_counter::measure(|| {
         for _ in 0..room {
             account(&stats, &mut tx, &tally, 1500, 48_000);
-            stream_error(&stats, &mut tx, &error);
+            stream_error(&stats, &mut tx, &error, Fault::Stream);
         }
     });
     assert_eq!(info.count_total, 0);
@@ -163,4 +168,94 @@ fn a_device_with_no_range_gets_the_request() {
         buffer_size(Some(32), &unknown).unwrap(),
         cpal::BufferSize::Fixed(32)
     );
+}
+
+fn tee_of(frames: usize, channels: usize) -> (rtrb::Producer<f32>, crate::audio::Tee) {
+    crate::audio::tee(frames, channels)
+}
+
+#[test]
+fn input_frames_reach_the_tee_as_f32() {
+    let (mut tx, mut tee) = tee_of(4, 2);
+    let data = [i16::MAX, i16::MIN, 0, 0];
+    let taken = take(&data, 2, Channel::All, &mut tx);
+    assert_eq!(taken.dropped, 0);
+    let read: Vec<f32> = std::iter::from_fn(|| tee.samples.pop().ok()).collect();
+    let want: Vec<f32> = data.iter().map(|&s| f32::from_sample(s)).collect();
+    assert_eq!(read, want);
+}
+
+#[test]
+fn the_input_peak_reads_the_meters_channel() {
+    let (mut tx, _tee) = tee_of(8, 2);
+    let data = [0.25f32, -0.75, 0.5, 0.1];
+    assert_eq!(take(&data, 2, Channel::One(0), &mut tx).peak, 0.5);
+    assert_eq!(take(&data, 2, Channel::One(1), &mut tx).peak, 0.75);
+    assert_eq!(take(&data, 2, Channel::All, &mut tx).peak, 0.75);
+}
+
+#[test]
+fn a_non_finite_input_sample_is_left_out_of_the_peak() {
+    let (mut tx, _tee) = tee_of(8, 1);
+    let data = [0.5f32, f32::INFINITY, f32::NAN];
+    assert_eq!(take(&data, 1, Channel::All, &mut tx).peak, 0.5);
+}
+
+// three frames into room for two: whole frames only, the rest counted
+#[test]
+fn a_full_input_tee_keeps_whole_frames_and_counts_the_rest() {
+    let (mut tx, tee) = tee_of(2, 2);
+    let data = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+    assert_eq!(take(&data, 2, Channel::All, &mut tx).dropped, 1);
+    assert_eq!(tee.samples.slots(), 4);
+}
+
+#[test]
+fn a_full_input_tee_is_a_fault_and_its_peak_a_gauge() {
+    let stats = Stats::default();
+    let mut faults = Faults::new(64);
+    let mut tx = faults.ring();
+    let taken = Taken {
+        peak: 0.5,
+        dropped: 3,
+    };
+    account_input(&stats, &mut tx, &taken);
+    faults.drain();
+    assert_eq!(faults.last(), Some(Fault::InputTeeDropped { frames: 3 }));
+    let snap = stats.snapshot();
+    assert_eq!((snap.input_peak, snap.input_tee_dropped), (0.5, 3));
+    let snap = stats.snapshot();
+    assert_eq!((snap.input_peak, snap.input_tee_dropped), (0.0, 3));
+}
+
+#[test]
+fn an_input_stream_error_is_counted_as_the_inputs() {
+    let stats = Stats::default();
+    let mut faults = Faults::new(64);
+    let mut tx = faults.ring();
+    let error = cpal::Error::new(cpal::ErrorKind::DeviceNotAvailable);
+    stream_error(&stats, &mut tx, &error, Fault::InputStream);
+    faults.drain();
+    assert_eq!(
+        faults.last(),
+        Some(Fault::InputStream(StreamKind::DeviceGone))
+    );
+    assert_eq!(stats.snapshot().errors, 1);
+}
+
+#[test]
+fn the_input_callback_never_allocates() {
+    let stats = Stats::default();
+    let mut faults = Faults::new(64);
+    let mut reporter = faults.ring();
+    let (mut tx, _tee) = tee_of(4, 2);
+    let data = [1i32 << 30; 64];
+    let room = reporter.slots();
+    let info = allocation_counter::measure(|| {
+        for _ in 0..room + 1 {
+            let taken = take(&data, 2, Channel::One(1), &mut tx);
+            account_input(&stats, &mut reporter, &taken);
+        }
+    });
+    assert_eq!(info.count_total, 0);
 }

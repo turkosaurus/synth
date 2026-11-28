@@ -5,7 +5,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use crate::audio::OutputTee;
+use crate::audio::Tee;
 
 /// Which samples of a stream's frames a view reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,32 +44,46 @@ impl Selection {
     }
 }
 
-/// One stream of frames.
+/// One stream of frames, or the place of one the device could not open,
+/// which stays listed so a view can say it is missing.
 pub(crate) struct Stream {
     pub(crate) name: &'static str,
     pub(crate) sample_rate: f32,
-    tee: OutputTee,
+    tee: Option<Tee>,
 }
 
 impl Stream {
-    pub(crate) fn new(name: &'static str, sample_rate: f32, tee: OutputTee) -> Self {
+    pub(crate) fn new(name: &'static str, sample_rate: f32, tee: Tee) -> Self {
         Self {
             name,
             sample_rate,
-            tee,
+            tee: Some(tee),
         }
     }
 
+    /// A stream that is not open, at the rate of the one it stands beside.
+    pub(crate) fn missing(name: &'static str, sample_rate: f32) -> Self {
+        Self {
+            name,
+            sample_rate,
+            tee: None,
+        }
+    }
+
+    /// 0 when the stream is not open.
     pub(crate) fn channels(&self) -> usize {
-        self.tee.channels
+        self.tee.as_ref().map_or(0, |tee| tee.channels)
     }
 
     /// Drain every whole frame, handing `out` the picked sample of each
     /// when `pick` is given.
     fn drain(&mut self, pick: Option<Pick>, out: &mut impl FnMut(f32)) {
-        let channels = self.tee.channels.max(1);
-        let frames = self.tee.samples.slots() / channels;
-        let Ok(chunk) = self.tee.samples.read_chunk(frames * channels) else {
+        let Some(tee) = &mut self.tee else {
+            return;
+        };
+        let channels = tee.channels.max(1);
+        let frames = tee.samples.slots() / channels;
+        let Ok(chunk) = tee.samples.read_chunk(frames * channels) else {
             return;
         };
         if let Some(pick) = pick {
@@ -136,6 +150,13 @@ impl Sources {
         self.streams[self.selection.stream].sample_rate
     }
 
+    /// Whether the stream called `name` is listed and open.
+    pub(crate) fn is_open(&self, name: &str) -> bool {
+        self.streams
+            .iter()
+            .any(|stream| stream.name == name && stream.tee.is_some())
+    }
+
     /// Drain every stream, keeping one sample per frame of the selected
     /// one. All of it, every time, and the others unread: a full tee drops
     /// its newest frames and counts them as a fault.
@@ -164,7 +185,11 @@ impl Sources {
 
 impl fmt::Display for Sources {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = self.streams[self.selection.stream].name;
+        let stream = &self.streams[self.selection.stream];
+        let name = stream.name;
+        if stream.tee.is_none() {
+            return write!(f, "{name} (none)");
+        }
         match self.selection.pick {
             Pick::Mix => write!(f, "{name} mix"),
             Pick::Channel(i) => write!(f, "{name} ch {}", i + 1),

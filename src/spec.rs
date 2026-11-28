@@ -13,7 +13,7 @@ mod instrument;
 mod keymap;
 mod patch;
 
-pub use config::{Budget, Config, LogConfig, StreamName, TuiConfig};
+pub use config::{Budget, Config, InputConfig, LogConfig, StreamName, TuiConfig};
 pub use diagnostic::{Diagnostic, DiagnosticKind, Severity};
 pub use filter::{
     CutoffMod, Filter, FilterReport, Kind, Unit, MAX_CUTOFF, MIN_CUTOFF, MIN_DAMPING,

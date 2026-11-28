@@ -15,7 +15,7 @@
 ---@field total? synth.ConfigBudget ms, input + render + output per key
 
 ---@class synth.ConfigSource
----@field stream? string the stream the scope reads at start: "output"
+---@field stream? string the stream the scope reads at start: "output" or "input"
 ---@field channel? integer the channel it reads at start, from 1 (0: the mix of all)
 ---@field tee? number ms of each stream its tee holds for the view to drain
 
@@ -40,6 +40,9 @@
 ---@field scope? synth.ConfigScope
 ---@field spectrum? synth.ConfigSpectrum
 
+---@class synth.ConfigInput
+---@field channel? integer the channel the input meter reads, from 1 (0: the loudest of all)
+
 ---@class synth.ConfigLog
 ---@field trim_size_kb? integer KiB; at start, a larger log.jsonl keeps only its newest lines up to this (0: never trim)
 
@@ -47,12 +50,16 @@
 ---@field buffer_frames? integer audio callback frames (0: system default)
 ---@field queue? integer buffer size: input -> audio
 ---@field custom_dir? string custom folder
+---@field input? synth.ConfigInput the output device's own input
 ---@field tui? synth.ConfigTui
 ---@field log? synth.ConfigLog
 local config = {
 	buffer_frames = 0, -- audio callback frames (0: system default)
 	queue = 256, -- buffer size: input -> audio
 	-- custom_dir = [[{default}]] -- custom folder
+	input = { -- the output device's own input
+		channel = 0, -- the channel the input meter reads, from 1 (0: the loudest of all)
+	},
 	tui = {
 		poll = 16, -- ms between redraws and key reads
 		meter_hold = 560, -- ms a peak holds before it falls
@@ -71,7 +78,7 @@ local config = {
 		meter_fps = { warn = 30, danger = 24 },
 		faults = 64, -- faults each thread queues for the view, allocated once at start
 		source = {
-			stream = "output", -- the stream the scope reads at start: "output"
+			stream = "output", -- the stream the scope reads at start: "output" or "input"
 			channel = 0, -- the channel it reads at start, from 1 (0: the mix of all)
 			tee = 100, -- ms of each stream its tee holds for the view to drain
 		},
