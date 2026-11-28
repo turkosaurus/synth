@@ -1,9 +1,17 @@
-//! Oscilloscope state: the newest frames of a source, and the window of
-//! them to draw.
+//! Oscilloscope: the newest samples of a source, the window of them held
+//! on a trigger, and the widget that draws it.
+//!
+//! Only `core`, `alloc`, and ratatui's no_std widgets, so it can draw on an
+//! embedded display. Reading the source stays with the runtime.
 
-use std::collections::VecDeque;
+use alloc::collections::VecDeque;
 
-use crate::session::Sources;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::Color;
+use ratatui::symbols::Marker;
+use ratatui::widgets::canvas::{Canvas, Line as Segment};
+use ratatui::widgets::Widget;
 
 /// The newest samples of a source, and the pitch last sounded.
 pub(crate) struct Scope {
@@ -29,17 +37,12 @@ impl Scope {
         }
     }
 
-    /// Take every frame `sources` holds. Draining all of it each time keeps
-    /// the tees from filling, since a full tee drops the newest frames
-    /// rather than the oldest.
-    pub(crate) fn read(&mut self, sources: &mut Sources) {
-        let (history, capacity) = (&mut self.history, self.capacity);
-        sources.read(|sample| {
-            if history.len() == capacity {
-                history.pop_front();
-            }
-            history.push_back(sample);
-        });
+    /// Keep `sample` as the newest, forgetting the oldest once full.
+    pub(crate) fn push(&mut self, sample: f32) {
+        if self.history.len() == self.capacity {
+            self.history.pop_front();
+        }
+        self.history.push_back(sample);
     }
 
     /// Forget what was read, so a new source does not draw the old one's
@@ -63,7 +66,8 @@ impl Scope {
         let Some(hz) = self.hz else {
             return &[];
         };
-        let len = (self.cycles * sample_rate / hz).round() as usize;
+        // rounded by hand: f32::round is not in core
+        let len = (self.cycles * sample_rate / hz + 0.5) as usize;
         window(history, len)
     }
 }
@@ -81,11 +85,47 @@ fn window(samples: &[f32], len: usize) -> &[f32] {
     &samples[start..start + len]
 }
 
+/// `wave` across the whole area on a fixed -1..1 axis, so clipping reads as
+/// a flat top rather than being scaled away. Braille gives each cell 2x4
+/// dots, and joining samples keeps a high pitch from drawing as dots.
+pub(crate) struct Oscilloscope<'a> {
+    /// oldest first, already triggered
+    pub(crate) wave: &'a [f32],
+}
+
+impl Widget for Oscilloscope<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let wave = self.wave;
+        Canvas::default()
+            .marker(Marker::Braille)
+            .x_bounds([0.0, wave.len().saturating_sub(1).max(1) as f64])
+            .y_bounds([-1.0, 1.0])
+            .paint(|ctx| {
+                ctx.draw(&Segment::new(
+                    0.0,
+                    0.0,
+                    wave.len() as f64,
+                    0.0,
+                    Color::DarkGray,
+                ));
+                ctx.layer();
+                for (x, pair) in wave.windows(2).enumerate() {
+                    ctx.draw(&Segment::new(
+                        x as f64,
+                        f64::from(pair[0]),
+                        x as f64 + 1.0,
+                        f64::from(pair[1]),
+                        Color::Green,
+                    ));
+                }
+            })
+            .render(area, buf);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::output_tee;
-    use crate::session::{Pick, Selection, Stream};
 
     fn sine(hz: f32, sample_rate: f32, phase: f32, len: usize) -> Vec<f32> {
         (0..len)
@@ -121,20 +161,33 @@ mod tests {
     }
 
     #[test]
-    fn read_keeps_the_newest_samples_of_the_source() {
-        let (mut tx, tee) = output_tee(8, 2);
-        for frame in 0..6 {
-            tx.push(frame as f32).unwrap();
-            tx.push(-1.0).unwrap();
-        }
-        let selection = Selection {
-            stream: 0,
-            pick: Pick::Channel(0),
-        };
-        let mut sources = Sources::new(vec![Stream::new("output", 48_000.0, tee)], selection);
+    fn push_keeps_the_newest_samples() {
         let mut scope = Scope::new(4, 2.0);
-        scope.read(&mut sources);
+        for sample in 0..6 {
+            scope.push(sample as f32);
+        }
         assert_eq!(scope.history, [2.0, 3.0, 4.0, 5.0]);
+    }
+
+    fn top_row(wave: &[f32]) -> String {
+        let area = Rect::new(0, 0, 24, 16);
+        let mut buffer = Buffer::empty(area);
+        Oscilloscope { wave }.render(area, &mut buffer);
+        (0..area.width)
+            .map(|x| buffer[(x, 0)].symbol().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn clipping_draws_a_flat_top() {
+        let sine = |gain: f32| -> Vec<f32> {
+            (0..96)
+                .map(|i| (gain * (std::f32::consts::TAU * i as f32 / 96.0).sin()).clamp(-1.0, 1.0))
+                .collect()
+        };
+        let lit = |row: String| row.chars().filter(|c| *c != ' ' && *c != '⠀').count();
+        let (clean, clipped) = (top_row(&sine(1.0)), top_row(&sine(4.0)));
+        assert!(lit(clipped) > 2 * lit(clean));
     }
 
     #[test]
