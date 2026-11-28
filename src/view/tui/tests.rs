@@ -149,3 +149,59 @@ fn ctrl_c_ends_the_read_loop() {
 fn a_key_no_binding_names_is_dropped() {
     assert_eq!(stroke(KeyEvent::from(KeyCode::F(1))), None);
 }
+
+fn keymap() -> Keymap {
+    crate::session::tests::model().keyboard.keymap().clone()
+}
+
+/// The overlay drawn alone on a `width` by `height` terminal, as text.
+fn drawn(keymap: &Keymap, width: u16, height: u16) -> String {
+    let backend = ratatui::backend::TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|frame| overlay(frame, keymap)).unwrap();
+    let buffer = terminal.backend().buffer();
+    buffer
+        .content
+        .chunks(width as usize)
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn help_lists_every_note_key_under_its_pitch() {
+    let mut keymap = keymap();
+    keymap.notes = std::collections::HashMap::from([('z', 60), ('x', 61), ('g', 60)]);
+    let text = drawn(&keymap, 80, 24);
+    assert!(text.contains("C4   g z"), "{text}");
+    assert!(text.contains("C#4  x"), "{text}");
+    assert!(text.contains("octave up     ="), "{text}");
+    assert!(text.contains("help          ?"), "{text}");
+}
+
+#[test]
+fn help_packs_notes_into_the_columns_that_fit() {
+    let mut keymap = keymap();
+    keymap.notes = (0..12).map(|i| ((b'a' + i) as char, 60 + i)).collect();
+    let wide = help(&keymap, 80);
+    let narrow = help(&keymap, 10);
+    assert!(wide.len() < narrow.len());
+    // the controls, a blank line, then one pitch per line
+    assert_eq!(narrow.len(), 6 + 1 + 12);
+    assert!(wide.iter().chain(&narrow).all(|line| line.width() <= 80));
+    assert!(narrow.iter().skip(7).all(|line| line.width() <= 10));
+}
+
+#[test]
+fn help_shows_the_whole_shipped_layout() {
+    let patch = crate::script::tests::with_keyboard("synth.keyboard({})").unwrap();
+    let text = drawn(&patch.keymap, 120, 40);
+    // the anchor and the key a fourth down the row below
+    assert!(text.contains("A4   a n"), "{text}");
+    for line in help(&patch.keymap, 115) {
+        assert!(
+            text.contains(&line.to_string()),
+            "{line} missing from\n{text}"
+        );
+    }
+}

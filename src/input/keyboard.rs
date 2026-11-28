@@ -125,23 +125,6 @@ impl Keyboard {
         &self.keymap
     }
 
-    /// Dispatch for a view that is showing something modal: only bindings
-    /// that must work everywhere are honoured, and nothing sounds. Releases
-    /// report `Continue`, so the press that opened an overlay is not undone
-    /// by its own key coming back up.
-    pub(crate) fn global(&self, stroke: Stroke) -> Outcome {
-        if stroke.kind != Kind::Press {
-            return Outcome::Continue;
-        }
-        if stroke.quits() {
-            return Outcome::Quit;
-        }
-        if self.keymap.help.contains(&stroke.key) {
-            return Outcome::Help;
-        }
-        Outcome::Continue
-    }
-
     /// Read `stroke`, appending any note events it causes to `out`.
     pub(crate) fn handle(&mut self, stroke: Stroke, out: &mut Vec<Event>) -> Outcome {
         // sound stop is configurable via the keymap's `stop` list

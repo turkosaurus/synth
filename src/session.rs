@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::audio::{self, Fault, Faults, Feed, Origin, Player, Record, Reporter, Stamp, Stats};
-use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke, PITCHES};
+use crate::input::keyboard::{Gating, Keyboard, Kind, Outcome, Stroke, PITCHES};
 use crate::script;
 use crate::spec::{Config, Event, StreamName};
 
@@ -68,18 +68,15 @@ impl Model {
     ) -> ControlFlow<()> {
         let (flow, origin) = match msg {
             Msg::Key(stroke, read) => {
-                // the overlay owns the keyboard while it is up: no key
-                // reaches the note grid, so nothing can be left sounding
-                // behind it. quit still works, and the help key toggles.
-                let outcome = if self.help {
-                    self.keyboard.global(stroke)
-                } else {
-                    self.keyboard.handle(stroke, events)
-                };
-                let flow = match outcome {
+                // any press closes the overlay and still does what it does,
+                // so no key is lost to it; the help key keeps it up
+                if stroke.kind == Kind::Press {
+                    self.help = false;
+                }
+                let flow = match self.keyboard.handle(stroke, events) {
                     Outcome::Quit => ControlFlow::Break(()),
                     Outcome::Help => {
-                        self.help = !self.help;
+                        self.help = true;
                         ControlFlow::Continue(())
                     }
                     Outcome::Scope => {

@@ -25,7 +25,7 @@ use feed::{bare, sequence, SINGLE};
 use keymap::keymap;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 const LUA_SLOPE: &str = include_str!("../lua/slope.lua");
 const LUA_WAVE: &str = include_str!("../lua/wave.lua");

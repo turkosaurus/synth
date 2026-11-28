@@ -13,7 +13,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::merge::MergeStrategy;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Cell, Clear, Gauge, Paragraph, RenderDirection, Row, Sparkline, SparklineBar, Table,
+    Block, Cell, Clear, Gauge, Padding, Paragraph, RenderDirection, Row, Sparkline, SparklineBar,
+    Table,
 };
 use ratatui::{Frame, Terminal};
 
@@ -508,7 +509,10 @@ fn draw(frame: &mut Frame, view: &View) {
         config,
     } = *view;
 
-    let footer = vec![Line::from("(ctrl-c) quit | (?) help")];
+    let footer = match keymap.help.first() {
+        Some(&key) => format!("(ctrl-c) quit | ({}) help", code(key)),
+        None => "(ctrl-c) quit".to_string(),
+    };
 
     // stats is sized to exactly what it draws: the taller of the meters and
     // the latency table, and its own borders. input takes what is left, so
@@ -608,7 +612,9 @@ fn draw(frame: &mut Frame, view: &View) {
     // the app name rides the frame's bottom edge, since the panes tile the
     // whole area and there is no wrapping block left to carry it
     frame.render_widget(
-        Paragraph::new(footer).right_aligned().block(pane()),
+        Paragraph::new(Line::from(footer))
+            .right_aligned()
+            .block(pane()),
         footer_area,
     );
     // load's full scale is the deadline itself, so a healthy stream reads
@@ -679,30 +685,39 @@ fn pane() -> Block<'static> {
     Block::bordered().merge_borders(MergeStrategy::Exact)
 }
 
-/// The keymap, over the top of whatever is behind it.
+/// The whole keymap, over the top of whatever is behind it, sized to what
+/// it lists and no larger than the frame.
 fn overlay(frame: &mut Frame, keymap: &Keymap) {
-    let [area] = Layout::horizontal([Constraint::Length(34)])
+    const CLOSE: &str = " any other key closes ";
+    let frame_area = frame.area();
+    // two borders, two cells of padding, and the shadow
+    let room = frame_area.width.saturating_sub(5);
+    let lines = help(keymap, room);
+    let widest = lines.iter().map(Line::width).max().unwrap_or(0);
+    let width = widest.max(CLOSE.len()) as u16 + 4;
+    let height = lines.len() as u16 + 2;
+
+    let [area] = Layout::horizontal([Constraint::Length(width)])
         .flex(Flex::Center)
-        .areas(frame.area());
-    // six bindings plus the two border rows
-    let [area] = Layout::vertical([Constraint::Length(8)])
+        .areas(frame_area);
+    let [area] = Layout::vertical([Constraint::Length(height)])
         .flex(Flex::Center)
         .areas(area);
 
     shadow(frame, area);
-    // without Clear the cells the table does not write would still show what
+    // without Clear the cells the text does not write would still show what
     // is underneath, since ratatui only diffs what a widget touches
     frame.render_widget(Clear, area);
 
     // Block::render paints its style across the whole area first, so one
-    // style covers the fill, the border and the titles. The table sets no
-    // colours of its own, and Cell::set_style only assigns fields that are
-    // Some, so the rows inherit both.
+    // style covers the fill, the border and the titles, and the text
+    // inherits it
     let block = pane()
         .style(Style::new().fg(POPUP_INK).bg(POPUP_FILL))
+        .padding(Padding::horizontal(1))
         .title(Line::from(" keymap ").style(Style::new().add_modifier(Modifier::BOLD)))
-        .title_bottom(" (/) close ");
-    frame.render_widget(bindings(keymap).block(block), area);
+        .title_bottom(CLOSE);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// Darken the band one cell down and right of `area`, keeping the symbols
@@ -724,20 +739,17 @@ fn shadow(frame: &mut Frame, area: Rect) {
 }
 
 /// Read the bindings off the resolved keymap, so this screen cannot drift
-/// from what the keys actually do.
-///
-/// A table rather than padded strings: the two columns are measured from
-/// the content, and `Flex::Center` sits the pair in the middle of whatever
-/// width the popup has instead of pinning them left.
-fn bindings(keymap: &Keymap) -> Table<'static> {
+/// from what the keys actually do: the controls, then each pitch the notes
+/// play with every key that plays it, as written before any octave shift,
+/// packed into as many columns as `width` holds.
+fn help(keymap: &Keymap, width: u16) -> Vec<Line<'static>> {
     let keys = |keys: &[Key]| {
         keys.iter()
             .map(|&key| code(key).to_string())
             .collect::<Vec<_>>()
             .join(" or ")
     };
-
-    let rows = [
+    let controls = [
         ("octave up", keys(&keymap.octave_up)),
         ("octave down", keys(&keymap.octave_down)),
         ("silence", keys(&keymap.stop)),
@@ -745,21 +757,45 @@ fn bindings(keymap: &Keymap) -> Table<'static> {
         ("help", keys(&keymap.help)),
         ("quit", "ctrl-c or ctrl-d".to_string()),
     ];
+    let label = controls
+        .iter()
+        .map(|(label, _)| label.len())
+        .max()
+        .unwrap_or(0);
+    let mut lines: Vec<Line> = controls
+        .iter()
+        .map(|(what, keys)| Line::from(format!("{what:<label$}  {keys}")))
+        .collect();
 
-    let width = |pick: fn(&(&str, String)) -> usize| rows.iter().map(pick).max().unwrap_or(0);
-    let labels = width(|(label, _)| label.chars().count());
-    let widest = width(|(_, keys)| keys.chars().count());
+    let mut pitches = std::collections::BTreeMap::<u8, Vec<char>>::new();
+    for (&ch, &note) in &keymap.notes {
+        pitches.entry(note).or_default().push(ch);
+    }
+    let cells: Vec<String> = pitches
+        .into_iter()
+        .map(|(note, mut chars)| {
+            chars.sort_unstable();
+            let chars: Vec<String> = chars.iter().map(char::to_string).collect();
+            format!("{:<4} {}", name(note), chars.join(" "))
+        })
+        .collect();
+    if cells.is_empty() {
+        return lines;
+    }
 
-    Table::new(
-        rows.iter()
-            .map(|(label, keys)| Row::new([(*label).to_string(), keys.clone()])),
-        [
-            Constraint::Length(labels as u16),
-            Constraint::Length(widest as u16),
-        ],
-    )
-    .column_spacing(2)
-    .flex(Flex::Center)
+    let cell = cells.iter().map(|c| c.chars().count()).max().unwrap_or(0);
+    let gap = COLUMN_GAP as usize;
+    let columns = ((width as usize + gap) / (cell + gap)).max(1);
+    lines.push(Line::default());
+    for row in cells.chunks(columns) {
+        let text = row
+            .iter()
+            .map(|c| format!("{c:<cell$}"))
+            .collect::<Vec<_>>()
+            .join(&" ".repeat(gap));
+        lines.push(Line::from(text.trim_end().to_string()));
+    }
+    lines
 }
 
 /// One labelled bar, turning yellow at `warn` and red at `danger`.
