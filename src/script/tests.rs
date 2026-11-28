@@ -424,7 +424,7 @@ fn changing_offset_keeps_the_anchor_on_pitch() {
 }
 
 /// Loads an instrument whose keyboard is `keyboard`, a Lua expression.
-fn with_keyboard(keyboard: &str) -> anyhow::Result<Patch> {
+pub(crate) fn with_keyboard(keyboard: &str) -> anyhow::Result<Patch> {
     let source = format!(
         r#"
         local synth = require("synth")

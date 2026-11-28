@@ -14,6 +14,8 @@ fn keyboard(gating: Gating, gate: Duration) -> (Keyboard, Vec<Event>) {
         stop: vec![Key::Backspace],
         scope: vec![Key::Tab],
         help: vec![],
+        quit: vec![],
+        quit_now: vec![Key::Ctrl('c')],
         gate,
         autorepeat: REPEAT,
         doubletap: DOUBLETAP,
@@ -284,4 +286,17 @@ fn fixed_gating_zero_window_retriggers_every_press() {
     press(&mut keyboard, &mut out, Key::Char('a'));
     press(&mut keyboard, &mut out, Key::Char('a'));
     assert_eq!(ons(&mut out), vec![60, 60]);
+}
+
+#[test]
+fn a_ctrl_binding_needs_ctrl() {
+    let (mut keyboard, mut out) = keyboard(Gating::Held, Duration::ZERO);
+    let ctrl = Stroke {
+        key: Key::Char('c'),
+        kind: Kind::Press,
+        ctrl: true,
+    };
+    assert_eq!(keyboard.handle(ctrl, &mut out), Outcome::Quit);
+    let plain = stroke(Key::Char('c'), Kind::Press);
+    assert_eq!(keyboard.handle(plain, &mut out), Outcome::Continue);
 }

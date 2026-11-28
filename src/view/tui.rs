@@ -13,7 +13,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::merge::MergeStrategy;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Cell, Clear, Gauge, Paragraph, RenderDirection, Row, Sparkline, SparklineBar, Table,
+    Block, Cell, Clear, Gauge, Padding, Paragraph, RenderDirection, Row, Sparkline, SparklineBar,
+    Table,
 };
 use ratatui::{Frame, Terminal};
 
@@ -341,9 +342,17 @@ fn key(code: KeyCode) -> Option<Key> {
 }
 
 /// A binding the way the terminal names it, for the help overlay.
+fn label(key: Key) -> String {
+    match key {
+        Key::Ctrl(ch) => format!("ctrl-{ch}"),
+        key => code(key).to_string(),
+    }
+}
+
+/// The terminal's code for `key`, modifiers aside.
 fn code(key: Key) -> KeyCode {
     match key {
-        Key::Char(ch) => KeyCode::Char(ch),
+        Key::Char(ch) | Key::Ctrl(ch) => KeyCode::Char(ch),
         Key::Backspace => KeyCode::Backspace,
         Key::Delete => KeyCode::Delete,
         Key::Enter => KeyCode::Enter,
@@ -508,7 +517,15 @@ fn draw(frame: &mut Frame, view: &View) {
         config,
     } = *view;
 
-    let footer = vec![Line::from("(ctrl-c) quit | (?) help")];
+    let footer = [
+        ("quit", &keymap.quit),
+        ("quit now", &keymap.quit_now),
+        ("help", &keymap.help),
+    ]
+    .into_iter()
+    .filter_map(|(what, keys)| Some(format!("({}) {what}", label(*keys.first()?))))
+    .collect::<Vec<_>>()
+    .join(" | ");
 
     // stats is sized to exactly what it draws: the taller of the meters and
     // the latency table, and its own borders. input takes what is left, so
@@ -608,7 +625,9 @@ fn draw(frame: &mut Frame, view: &View) {
     // the app name rides the frame's bottom edge, since the panes tile the
     // whole area and there is no wrapping block left to carry it
     frame.render_widget(
-        Paragraph::new(footer).right_aligned().block(pane()),
+        Paragraph::new(Line::from(footer))
+            .right_aligned()
+            .block(pane()),
         footer_area,
     );
     // load's full scale is the deadline itself, so a healthy stream reads
@@ -663,7 +682,10 @@ fn draw(frame: &mut Frame, view: &View) {
 
     // last, so it lands on top of everything already drawn
     if glance.help {
-        overlay(frame, keymap);
+        popup(frame, " keymap ", help(keymap), " any key closes ");
+    }
+    if glance.asking {
+        popup(frame, " quit ", vec![Line::from("quit? (y/n)")], "");
     }
 }
 
@@ -679,30 +701,35 @@ fn pane() -> Block<'static> {
     Block::bordered().merge_borders(MergeStrategy::Exact)
 }
 
-/// The keymap, over the top of whatever is behind it.
-fn overlay(frame: &mut Frame, keymap: &Keymap) {
-    let [area] = Layout::horizontal([Constraint::Length(34)])
+/// `lines` in a box over the top of whatever is behind it, sized to them
+/// and no larger than the frame.
+fn popup(frame: &mut Frame, title: &str, lines: Vec<Line>, bottom: &str) {
+    let widest = lines.iter().map(Line::width).max().unwrap_or(0);
+    // two borders and two cells of padding
+    let width = widest.max(title.len()).max(bottom.len()) as u16 + 4;
+    let height = lines.len() as u16 + 2;
+
+    let [area] = Layout::horizontal([Constraint::Length(width)])
         .flex(Flex::Center)
         .areas(frame.area());
-    // six bindings plus the two border rows
-    let [area] = Layout::vertical([Constraint::Length(8)])
+    let [area] = Layout::vertical([Constraint::Length(height)])
         .flex(Flex::Center)
         .areas(area);
 
     shadow(frame, area);
-    // without Clear the cells the table does not write would still show what
+    // without Clear the cells the text does not write would still show what
     // is underneath, since ratatui only diffs what a widget touches
     frame.render_widget(Clear, area);
 
     // Block::render paints its style across the whole area first, so one
-    // style covers the fill, the border and the titles. The table sets no
-    // colours of its own, and Cell::set_style only assigns fields that are
-    // Some, so the rows inherit both.
+    // style covers the fill, the border and the titles, and the text
+    // inherits it
     let block = pane()
         .style(Style::new().fg(POPUP_INK).bg(POPUP_FILL))
-        .title(Line::from(" keymap ").style(Style::new().add_modifier(Modifier::BOLD)))
-        .title_bottom(" (/) close ");
-    frame.render_widget(bindings(keymap).block(block), area);
+        .padding(Padding::horizontal(1))
+        .title(Line::from(title).style(Style::new().add_modifier(Modifier::BOLD)))
+        .title_bottom(bottom);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// Darken the band one cell down and right of `area`, keeping the symbols
@@ -725,41 +752,33 @@ fn shadow(frame: &mut Frame, area: Rect) {
 
 /// Read the bindings off the resolved keymap, so this screen cannot drift
 /// from what the keys actually do.
-///
-/// A table rather than padded strings: the two columns are measured from
-/// the content, and `Flex::Center` sits the pair in the middle of whatever
-/// width the popup has instead of pinning them left.
-fn bindings(keymap: &Keymap) -> Table<'static> {
-    let keys = |keys: &[Key]| {
-        keys.iter()
-            .map(|&key| code(key).to_string())
+fn help(keymap: &Keymap) -> Vec<Line<'static>> {
+    let keys = |keys: &[Key]| match keys {
+        [] => "—".to_string(),
+        keys => keys
+            .iter()
+            .map(|&key| label(key))
             .collect::<Vec<_>>()
-            .join(" or ")
+            .join(" or "),
     };
-
-    let rows = [
+    let controls = [
         ("octave up", keys(&keymap.octave_up)),
         ("octave down", keys(&keymap.octave_down)),
         ("silence", keys(&keymap.stop)),
         ("scope source", keys(&keymap.scope)),
         ("help", keys(&keymap.help)),
-        ("quit", "ctrl-c or ctrl-d".to_string()),
+        ("quit", keys(&keymap.quit)),
+        ("quit now", keys(&keymap.quit_now)),
     ];
-
-    let width = |pick: fn(&(&str, String)) -> usize| rows.iter().map(pick).max().unwrap_or(0);
-    let labels = width(|(label, _)| label.chars().count());
-    let widest = width(|(_, keys)| keys.chars().count());
-
-    Table::new(
-        rows.iter()
-            .map(|(label, keys)| Row::new([(*label).to_string(), keys.clone()])),
-        [
-            Constraint::Length(labels as u16),
-            Constraint::Length(widest as u16),
-        ],
-    )
-    .column_spacing(2)
-    .flex(Flex::Center)
+    let width = controls
+        .iter()
+        .map(|(what, _)| what.len())
+        .max()
+        .unwrap_or(0);
+    controls
+        .iter()
+        .map(|(what, keys)| Line::from(format!("{what:<width$}  {keys}")))
+        .collect()
 }
 
 /// One labelled bar, turning yellow at `warn` and red at `danger`.

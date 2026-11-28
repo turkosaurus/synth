@@ -194,6 +194,8 @@ keyboard.colemak = keyboard.grid({ template = keyboard.templates.colemak })
 ---@field layout? synth.Layout
 ---@field stop? string[] silence everything; must not be empty
 ---@field scope? string[] move the scope to the next channel, mix, or stream; may be empty
+---@field quit? string[] quit after a y/n prompt
+---@field quit_now? string[] quit without asking
 ---@field gate? number ms; note length when key release is unreported
 ---@field autorepeat_threshold? number ms; a press this soon is autorepeat; 0 off
 ---@field doubletap_threshold? number ms; a second press this soon is a double tap; 0 off
@@ -212,6 +214,9 @@ defaults = {
 	layout = keyboard.qwerty,
 	stop = { "escape" }, -- silence everything; must not be empty
 	scope = { "tab" }, -- move the scope to the next channel, mix, or stream; may be empty
+	-- either may be empty, not both; "ctrl-c" names a key pressed with ctrl
+	quit = { "ctrl-q" }, -- quit after a y/n prompt
+	quit_now = { "ctrl-c", "ctrl-d" }, -- quit without asking
 	-- note length when the terminal cannot report key release
 	gate = 200, -- ms
 	-- when the terminal cannot report key release, a press of a key this

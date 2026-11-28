@@ -15,9 +15,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::audio::{self, Fault, Faults, Feed, Origin, Player, Record, Reporter, Stamp, Stats};
-use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke, PITCHES};
+use crate::input::keyboard::{Gating, Keyboard, Kind, Outcome, Stroke, PITCHES};
 use crate::script;
-use crate::spec::{Config, Event, StreamName};
+use crate::spec::{Config, Event, Key, StreamName};
 
 pub(crate) use latency::{Latency, Spread, Window};
 pub(crate) use source::{Pick, Selection, Sources, Stream};
@@ -51,6 +51,8 @@ pub(crate) struct Model {
     pub(crate) freqs: crate::spec::Freqs,
     /// Whether the help overlay is up.
     pub(crate) help: bool,
+    /// Whether the quit prompt is waiting for y or n.
+    pub(crate) asking: bool,
     /// What the scope reads.
     pub(crate) scope: Selection,
     /// Each frame source's channel count, for moving `scope` through them.
@@ -67,19 +69,30 @@ impl Model {
         cmds: &mut Vec<Cmd>,
     ) -> ControlFlow<()> {
         let (flow, origin) = match msg {
-            Msg::Key(stroke, read) => {
-                // the overlay owns the keyboard while it is up: no key
-                // reaches the note grid, so nothing can be left sounding
-                // behind it. quit still works, and the help key toggles.
-                let outcome = if self.help {
-                    self.keyboard.global(stroke)
-                } else {
-                    self.keyboard.handle(stroke, events)
+            Msg::Key(stroke, read) if self.asking && stroke.kind == Kind::Press => {
+                self.asking = false;
+                // the answer is taken whole: a no is never also a note
+                let flow = match (stroke.key, self.keyboard.answer(stroke)) {
+                    (_, Outcome::Quit) => ControlFlow::Break(()),
+                    (Key::Char('y' | 'Y'), _) if !stroke.ctrl => ControlFlow::Break(()),
+                    _ => ControlFlow::Continue(()),
                 };
-                let flow = match outcome {
+                (flow, Origin::Key { read })
+            }
+            Msg::Key(stroke, read) => {
+                // any press closes the overlay and still does what it does,
+                // so no key is lost to it; the help key keeps it up
+                if stroke.kind == Kind::Press {
+                    self.help = false;
+                }
+                let flow = match self.keyboard.handle(stroke, events) {
                     Outcome::Quit => ControlFlow::Break(()),
+                    Outcome::Ask => {
+                        self.asking = true;
+                        ControlFlow::Continue(())
+                    }
                     Outcome::Help => {
-                        self.help = !self.help;
+                        self.help = true;
                         ControlFlow::Continue(())
                     }
                     Outcome::Scope => {
@@ -107,6 +120,7 @@ impl Model {
             octave: self.keyboard.octave(),
             reach: self.keyboard.reach(),
             help: self.help,
+            asking: self.asking,
             scope: self.scope,
         }
     }
@@ -123,6 +137,7 @@ pub(crate) struct Glance {
     /// The lowest and highest shift the octave keys can reach.
     pub(crate) reach: (i32, i32),
     pub(crate) help: bool,
+    pub(crate) asking: bool,
     pub(crate) scope: Selection,
 }
 
@@ -322,6 +337,7 @@ impl Session {
                     keyboard: Keyboard::new(patch.keymap, gating),
                     freqs,
                     help: false,
+                    asking: false,
                     scope: selection,
                     streams: channels,
                 },

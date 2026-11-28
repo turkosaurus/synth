@@ -149,3 +149,61 @@ fn ctrl_c_ends_the_read_loop() {
 fn a_key_no_binding_names_is_dropped() {
     assert_eq!(stroke(KeyEvent::from(KeyCode::F(1))), None);
 }
+
+fn keymap() -> Keymap {
+    crate::session::tests::model().keyboard.keymap().clone()
+}
+
+/// `draw` run on a `width` by `height` terminal, as text.
+fn drawn(width: u16, height: u16, draw: impl FnOnce(&mut Frame)) -> String {
+    let backend = ratatui::backend::TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(draw).unwrap();
+    let buffer = terminal.backend().buffer();
+    buffer
+        .content
+        .chunks(width as usize)
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn help_lists_the_controls_and_no_notes() {
+    let text = drawn(80, 24, |frame| {
+        popup(frame, " keymap ", help(&keymap()), "");
+    });
+    assert!(text.contains("octave up     ="), "{text}");
+    assert!(text.contains("help          ?"), "{text}");
+    assert!(text.contains("quit          q"), "{text}");
+    assert!(text.contains("quit now      ctrl-c or ctrl-d"), "{text}");
+    assert!(text.contains("octave down   —"), "{text}");
+    assert!(!text.contains("C4"), "{text}");
+}
+
+#[test]
+fn help_reads_quit_off_every_shipped_layout() {
+    for layout in ["qwerty", "qwertz", "azerty", "dvorak", "colemak"] {
+        let patch = crate::script::tests::with_keyboard(&format!(
+            "synth.keyboard({{ layout = synth.keyboard.{layout} }})"
+        ))
+        .unwrap();
+        let lines: Vec<String> = help(&patch.keymap).iter().map(Line::to_string).collect();
+        assert!(
+            lines.contains(&"quit          ctrl-q".to_string()),
+            "{layout}: {lines:?}"
+        );
+        assert!(
+            lines.contains(&"quit now      ctrl-c or ctrl-d".to_string()),
+            "{layout}: {lines:?}"
+        );
+    }
+}
+
+#[test]
+fn the_quit_prompt_draws() {
+    let text = drawn(40, 10, |frame| {
+        popup(frame, " quit ", vec![Line::from("quit? (y/n)")], "");
+    });
+    assert!(text.contains("quit? (y/n)"), "{text}");
+}
