@@ -19,7 +19,10 @@ mod structure;
 use crate::spec::{Diagnostic, DiagnosticKind, Freqs, Patch};
 #[cfg(test)]
 pub(crate) use config::defaults as config_defaults;
-pub use config::{config, config_path, log_path, socket_path, template as config_template};
+pub use config::{
+    config, config_path, log_path, rebuild as config_rebuilt, socket_path,
+    template as config_template,
+};
 pub use error::Error;
 use feed::{bare, sequence, SINGLE};
 use keymap::keymap;
@@ -243,6 +246,7 @@ mod field {
     pub(super) const CALL: &str = "__call";
     pub(super) const PACKAGE: &str = "package";
 
+    pub(super) const VERSION: &str = "version";
     pub(super) const BUFFER_FRAMES: &str = "buffer_frames";
     pub(super) const QUEUE: &str = "queue";
     pub(super) const CUSTOM_DIR: &str = "custom_dir";

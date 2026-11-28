@@ -62,7 +62,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: mise run tests
 
+      # lint:config compares lua/config.lua with the base branch, and on
+      # main with main itself
       - name: Lint
+        env:
+          VERSION_BASE: origin/${{ github.base_ref || 'main' }}
         run: mise run lint
 
   macos:

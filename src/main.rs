@@ -36,8 +36,13 @@ enum Commands {
     Play { path: PathBuf },
     /// Play live from the keyboard; without a path, the default instrument
     Tui { path: Option<PathBuf> },
-    /// Open config.lua in $VISUAL or $EDITOR, creating it if needed
-    Config,
+    /// Open config.lua in $VISUAL or $EDITOR, creating it if needed, and
+    /// offering to add newer options to an out-of-date one
+    Config {
+        /// add newer options without asking
+        #[arg(long)]
+        yes: bool,
+    },
     /// Open your custom folder in $VISUAL or $EDITOR, creating it and
     /// copying in the built-in modules if needed
     Custom {
@@ -259,9 +264,10 @@ fn run() -> anyhow::Result<ExitCode> {
             synth::terminal::require()?;
             let config = script::config()?;
             let mut session = Session::open(path.as_deref(), gating(), &config)?;
-            view::tui::run(&mut session, &config.tui)?;
+            let notice = config.outdated.then_some(view::report::OUTDATED);
+            view::tui::run(&mut session, &config.tui, notice)?;
         }
-        Commands::Config => return edit_config(),
+        Commands::Config { yes } => return edit_config(yes),
         Commands::Custom { path, sync } => custom(path, sync)?,
         Commands::Install => match install::install()? {
             install::Installed::Already(to) => println!("synth is installed at {}", to.display()),
@@ -310,8 +316,9 @@ fn gating() -> Gating {
 }
 
 /// Opens `config.lua` in the user's editor, writing the template first if
-/// there is no file, then checks what was saved.
-fn edit_config() -> anyhow::Result<ExitCode> {
+/// there is no file, then checks what was saved. An out-of-date file is
+/// rebuilt from the template first if the user agrees, or `yes` is set.
+fn edit_config(yes: bool) -> anyhow::Result<ExitCode> {
     let path = script::config_path()
         .context("no config directory: set XDG_CONFIG_HOME or HOME, or APPDATA on Windows")?;
     if !path.exists() {
@@ -320,6 +327,16 @@ fn edit_config() -> anyhow::Result<ExitCode> {
         }
         std::fs::write(&path, script::config_template())
             .with_context(|| format!("write {}", path.display()))?;
+    // a file that does not load is opened as it is, and its error reported
+    } else if script::config().is_ok_and(|config| config.outdated) {
+        println!("{}", view::report::OUTDATED);
+        if yes || ask_rebuild()? {
+            let source = std::fs::read_to_string(&path)
+                .with_context(|| format!("read {}", path.display()))?;
+            let rebuilt = script::config_rebuilt(&source, &path.display().to_string())?;
+            std::fs::write(&path, rebuilt).with_context(|| format!("write {}", path.display()))?;
+            println!("added newer options to {}", path.display());
+        }
     }
 
     open_in_editor(&path)?;
@@ -335,6 +352,21 @@ fn edit_config() -> anyhow::Result<ExitCode> {
             Ok(ExitCode::FAILURE)
         }
     }
+}
+
+/// Whether to rebuild an out-of-date config.lua. No one at a terminal
+/// to answer is no.
+fn ask_rebuild() -> anyhow::Result<bool> {
+    if !std::io::stdin().is_terminal() {
+        println!("not a terminal, so config.lua is left as it is; pass --yes to rebuild it");
+        return Ok(false);
+    }
+    let rebuild = view::prompt::confirm(
+        view::prompt::REBUILD,
+        &mut std::io::stdin().lock(),
+        &mut std::io::stdout(),
+    )?;
+    Ok(rebuild)
 }
 
 /// Prints the custom folder, or creates it with a folder per kind and
@@ -461,6 +493,9 @@ fn editor(visual: Option<String>, editor: Option<String>) -> Vec<String> {
 /// Bakes a patch and reports it; fails when the patch has warnings.
 fn lint(path: &std::path::Path, rate: u32) -> anyhow::Result<ExitCode> {
     let config = script::config()?;
+    if config.outdated {
+        eprintln!("{}", view::report::OUTDATED);
+    }
     let patch = script::load(path, rate, config.custom_dir.as_deref())?;
     view::report::patch(path, &patch, rate);
     if patch.clean() {

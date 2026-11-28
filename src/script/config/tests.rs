@@ -145,7 +145,152 @@ fn the_defaults_are_the_built_in_file() {
 
 #[test]
 fn an_empty_file_is_the_defaults() {
-    assert_eq!(user("return {}").unwrap(), resolve(None).unwrap());
+    let config = user("return {}").unwrap();
+    assert_eq!(
+        Config {
+            outdated: false,
+            ..config
+        },
+        resolve(None).unwrap()
+    );
+}
+
+/// The built-in file's `version`.
+fn built_in() -> Version {
+    let lua = mlua::Lua::new();
+    let base = table(&lua, TEMPLATE, TEMPLATE_NAME).unwrap();
+    version(&base, TEMPLATE_NAME)
+        .unwrap()
+        .expect("config.lua names a version")
+}
+
+#[test]
+fn versions_parse_and_order_as_semver() {
+    let v = |text| Version::parse(text).unwrap_or_else(|| panic!("{text}"));
+    assert!(v("0.17.1") < v("0.18.0-beta.1"));
+    assert!(v("0.18.0-beta.1") < v("0.18.0-beta.2"));
+    assert!(v("0.18.0-beta.2") < v("0.18.0"));
+    assert!(v("0.9.0") < v("0.10.0"));
+    assert_eq!(v("1.2.3-beta.4").to_string(), "1.2.3-beta.4");
+    for bad in [
+        "",
+        "1.2",
+        "1.2.3.4",
+        "01.2.3",
+        "1.2.x",
+        "1.2.3-rc.1",
+        "v1.2.3",
+    ] {
+        assert_eq!(Version::parse(bad), None, "{bad}");
+    }
+}
+
+#[test]
+fn a_file_without_a_version_is_out_of_date() {
+    assert!(user("return {}").unwrap().outdated);
+}
+
+#[test]
+fn a_file_older_than_the_built_in_is_out_of_date() {
+    let config = user("return { version = '0.0.1' }").unwrap();
+    assert!(config.outdated);
+}
+
+#[test]
+fn a_file_as_new_or_newer_is_current() {
+    let current = format!("return {{ version = '{}' }}", built_in());
+    assert!(!user(&current).unwrap().outdated);
+    assert!(!user("return { version = '999.0.0' }").unwrap().outdated);
+    assert!(!resolve(None).unwrap().outdated);
+}
+
+#[test]
+fn a_bad_version_is_named() {
+    let error = user("return { version = '1.2' }").unwrap_err();
+    assert!(
+        matches!(&error, Error::ConfigVersion { name, version } if name == "test" && version == "1.2"),
+        "{error}"
+    );
+    let error = user("return { version = 1 }").unwrap_err();
+    assert!(
+        format!("{error:#}").contains("`version` must be a string"),
+        "{error:#}"
+    );
+}
+
+fn rebuilt(source: &str) -> String {
+    rebuild_for(source, "test", &unix(Some("/d"), None))
+        .unwrap_or_else(|e| panic!("{source}: {e:#}"))
+}
+
+#[test]
+fn an_empty_file_rebuilds_as_the_template() {
+    assert_eq!(rebuilt("return {}"), template_for(&unix(Some("/d"), None)));
+}
+
+#[test]
+fn a_rebuilt_file_loads_as_the_user_file_did() {
+    let dir = abs("/c/custom").display().to_string();
+    let custom_dir = format!("return {{ custom_dir = {dir:?} }}");
+    for source in [
+        "return { queue = 512 }",
+        "return { version = '0.0.1', buffer_frames = 128 }",
+        "return { tui = { meter_floor = -90, poll = 8.5 } }",
+        "return { tui = { meter_latency = { render = { warn = 6 }, ceil = 50 } } }",
+        "return { tui = { meter_fps = { danger = 12 } } }",
+        "return { tui = { source = { channel = 2 }, spectrum = { size = 8192 } } }",
+        "return { log = { trim_size_kb = 0 } }",
+        "return { custom_dir = '' }",
+        custom_dir.as_str(),
+        "local floor = -48 return { tui = { meter_floor = floor, spectrum = { floor = floor * 2 } } }",
+    ] {
+        let rebuilt = rebuilt(source);
+        let loaded = user(&rebuilt).unwrap();
+        assert!(!loaded.outdated, "{rebuilt}");
+        assert_eq!(
+            loaded,
+            Config {
+                outdated: false,
+                ..user(source).unwrap()
+            },
+            "{source}\n{rebuilt}"
+        );
+    }
+}
+
+#[test]
+fn a_rebuilt_file_writes_values_in_place() {
+    let rebuilt = rebuilt(
+        "-- mine\nreturn { queue = 512, tui = { meter_latency = { render = { warn = 6 } } } }",
+    );
+    assert!(!rebuilt.contains("-- mine"), "{rebuilt}");
+    assert!(
+        rebuilt.contains("\tqueue = 512, -- buffer size"),
+        "{rebuilt}"
+    );
+    assert!(
+        rebuilt.contains("\t\t\trender = { warn = 6, danger = 10 },"),
+        "{rebuilt}"
+    );
+    assert!(
+        rebuilt.contains(&format!("\tversion = \"{}\",", built_in())),
+        "{rebuilt}"
+    );
+}
+
+#[test]
+fn a_rebuilt_custom_dir_is_uncommented() {
+    let rebuilt = rebuilt("return { custom_dir = '~/my \"custom\"' }");
+    assert!(
+        rebuilt.contains("\tcustom_dir = \"~/my \\\"custom\\\"\", -- custom folder"),
+        "{rebuilt}"
+    );
+    assert!(!rebuilt.contains("-- custom_dir ="), "{rebuilt}");
+}
+
+#[test]
+fn a_file_that_does_not_load_is_not_rebuilt() {
+    assert!(rebuild_for("return { queue = 8 }", "test", &unix(Some("/d"), None)).is_err());
 }
 
 #[test]

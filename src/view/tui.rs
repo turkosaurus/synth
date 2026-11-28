@@ -52,8 +52,9 @@ const GLANCES: usize = 4;
 /// Keys taken from the terminal per read; any more wait for the next.
 const KEYS: usize = 64;
 
-/// Draw `session` and feed it keys until the player quits.
-pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
+/// Draw `session` and feed it keys until the player quits. `notice` is a
+/// line about the config, shown in the footer.
+pub fn run(session: &mut Session, config: &TuiConfig, notice: Option<&str>) -> anyhow::Result<()> {
     crate::terminal::require()?;
     let gating = session.model().keyboard.gating();
 
@@ -73,6 +74,7 @@ pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
         freqs: model.freqs.clone(),
         gating,
         glance: model.glance(),
+        notice: notice.map(str::to_string),
     };
     let Split {
         input,
@@ -203,6 +205,7 @@ struct Still {
     gating: Gating,
     /// before the first key
     glance: Glance,
+    notice: Option<String>,
 }
 
 /// The parts of a session the view reads while the input thread has the
@@ -287,6 +290,7 @@ fn drive(
             fps,
             requested: timing.requested,
             config,
+            notice: still.notice.as_deref(),
         };
         terminal.draw(|frame| draw(frame, &view))?;
         timing.drawn(Instant::now());
@@ -392,6 +396,8 @@ struct View<'a> {
     /// platform
     requested: Option<u32>,
     config: &'a TuiConfig,
+    /// about the config, beside the key hints
+    notice: Option<&'a str>,
 }
 
 /// One latency row: a stage, its spread, and its budget.
@@ -506,6 +512,7 @@ fn draw(frame: &mut Frame, view: &View) {
         fps,
         requested,
         config,
+        notice,
     } = *view;
 
     let footer = vec![Line::from("(ctrl-c) quit | (?) help")];
@@ -611,6 +618,12 @@ fn draw(frame: &mut Frame, view: &View) {
         Paragraph::new(footer).right_aligned().block(pane()),
         footer_area,
     );
+    if let Some(notice) = notice {
+        frame.render_widget(
+            Paragraph::new(Line::from(notice).style(Style::new().fg(Color::Yellow))),
+            pane().inner(footer_area),
+        );
+    }
     // load's full scale is the deadline itself, so a healthy stream reads
     // nearly empty; that space is the headroom polyphony gets to spend.
     frame.render_widget(

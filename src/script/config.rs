@@ -116,13 +116,44 @@ pub fn template() -> String {
     template_for(&Dirs::current())
 }
 
-/// The line naming the default is dropped when there is no data directory,
-/// or when the path holds `]]` and would end the long string early.
 fn template_for(dirs: &Dirs) -> String {
+    fill(TEMPLATE, dirs)
+}
+
+/// `source`, a user's file, rebuilt from the template: each value it sets
+/// in place of the default, and the template's `version`. Fails rather
+/// than return a file that would load differently.
+pub fn rebuild(source: &str, name: &str) -> Result<String, Error> {
+    rebuild_for(source, name, &Dirs::current())
+}
+
+fn rebuild_for(source: &str, name: &str, dirs: &Dirs) -> Result<String, Error> {
+    let lua = mlua::Lua::new();
+    let mut set = rebuild::values(&table(&lua, source, name)?, name)?;
+    set.remove(field::VERSION);
+    let rebuilt = fill(&rebuild::merge(TEMPLATE, set), dirs);
+    let loaded = |source: &str| {
+        resolve(Some((source, name))).map(|config| Config {
+            outdated: false,
+            ..config
+        })
+    };
+    if resolve(Some((&rebuilt, name)))?.outdated || loaded(&rebuilt)? != loaded(source)? {
+        return Err(Error::ConfigRebuild {
+            name: name.to_string(),
+        });
+    }
+    Ok(rebuilt)
+}
+
+/// `source` with the default custom folder filled in. The line naming it
+/// is dropped when there is no data directory, or when the path holds `]]`
+/// and would end the long string early.
+fn fill(source: &str, dirs: &Dirs) -> String {
     let dir = custom_dir("", dirs).ok().flatten();
     match dir.map(|dir| dir.display().to_string()) {
-        Some(dir) if !dir.contains("]]") => TEMPLATE.replace(DEFAULT_CUSTOM_DIR, &dir),
-        _ => TEMPLATE
+        Some(dir) if !dir.contains("]]") => source.replace(DEFAULT_CUSTOM_DIR, &dir),
+        _ => source
             .lines()
             .filter(|line| !line.contains(DEFAULT_CUSTOM_DIR))
             .map(|line| format!("{line}\n"))
@@ -187,10 +218,85 @@ pub(crate) fn defaults() -> Config {
 fn resolve(user: Option<(&str, &str)>) -> Result<Config, Error> {
     let lua = mlua::Lua::new();
     let base = table(&lua, TEMPLATE, TEMPLATE_NAME)?;
+    let built_in = version(&base, TEMPLATE_NAME)?;
+    let mut outdated = false;
     if let Some((source, name)) = user {
-        overlay(&base, &table(&lua, source, name)?)?;
+        let over = table(&lua, source, name)?;
+        outdated = match (version(&over, name)?, built_in) {
+            (Some(from), Some(built_in)) => from < built_in,
+            (None, built_in) => built_in.is_some(),
+            (Some(_), None) => false,
+        };
+        overlay(&base, &over)?;
     }
-    settings(&base)
+    Ok(Config {
+        outdated,
+        ..settings(&base)?
+    })
+}
+
+/// A release as `version` names one: MAJOR.MINOR.PATCH, or
+/// MAJOR.MINOR.PATCH-beta.N, the forms Cargo.toml's version takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Version {
+    major: u64,
+    minor: u64,
+    patch: u64,
+    stage: Stage,
+}
+
+/// Declared in this order so a release sorts after its betas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Stage {
+    Beta(u64),
+    Release,
+}
+
+impl Version {
+    fn parse(text: &str) -> Option<Self> {
+        // no leading zeros, as semver and the version task require
+        let number = |part: &str| {
+            let digits = !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+            (digits && (part == "0" || !part.starts_with('0')))
+                .then(|| part.parse().ok())
+                .flatten()
+        };
+        let (core, stage) = match text.split_once('-') {
+            Some((core, beta)) => (core, Stage::Beta(number(beta.strip_prefix("beta.")?)?)),
+            None => (text, Stage::Release),
+        };
+        let mut parts = core.split('.');
+        let version = Self {
+            major: number(parts.next()?)?,
+            minor: number(parts.next()?)?,
+            patch: number(parts.next()?)?,
+            stage,
+        };
+        parts.next().is_none().then_some(version)
+    }
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)?;
+        match self.stage {
+            Stage::Beta(n) => write!(f, "-beta.{n}"),
+            Stage::Release => Ok(()),
+        }
+    }
+}
+
+/// The `version` a checked table names, if any.
+fn version(table: &mlua::Table, name: &str) -> Result<Option<Version>, Error> {
+    let Some(text) = table.get::<Option<String>>(field::VERSION)? else {
+        return Ok(None);
+    };
+    Version::parse(&text)
+        .map(Some)
+        .ok_or_else(|| Error::ConfigVersion {
+            name: name.to_string(),
+            version: text,
+        })
 }
 
 /// Runs a config file and checks the table it returns. Every field is
@@ -387,8 +493,10 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
         log: LogConfig {
             trim_size_kb: log.get(field::TRIM_SIZE_KB)?,
         },
+        outdated: false,
     })
 }
 
+mod rebuild;
 #[cfg(test)]
 mod tests;

@@ -44,12 +44,14 @@
 ---@field trim_size_kb? integer KiB; at start, a larger log.jsonl keeps only its newest lines up to this (0: never trim)
 
 ---@class synth.Config
+---@field version? string the release that last changed this file
 ---@field buffer_frames? integer audio callback frames (0: system default)
 ---@field queue? integer buffer size: input -> audio
 ---@field custom_dir? string custom folder
 ---@field tui? synth.ConfigTui
 ---@field log? synth.ConfigLog
 local config = {
+	version = "0.17.1", -- the release that last changed this file
 	buffer_frames = 0, -- audio callback frames (0: system default)
 	queue = 256, -- buffer size: input -> audio
 	-- custom_dir = [[{default}]] -- custom folder
