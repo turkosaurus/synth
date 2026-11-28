@@ -7,11 +7,12 @@
 | [`spec`](./spec) | plain data every module shares; names nothing else in the crate |
 | [`audio`](./audio) | the realtime path: render and device |
 | [`input`](./input) | character keyboard to note events |
-| [`session.rs`](./session.rs) | model, msg, and cmd for a live view; wires device, patch, and ring |
+| [`session.rs`](./session.rs) | model, msg, and cmd for a live view; wires device, patch, and ring; `source.rs`: the frame sources a view reads |
 | [`view`](./view) | tui, reports, prompts |
 | [`terminal.rs`](./terminal.rs) | raw mode and key release detection |
 | [`install.rs`](./install.rs) | `install`, `uninstall` |
 | [`update.rs`](./update.rs) | `update` from GitHub releases |
+| [`log.rs`](./log.rs) | `$XDG_STATE_HOME/synth/log.jsonl`, appended each session and trimmed at start; the live log at `$XDG_RUNTIME_DIR/synth/log.sock`; following either for `log` |
 | [`release.rs`](./release.rs) | build identity for `--version` |
 
 ```mermaid
@@ -23,6 +24,7 @@ flowchart LR
         custom([custom])
         play([play])
         tui([tui])
+        log_cmd([log])
     end
     subgraph binary [binary commands]
         install_cmd([install])
@@ -34,6 +36,7 @@ flowchart LR
     doctor & tui --> terminal
     play --> audio
     tui --> session --> script & audio & input
+    log_cmd --> log & view
     install_cmd & uninstall --> install
     update_cmd --> update --> install & release
     version --> release

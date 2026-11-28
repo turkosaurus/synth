@@ -2,6 +2,8 @@
 
 Key presses to note events. A layout is Lua's, checked into a `Keymap` by [`script/keymap.rs`](../script/keymap.rs); this module reads keys against it, translated by the view from its own library, and hands each `Event` back to the session, which pushes it into the ring the audio callback reads.
 
+Keys are read on their own thread, never between redraws: the TUI lends the session's `Input` (model and ring producer) to an input thread that pushes each `Event` as soon as its key is read, and sends the draw loop a copied `Glance` of what changed. A MIDI callback thread can own an `Input` the same way.
+
 | file | purpose |
 | --- | --- |
 | [`keyboard.rs`](./keyboard.rs) | `Keyboard`: key to `Event`, octave shift, control keys, gating |
@@ -9,7 +11,7 @@ Key presses to note events. A layout is Lua's, checked into a `Keymap` by [`scri
 ```mermaid
 flowchart LR
     layout["synth.keyboard (Lua)"] --> keymap[script::keymap] --> Keymap
-    key[terminal key] --> view -- Stroke --> session --> Keyboard
+    key[terminal key] --> thread[input thread] -- Stroke --> session --> Keyboard
     Keymap --> Keyboard
     Keyboard -- Event --> session -- Cmd --> ring[(rtrb ring)] --> audio
     Keyboard -- Outcome --> session

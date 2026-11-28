@@ -1,51 +1,51 @@
-//! Oscilloscope state: the newest output, and the window of it to draw.
+//! Oscilloscope state: the newest frames of a source, and the window of
+//! them to draw.
 
 use std::collections::VecDeque;
 
-use crate::audio::OutputTee;
+use crate::session::Sources;
 
-/// Cycles of the sounding pitch one window spans.
-pub(crate) const CYCLES: f32 = 2.0;
-
-/// The first channel of the newest output frames, and the pitch last
-/// sounded.
+/// The newest samples of a source, and the pitch last sounded.
 pub(crate) struct Scope {
     /// oldest first, at most `capacity` long
     history: VecDeque<f32>,
     capacity: usize,
+    /// cycles of the pitch one window spans
+    cycles: f32,
     /// kept after the key lifts, so a release tail stays triggered
     hz: Option<f32>,
 }
 
 impl Scope {
-    /// A scope keeping the newest `capacity` samples. A window needs one
-    /// more cycle than it draws to find its trigger in.
-    pub(crate) fn new(capacity: usize) -> Self {
+    /// A scope keeping the newest `capacity` samples, drawing `cycles` of
+    /// the pitch. A window needs one more cycle than it draws to find its
+    /// trigger in.
+    pub(crate) fn new(capacity: usize, cycles: f32) -> Self {
         Self {
             history: VecDeque::with_capacity(capacity),
             capacity,
+            cycles,
             hz: None,
         }
     }
 
-    /// Drain every whole frame `tee` holds, keeping the first channel.
-    /// Draining all of it each time keeps the ring from filling, since a
-    /// full ring drops the newest frames rather than the oldest.
-    pub(crate) fn read(&mut self, tee: &mut OutputTee) {
-        let channels = tee.channels.max(1);
-        let frames = tee.samples.slots() / channels;
-        let Ok(chunk) = tee.samples.read_chunk(frames * channels) else {
-            return;
-        };
-        let (head, tail) = chunk.as_slices();
-        let skip = frames.saturating_sub(self.capacity);
-        for &sample in head.iter().chain(tail).step_by(channels).skip(skip) {
-            if self.history.len() == self.capacity {
-                self.history.pop_front();
+    /// Take every frame `sources` holds. Draining all of it each time keeps
+    /// the tees from filling, since a full tee drops the newest frames
+    /// rather than the oldest.
+    pub(crate) fn read(&mut self, sources: &mut Sources) {
+        let (history, capacity) = (&mut self.history, self.capacity);
+        sources.read(|sample| {
+            if history.len() == capacity {
+                history.pop_front();
             }
-            self.history.push_back(sample);
-        }
-        chunk.commit_all();
+            history.push_back(sample);
+        });
+    }
+
+    /// Forget what was read, so a new source does not draw the old one's
+    /// tail.
+    pub(crate) fn clear(&mut self) {
+        self.history.clear();
     }
 
     /// The pitch to trigger on; `None` keeps the last one.
@@ -55,7 +55,7 @@ impl Scope {
         }
     }
 
-    /// `CYCLES` of the pitch last tuned to, starting on the newest rising
+    /// `cycles` of the pitch last tuned to, starting on the newest rising
     /// zero crossing that leaves room for all of them; empty before any
     /// pitch is known.
     pub(crate) fn window(&mut self, sample_rate: f32) -> &[f32] {
@@ -63,7 +63,7 @@ impl Scope {
         let Some(hz) = self.hz else {
             return &[];
         };
-        let len = (CYCLES * sample_rate / hz).round() as usize;
+        let len = (self.cycles * sample_rate / hz).round() as usize;
         window(history, len)
     }
 }
@@ -85,6 +85,7 @@ fn window(samples: &[f32], len: usize) -> &[f32] {
 mod tests {
     use super::*;
     use crate::audio::output_tee;
+    use crate::session::{Pick, Selection, Stream};
 
     fn sine(hz: f32, sample_rate: f32, phase: f32, len: usize) -> Vec<f32> {
         (0..len)
@@ -120,21 +121,33 @@ mod tests {
     }
 
     #[test]
-    fn read_keeps_the_first_channel_of_the_newest_frames() {
-        let (mut tx, mut tee) = output_tee(8, 2);
+    fn read_keeps_the_newest_samples_of_the_source() {
+        let (mut tx, tee) = output_tee(8, 2);
         for frame in 0..6 {
             tx.push(frame as f32).unwrap();
             tx.push(-1.0).unwrap();
         }
-        let mut scope = Scope::new(4);
-        scope.read(&mut tee);
+        let selection = Selection {
+            stream: 0,
+            pick: Pick::Channel(0),
+        };
+        let mut sources = Sources::new(vec![Stream::new("output", 48_000.0, tee)], selection);
+        let mut scope = Scope::new(4, 2.0);
+        scope.read(&mut sources);
         assert_eq!(scope.history, [2.0, 3.0, 4.0, 5.0]);
-        assert_eq!(tee.samples.slots(), 0);
+    }
+
+    #[test]
+    fn the_window_spans_the_configured_cycles() {
+        let mut scope = Scope::new(400, 3.0);
+        scope.history.extend(sine(100.0, 4800.0, 0.0, 400));
+        scope.tune(Some(100.0));
+        assert_eq!(scope.window(4800.0).len(), 144);
     }
 
     #[test]
     fn a_lifted_key_keeps_the_last_pitch() {
-        let mut scope = Scope::new(16);
+        let mut scope = Scope::new(16, 2.0);
         assert!(scope.window(48_000.0).is_empty());
         scope.tune(Some(440.0));
         scope.tune(None);
