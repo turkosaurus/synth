@@ -11,9 +11,8 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Flex, Layout, Rect, Spacing};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::merge::MergeStrategy;
-use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::canvas::{self, Canvas, Line as Segment};
+
 use ratatui::widgets::{
     Block, Cell, Clear, Gauge, Paragraph, RenderDirection, Row, Sparkline, SparklineBar, Table,
 };
@@ -26,9 +25,11 @@ use crate::session::{
 };
 use crate::spec::{Budget, Freqs, Key, Keymap, TuiConfig};
 
+use super::fft::Transform;
 use super::meter::{self, Activity, Meter};
 use super::scope::Scope;
-use super::spectrum::Spectrum;
+use super::widget::scope::oscilloscope;
+use super::widget::spectrum::Spectrum;
 
 const POPUP_FILL: Color = Color::Yellow;
 const POPUP_INK: Color = Color::Black;
@@ -236,7 +237,7 @@ fn drive(
     let mut activity = Activity::default();
     let history = sources.sample_rate() * config.scope_history.as_secs_f32();
     let mut scope = Scope::new(history.ceil() as usize, config.scope_cycles);
-    let mut spectrum = Spectrum::new(config.spectrum_size);
+    let mut transform = Transform::new(config.spectrum_size);
     let mut last = Instant::now();
     let mut glance = still.glance;
 
@@ -261,21 +262,21 @@ fn drive(
         if glance.scope != sources.selection() {
             sources.select(glance.scope);
             scope.clear();
-            spectrum.clear();
+            transform.clear();
         }
         // all of it each time: a full tee drops the newest frames rather
         // than the oldest
         sources.read(|sample| {
             scope.push(sample);
-            spectrum.push(sample);
+            transform.push(sample);
         });
-        spectrum.update().context("transforming the spectrum")?;
+        transform.update().context("transforming the spectrum")?;
         scope.tune(glance.sounding.and_then(|note| still.freqs.hz(note)));
         let source = sources.to_string();
         let view = View {
             wave: scope.window(sources.sample_rate()),
             source: &source,
-            spectrum: &spectrum,
+            transform: &transform,
             sample_rate: sources.sample_rate(),
             keymap: &still.keymap,
             glance: &glance,
@@ -374,7 +375,7 @@ struct View<'a> {
     wave: &'a [f32],
     /// what the scope and spectrum read, for their titles
     source: &'a str,
-    spectrum: &'a Spectrum,
+    transform: &'a Transform,
     /// the source's, which places its bins in hz
     sample_rate: f32,
     keymap: &'a Keymap,
@@ -494,7 +495,7 @@ fn draw(frame: &mut Frame, view: &View) {
     let View {
         wave,
         source,
-        spectrum,
+        transform,
         sample_rate,
         keymap,
         glance,
@@ -543,13 +544,15 @@ fn draw(frame: &mut Frame, view: &View) {
         oscilloscope(wave).block(pane().title(format!(" scope: {source} "))),
         scope_area,
     );
-    spectrum_pane(
-        frame,
+    frame.render_widget(
+        Spectrum {
+            amplitudes: transform.amplitudes(),
+            size: transform.size(),
+            sample_rate,
+            floor_db: config.spectrum_floor_db,
+            block: pane().title(format!(" spectrum: {source} ")),
+        },
         spectrum_area,
-        spectrum,
-        source,
-        sample_rate,
-        config.spectrum_floor_db,
     );
 
     let input_block = pane().title(" input ");
@@ -660,76 +663,6 @@ fn draw(frame: &mut Frame, view: &View) {
     // last, so it lands on top of everything already drawn
     if glance.help {
         overlay(frame, keymap);
-    }
-}
-
-/// `wave` across the whole width on a fixed -1..1 axis, so clipping reads as
-/// a flat top rather than being scaled away. Braille gives each cell 2x4
-/// dots, and joining samples keeps a high pitch from drawing as dots.
-fn oscilloscope(wave: &[f32]) -> Canvas<'_, impl Fn(&mut canvas::Context) + '_> {
-    Canvas::default()
-        .marker(Marker::Braille)
-        .x_bounds([0.0, wave.len().saturating_sub(1).max(1) as f64])
-        .y_bounds([-1.0, 1.0])
-        .paint(move |ctx| {
-            ctx.draw(&Segment::new(
-                0.0,
-                0.0,
-                wave.len() as f64,
-                0.0,
-                Color::DarkGray,
-            ));
-            ctx.layer();
-            for (x, pair) in wave.windows(2).enumerate() {
-                ctx.draw(&Segment::new(
-                    x as f64,
-                    f64::from(pair[0]),
-                    x as f64 + 1.0,
-                    f64::from(pair[1]),
-                    Color::Green,
-                ));
-            }
-        })
-}
-
-/// The source's spectrum, one bar per column, labelled with the
-/// frequencies at either end of its log axis.
-fn spectrum_pane(
-    frame: &mut Frame,
-    area: Rect,
-    spectrum: &Spectrum,
-    source: &str,
-    sample_rate: f32,
-    floor_db: f32,
-) {
-    let block = pane()
-        .title(format!(" spectrum: {source} "))
-        .title_bottom(Line::from(format!(" {} ", hz(spectrum.bin_hz(sample_rate)))).left_aligned())
-        .title_bottom(Line::from(format!(" {} ", hz(sample_rate / 2.0))).right_aligned());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let columns = spectrum.columns(usize::from(inner.width), floor_db);
-    frame.render_widget(
-        Sparkline::default()
-            .data(
-                columns
-                    .into_iter()
-                    .map(|column| (column * meter::STEPS as f32).round() as u64),
-            )
-            // absolute, as the activity graph is: a given height is
-            // always the same level
-            .max(meter::STEPS)
-            .style(Style::new().fg(Color::Cyan)),
-        inner,
-    );
-}
-
-fn hz(hz: f32) -> String {
-    if hz < 1000.0 {
-        format!("{hz:.1} Hz")
-    } else {
-        format!("{:.1} kHz", hz / 1000.0)
     }
 }
 
@@ -1221,27 +1154,6 @@ mod tests {
     fn ctrl_c_ends_the_read_loop() {
         let quit = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert!(reads(Script(vec![Ok(vec![quit])])).is_ok());
-    }
-
-    fn top_row(wave: &[f32]) -> String {
-        let area = Rect::new(0, 0, 24, 16);
-        let mut buffer = ratatui::buffer::Buffer::empty(area);
-        ratatui::widgets::Widget::render(oscilloscope(wave), area, &mut buffer);
-        (0..area.width)
-            .map(|x| buffer[(x, 0)].symbol().to_string())
-            .collect()
-    }
-
-    #[test]
-    fn clipping_draws_a_flat_top() {
-        let sine = |gain: f32| -> Vec<f32> {
-            (0..96)
-                .map(|i| (gain * (std::f32::consts::TAU * i as f32 / 96.0).sin()).clamp(-1.0, 1.0))
-                .collect()
-        };
-        let lit = |row: String| row.chars().filter(|c| *c != ' ' && *c != '⠀').count();
-        let (clean, clipped) = (top_row(&sine(1.0)), top_row(&sine(4.0)));
-        assert!(lit(clipped) > 2 * lit(clean));
     }
 
     #[test]
