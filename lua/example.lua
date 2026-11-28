@@ -9,9 +9,9 @@ return synth.sequence({
 	filter = synth.filter.lowpass({ cutoff = 2000, resonance = 0.3 }), -- on the summed output
 
 	-- non-default keyboard overrides
-	keyboard = synth.keyboard({
+	keyboard = synth.input({
 		-- qwerty, qwertz, azerty, dvorak, colemak, or your own
-		layout = synth.keyboard.qwerty,
+		layout = synth.input.qwerty,
 		octave_up = { "pageup" }, -- shift up one octave (unset: layout's)
 		octave_down = { "pagedown" }, -- shift down one octave (unset: layout's)
 		octave = 0, -- starting octave offset (0: layout default)

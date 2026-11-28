@@ -183,7 +183,7 @@ fn help_lists_the_controls_and_no_notes() {
 
 #[test]
 fn help_reads_quit_off_the_shipped_keyboard() {
-    let patch = crate::script::tests::with_keyboard("synth.keyboard({})").unwrap();
+    let patch = crate::script::tests::with_keyboard("synth.input({})").unwrap();
     let lines: Vec<String> = help(&patch.keymap).iter().map(Line::to_string).collect();
     assert!(lines.contains(&"quit          —".to_string()), "{lines:?}");
     assert!(

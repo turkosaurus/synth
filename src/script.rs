@@ -33,7 +33,7 @@ const LUA_ENVELOPE: &str = include_str!("../lua/envelope.lua");
 const LUA_TUNING: &str = include_str!("../lua/tuning.lua");
 const LUA_INSTRUMENT: &str = include_str!("../lua/instrument.lua");
 const LUA_SEQUENCE: &str = include_str!("../lua/sequence.lua");
-const LUA_KEYBOARD: &str = include_str!("../lua/keyboard.lua");
+const LUA_INPUT: &str = include_str!("../lua/input.lua");
 const LUA_FILTER: &str = include_str!("../lua/filter.lua");
 const LUA_OSC: &str = include_str!("../lua/osc.lua");
 const LUA_LFO: &str = include_str!("../lua/lfo.lua");
@@ -49,7 +49,7 @@ const MODULES: [(&str, &str); 12] = [
     (module::TUNING, LUA_TUNING),
     (module::INSTRUMENT, LUA_INSTRUMENT),
     (module::SEQUENCE, LUA_SEQUENCE),
-    (module::KEYBOARD, LUA_KEYBOARD),
+    (module::INPUT, LUA_INPUT),
     (module::FILTER, LUA_FILTER),
     (module::OSC, LUA_OSC),
     (module::LFO, LUA_LFO),
@@ -165,7 +165,7 @@ mod module {
     pub(super) const TUNING: &str = "synth.tuning";
     pub(super) const INSTRUMENT: &str = "synth.instrument";
     pub(super) const SEQUENCE: &str = "synth.sequence";
-    pub(super) const KEYBOARD: &str = "synth.keyboard";
+    pub(super) const INPUT: &str = "synth.input";
     pub(super) const FILTER: &str = "synth.filter";
     pub(super) const OSC: &str = "synth.osc";
     pub(super) const LFO: &str = "synth.lfo";
@@ -425,17 +425,17 @@ fn load_in(
     let layout: mlua::Table = match table.get(field::KEYBOARD)? {
         Some(table) => table,
         // the module is itself the constructor, so the default layout is
-        // keyboard() rather than the module table
+        // input() rather than the module table
         None => {
-            let keyboard: mlua::Table = require.call(module::KEYBOARD)?;
+            let input: mlua::Table = require.call(module::INPUT)?;
             // a callable table: __call receives the module itself first
-            let call: mlua::Function = keyboard
+            let call: mlua::Function = input
                 .metatable()
                 .ok_or(Error::NotCallable {
-                    what: "synth.keyboard",
+                    what: "synth.input",
                 })?
                 .get(field::CALL)?;
-            call.call((keyboard, mlua::Value::Nil))?
+            call.call((input, mlua::Value::Nil))?
         }
     };
     let keys = keymap(&lua, &layout)?;

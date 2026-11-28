@@ -5,9 +5,9 @@ local defaults, override -- defined below
 -- `file:line` of whoever called the constructor, read by Rust
 local site = require("synth.site")
 
----@class synth.keyboard
+---@class synth.input
 ---@overload fun(opts?: synth.Keyboard): synth.Keyboard
-local keyboard = setmetatable({}, {
+local input = setmetatable({}, {
 	__call = function(_, opts)
 		return override(construct("keyboard", site(), opts, defaults))
 	end,
@@ -39,7 +39,7 @@ local keyboard = setmetatable({}, {
 ---@field octave_down string[]
 ---@field help string[] may be empty
 
-keyboard.templates = {
+input.templates = {
 	qwerty = {
 		name = "qwerty",
 		anchor = "a",
@@ -102,7 +102,7 @@ keyboard.templates = {
 ---@field note? integer MIDI note of the template's anchor key
 
 local grid_defaults = {
-	template = keyboard.templates.qwerty,
+	template = input.templates.qwerty,
 	offset = 5, -- semitones offset between rows
 	note = 69, -- MIDI A4, on the second string "open"
 }
@@ -123,11 +123,11 @@ end
 -- octave up. Keys that land outside MIDI's 0 to 127 are left out.
 ---@param opts? synth.Grid
 ---@return synth.Layout
-function keyboard.grid(opts)
+function input.grid(opts)
 	opts = opts or {}
 	for key in pairs(opts) do
 		if grid_defaults[key] == nil then
-			error("keyboard.grid: unknown field '" .. tostring(key) .. "'", 2)
+			error("input.grid: unknown field '" .. tostring(key) .. "'", 2)
 		end
 	end
 	local template = opts.template or grid_defaults.template
@@ -135,14 +135,14 @@ function keyboard.grid(opts)
 	local note = opts.note or grid_defaults.note
 
 	if #template.rows ~= #template.shifted then
-		error("keyboard.grid: a template's rows and shifted must have the same number of rows", 2)
+		error("input.grid: a template's rows and shifted must have the same number of rows", 2)
 	end
 	local rows, shifted = {}, {}
 	for r = 1, #template.rows do
 		rows[r] = chars(template.rows[r])
 		shifted[r] = chars(template.shifted[r])
 		if #rows[r] ~= #shifted[r] then
-			error("keyboard.grid: template row " .. r .. " and its shifted form differ in length", 2)
+			error("input.grid: template row " .. r .. " and its shifted form differ in length", 2)
 		end
 	end
 
@@ -156,7 +156,7 @@ function keyboard.grid(opts)
 		end
 	end
 	if base == nil then
-		error("keyboard.grid: anchor key '" .. tostring(template.anchor) .. "' does not appear in the template", 2)
+		error("input.grid: anchor key '" .. tostring(template.anchor) .. "' does not appear in the template", 2)
 	end
 
 	local notes = {}
@@ -181,13 +181,13 @@ function keyboard.grid(opts)
 	}
 end
 
--- Every template as a ready layout, for `keyboard({ layout = ... })`.
+-- Every template as a ready layout, for `input({ layout = ... })`.
 -- Spelled out rather than looped so editors can complete the names.
-keyboard.qwerty = keyboard.grid({ template = keyboard.templates.qwerty })
-keyboard.qwertz = keyboard.grid({ template = keyboard.templates.qwertz })
-keyboard.azerty = keyboard.grid({ template = keyboard.templates.azerty })
-keyboard.dvorak = keyboard.grid({ template = keyboard.templates.dvorak })
-keyboard.colemak = keyboard.grid({ template = keyboard.templates.colemak })
+input.qwerty = input.grid({ template = input.templates.qwerty })
+input.qwertz = input.grid({ template = input.templates.qwertz })
+input.azerty = input.grid({ template = input.templates.azerty })
+input.dvorak = input.grid({ template = input.templates.dvorak })
+input.colemak = input.grid({ template = input.templates.colemak })
 
 -- `octave_up`, `octave_down`, and `help` replace the layout's.
 ---@class synth.Keyboard
@@ -211,7 +211,7 @@ defaults = {
 	-- each character to a MIDI note. Rust reads only this table, so a patch
 	-- may write its own. `help` may be empty. `octave_up`, `octave_down`, and
 	-- `help` given on the keyboard itself replace the layout's.
-	layout = keyboard.qwerty,
+	layout = input.qwerty,
 	stop = { "escape" }, -- silence everything; must not be empty
 	scope = { "tab" }, -- move the scope to the next channel, mix, or stream; may be empty
 	-- either may be empty, not both; "ctrl-c" names a key pressed with ctrl
@@ -240,7 +240,7 @@ defaults = {
 
 -- `octave_up`, `octave_down`, and `help` on the keyboard replace the
 -- layout's. The layout is copied first, so a shared one such as
--- `keyboard.qwerty` passed by the caller is left alone.
+-- `input.qwerty` passed by the caller is left alone.
 override = function(out)
 	local layout
 	for _, key in ipairs({ "octave_up", "octave_down", "help" }) do
@@ -260,4 +260,4 @@ override = function(out)
 	return out
 end
 
-return keyboard
+return input

@@ -2,7 +2,7 @@
 -- expect-variant: Error::NoteRange { key: "a", value: 128.0 }
 local synth = require("synth")
 return synth.instrument({
-	keyboard = synth.keyboard({
+	keyboard = synth.input({
 		layout = { notes = { a = 128 }, octave_up = {}, octave_down = {}, help = {} },
 	}),
 })

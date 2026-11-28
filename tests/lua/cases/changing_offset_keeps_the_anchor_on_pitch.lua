@@ -2,9 +2,9 @@
 local instrument = require("synth.instrument")
 local wave = require("synth.wave")
 local envelope = require("synth.envelope")
-local keyboard = require("synth.keyboard")
+local input = require("synth.input")
 return instrument({
 	oscillator = require("synth.osc")({ waveforms = { wave.triangle } }),
 	envelope = envelope({}),
-	keyboard = keyboard({ layout = keyboard.grid({ offset = 7 }) }),
+	keyboard = input({ layout = input.grid({ offset = 7 }) }),
 })

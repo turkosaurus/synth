@@ -181,5 +181,5 @@ fn an_edited_guide_is_kept_and_an_unedited_one_follows() {
 #[test]
 fn the_root_module_is_init_lua() {
     assert_eq!(file_name("synth"), "init.lua");
-    assert_eq!(file_name("synth.keyboard"), "keyboard.lua");
+    assert_eq!(file_name("synth.input"), "input.lua");
 }
