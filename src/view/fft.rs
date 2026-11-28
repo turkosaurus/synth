@@ -159,4 +159,35 @@ mod tests {
         spectrum.update(&[0.0; 10]).unwrap();
         assert!(spectrum.amplitudes.iter().all(|&a| a < 1e-6));
     }
+
+    #[test]
+    fn a_frame_never_allocates_after_setup() {
+        use crate::audio::output_tee;
+        use crate::session::{Pick, Selection, Sources, Stream};
+
+        let (mut tx, tee) = output_tee(64, 2);
+        let selection = Selection {
+            stream: 0,
+            pick: Pick::Mix,
+        };
+        let mut sources = Sources::new(vec![Stream::new("output", 48_000.0, tee)], selection);
+        sources.keep(256);
+        let mut transform = Transform::new(256);
+        let mut frame = |tx: &mut rtrb::Producer<f32>, sources: &mut Sources| {
+            while tx.push(0.5).is_ok() {}
+            sources.read();
+            transform.update(sources.recent()).unwrap();
+        };
+        frame(&mut tx, &mut sources);
+
+        // 64 slots, 32 stereo frames a read: eight more reads overfill
+        // the window, so it drops its oldest samples
+        let info = allocation_counter::measure(|| {
+            for _ in 0..12 {
+                frame(&mut tx, &mut sources);
+            }
+        });
+        assert_eq!(info.count_total, 0);
+        assert_eq!(sources.recent().len(), 256);
+    }
 }
