@@ -234,8 +234,11 @@ fn drive(
     let mut peak = Meter::new(config.meter_hold, config.meter_fall);
     let mut activity = Activity::default();
     let history = sources.sample_rate() * config.scope_history.as_secs_f32();
-    let mut scope = Scope::new(history.ceil() as usize, config.scope_cycles);
+    let mut scope = Scope::new(config.scope_cycles);
     let mut transform = Transform::new(config.spectrum_size);
+    // one window for both views: long enough to find the scope's trigger
+    // in, and to fill a transform
+    sources.keep((history.ceil() as usize).max(config.spectrum_size));
     let mut last = Instant::now();
     let mut glance = still.glance;
 
@@ -257,25 +260,20 @@ fn drive(
         let latency = stages(&timing.latency, config);
         let fps = timing.latency.view.per_second();
 
-        if glance.scope != sources.selection() {
-            sources.select(glance.scope);
-            scope.clear();
-            transform.clear();
-        }
-        // all of it each time: a full tee drops the newest frames rather
-        // than the oldest
-        sources.read(|sample| {
-            scope.push(sample);
-            transform.push(sample);
-        });
-        transform.update().context("transforming the spectrum")?;
+        sources.select(glance.scope);
+        sources.read();
+        transform
+            .update(sources.recent())
+            .context("transforming the spectrum")?;
         scope.tune(glance.sounding.and_then(|note| still.freqs.hz(note)));
         let source = sources.to_string();
+        let sample_rate = sources.sample_rate();
+        let recent = sources.recent();
         let view = View {
-            wave: scope.window(sources.sample_rate()),
+            wave: scope.window(recent, sample_rate),
             source: &source,
             transform: &transform,
-            sample_rate: sources.sample_rate(),
+            sample_rate,
             keymap: &still.keymap,
             glance: &glance,
             snap: &snap,

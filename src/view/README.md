@@ -6,7 +6,7 @@ Presentation only: draws data it is handed, does no work of its own.
 | --- | --- |
 | [`tui.rs`](./tui.rs) | drives a `Session` and draws it |
 | [`meter.rs`](./meter.rs) | level meter ballistics |
-| [`scope.rs`](./scope.rs) | oscilloscope trigger: the newest frames of a source, held still on a rising zero crossing |
+| [`scope.rs`](./scope.rs) | oscilloscope widget and trigger: a source's newest samples, held still on a rising zero crossing |
 | [`spectrum.rs`](./spectrum.rs) | spectrum widget: amplitude per bin as bars on a log frequency axis |
 | [`fft.rs`](./fft.rs) | the spectrum's transform, with `realfft`, run by the TUI |
 | [`report.rs`](./report.rs) | printed reports: patch, config, environment |

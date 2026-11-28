@@ -7,13 +7,10 @@ use std::sync::Arc;
 use realfft::num_complex::Complex;
 use realfft::{FftError, RealFftPlanner, RealToComplex};
 
-/// The newest `size` samples, and their amplitude per bin once
-/// [`Transform::update`] has transformed them.
+/// Amplitude per bin of the newest `size` samples handed to
+/// [`Transform::update`].
 pub(crate) struct Transform {
     size: usize,
-    /// a circular buffer whose oldest sample is at `next`
-    history: Vec<f32>,
-    next: usize,
     window: Vec<f32>,
     /// `2 / sum(window)`, so a full-scale sine on a bin reads 1.0
     gain: f32,
@@ -42,8 +39,6 @@ impl Transform {
         let gain = 2.0 / window.iter().sum::<f32>();
         Self {
             size,
-            history: vec![0.0; size],
-            next: 0,
             window,
             gain,
             input: fft.make_input_vec(),
@@ -54,24 +49,17 @@ impl Transform {
         }
     }
 
-    /// Fold in one sample; only the newest `size` are kept.
-    pub(crate) fn push(&mut self, sample: f32) {
-        self.history[self.next] = sample;
-        self.next = (self.next + 1) % self.size;
-    }
-
-    /// Forget what was read, so a new source does not show the old one's
-    /// spectrum.
-    pub(crate) fn clear(&mut self) {
-        self.history.fill(0.0);
-        self.next = 0;
-    }
-
-    /// Transform the samples held now.
-    pub(crate) fn update(&mut self) -> Result<(), FftError> {
-        let (old, new) = self.history.split_at(self.next);
-        let ordered = new.iter().chain(old);
-        for ((input, sample), weight) in self.input.iter_mut().zip(ordered).zip(&self.window) {
+    /// Transform the newest `size` of `recent`, oldest first; fewer are
+    /// led by silence.
+    pub(crate) fn update(&mut self, recent: &[f32]) -> Result<(), FftError> {
+        let newest = &recent[recent.len().saturating_sub(self.size)..];
+        let silence = self.size - newest.len();
+        self.input[..silence].fill(0.0);
+        for ((input, sample), weight) in self.input[silence..]
+            .iter_mut()
+            .zip(newest)
+            .zip(&self.window[silence..])
+        {
             *input = sample * weight;
         }
         self.fft
@@ -109,8 +97,8 @@ mod tests {
 
     fn transformed(samples: impl IntoIterator<Item = f32>) -> Transform {
         let mut spectrum = Transform::new(SIZE);
-        samples.into_iter().for_each(|sample| spectrum.push(sample));
-        spectrum.update().unwrap();
+        let recent: Vec<f32> = samples.into_iter().collect();
+        spectrum.update(&recent).unwrap();
         spectrum
     }
 
@@ -144,10 +132,7 @@ mod tests {
 
     #[test]
     fn only_the_newest_samples_are_transformed() {
-        let mut spectrum = Transform::new(SIZE);
-        sine(50.0, 1.0).for_each(|sample| spectrum.push(sample));
-        sine(400.0, 1.0).for_each(|sample| spectrum.push(sample));
-        spectrum.update().unwrap();
+        let spectrum = transformed(sine(50.0, 1.0).chain(sine(400.0, 1.0)));
         near(spectrum.amplitudes[400], 1.0);
         assert!(
             spectrum.amplitudes[50] < 0.001,
@@ -159,18 +144,19 @@ mod tests {
     #[test]
     fn a_smaller_size_still_reads_full_scale() {
         let mut spectrum = Transform::new(256);
-        (0..256)
+        let recent: Vec<f32> = (0..256)
             .map(|i| (std::f32::consts::TAU * 10.0 * i as f32 / 256.0).sin())
-            .for_each(|sample| spectrum.push(sample));
-        spectrum.update().unwrap();
+            .collect();
+        spectrum.update(&recent).unwrap();
         near(spectrum.amplitudes[10], 1.0);
     }
 
     #[test]
-    fn clear_forgets_the_old_source() {
+    fn fewer_samples_than_the_size_are_led_by_silence() {
         let mut spectrum = transformed(sine(100.0, 1.0));
-        spectrum.clear();
-        spectrum.update().unwrap();
+        spectrum.update(&[]).unwrap();
+        assert!(spectrum.amplitudes.iter().all(|&a| a < 1e-6));
+        spectrum.update(&[0.0; 10]).unwrap();
         assert!(spectrum.amplitudes.iter().all(|&a| a < 1e-6));
     }
 }

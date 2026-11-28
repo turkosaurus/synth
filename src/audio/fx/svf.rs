@@ -8,7 +8,7 @@
 
 use core::f32::consts::PI;
 
-use super::approx;
+use crate::approx;
 use crate::spec::{Filter, Kind, MAX_CUTOFF, MIN_CUTOFF};
 
 /// How long the cutoff takes to glide to a new value, roughly.
