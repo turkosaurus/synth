@@ -82,6 +82,7 @@ depends = [
     "lint:doc",
     "lint:lua",
     "lint:lsp",
+    "lint:config",
     "lint:stylua",
     "lint:licenses",
     "lint:ps1",

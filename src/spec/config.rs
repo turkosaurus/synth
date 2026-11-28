@@ -17,6 +17,9 @@ pub struct Config {
     pub custom_dir: Option<PathBuf>,
     pub tui: TuiConfig,
     pub log: LogConfig,
+    /// The user's file names an older `version` than the built-in one, or
+    /// none.
+    pub outdated: bool,
 }
 
 /// How `log.jsonl` is kept between sessions.

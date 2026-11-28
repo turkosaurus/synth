@@ -131,6 +131,8 @@ pub(super) const CONFIG: Schema = Schema {
     what: "config.lua",
     // every field optional: the built-in file supplies what a user's leaves out
     fields: &[
+        // a release, parsed once read
+        optional(field::VERSION, Ty::Text, Bound::Any),
         // 0 leaves it to the platform; the device decides the upper limit,
         // checked when it opens
         optional(field::BUFFER_FRAMES, Ty::Integer, Bound::AtLeast(0.0)),

@@ -214,6 +214,16 @@ pub enum Error {
     )]
     CustomDirRelative { setting: String },
 
+    #[error(
+        "{name}: `version` is {version:?}; must be MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N"
+    )]
+    ConfigVersion { name: String, version: String },
+
+    /// A rebuilt file that would not load as the user's did; nothing is
+    /// written.
+    #[error("{name}: rebuilt from the template, it would not load the same")]
+    ConfigRebuild { name: String },
+
     /// Two settings each in bounds, but in the wrong order.
     #[error(
         "{what}: `{low}` is {low_value}, `{high}` is {high_value}; `{low}` must be below `{high}`"

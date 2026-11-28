@@ -1,5 +1,6 @@
 //! The question `synth custom` asks about an edited copy of a built-in
-//! that has a newer default. Reads and writes through any `BufRead` and
+//! that has a newer default, and the one `synth config` asks before
+//! rebuilding an out-of-date file. Reads and writes through any `BufRead` and
 //! `Write`, so a test can answer it.
 
 use std::io::{self, BufRead, Write};
@@ -54,6 +55,32 @@ pub fn overwrite(
                 output,
                 "answer y to overwrite, n to keep yours, or d to see the difference"
             )?,
+        }
+    }
+}
+
+/// What `synth config` asks before rebuilding an out-of-date file.
+pub const REBUILD: &str =
+    "Prior values will be kept, formatting and comments will be lost. Continue...";
+
+/// Asks `question` until answered y or n. The end of input is no.
+pub fn confirm(
+    question: &str,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> io::Result<bool> {
+    loop {
+        write!(output, "{question} (y/n) ")?;
+        output.flush()?;
+        let mut answer = String::new();
+        if input.read_line(&mut answer)? == 0 {
+            writeln!(output)?;
+            return Ok(false);
+        }
+        match answer.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => writeln!(output, "answer y or n")?,
         }
     }
 }

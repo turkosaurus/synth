@@ -44,6 +44,10 @@ pub fn environment(gating: Gating) {
     }
 }
 
+/// The line naming an out-of-date `config.lua` and what brings it up to
+/// date.
+pub const OUTDATED: &str = "config.lua is old; `synth config` adds newer options";
+
 /// Where `config.lua` is looked for, and the settings in effect.
 pub fn config(path: Option<&std::path::Path>, config: &Config) {
     let file = match path {
