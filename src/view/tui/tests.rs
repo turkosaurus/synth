@@ -182,14 +182,22 @@ fn help_lists_the_controls_and_no_notes() {
 }
 
 #[test]
-fn help_reads_quit_off_the_shipped_keyboard() {
-    let patch = crate::script::tests::with_keyboard("synth.input({})").unwrap();
-    let lines: Vec<String> = help(&patch.keymap).iter().map(Line::to_string).collect();
-    assert!(lines.contains(&"quit          —".to_string()), "{lines:?}");
-    assert!(
-        lines.contains(&"quit now      ctrl-c or ctrl-d".to_string()),
-        "{lines:?}"
-    );
+fn help_reads_quit_off_every_shipped_layout() {
+    for layout in ["qwerty", "qwertz", "azerty", "dvorak", "colemak"] {
+        let patch = crate::script::tests::with_keyboard(&format!(
+            "synth.input({{ layout = synth.input.{layout} }})"
+        ))
+        .unwrap();
+        let lines: Vec<String> = help(&patch.keymap).iter().map(Line::to_string).collect();
+        assert!(
+            lines.contains(&"quit          ctrl-q".to_string()),
+            "{layout}: {lines:?}"
+        );
+        assert!(
+            lines.contains(&"quit now      ctrl-c or ctrl-d".to_string()),
+            "{layout}: {lines:?}"
+        );
+    }
 }
 
 #[test]

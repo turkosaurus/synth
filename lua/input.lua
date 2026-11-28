@@ -215,7 +215,7 @@ defaults = {
 	stop = { "escape" }, -- silence everything; must not be empty
 	scope = { "tab" }, -- move the scope to the next channel, mix, or stream; may be empty
 	-- either may be empty, not both; "ctrl-c" names a key pressed with ctrl
-	quit = {}, -- quit after a y/n prompt
+	quit = { "ctrl-q" }, -- quit after a y/n prompt
 	quit_now = { "ctrl-c", "ctrl-d" }, -- quit without asking
 	-- note length when the terminal cannot report key release
 	gate = 200, -- ms

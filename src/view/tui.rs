@@ -682,7 +682,7 @@ fn draw(frame: &mut Frame, view: &View) {
 
     // last, so it lands on top of everything already drawn
     if glance.help {
-        popup(frame, " keymap ", help(keymap), " any other key closes ");
+        popup(frame, " keymap ", help(keymap), " any key closes ");
     }
     if glance.asking {
         popup(frame, " quit ", vec![Line::from("quit? (y/n)")], "");
