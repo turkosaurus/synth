@@ -14,6 +14,15 @@
 ---@field output? synth.ConfigBudget ms, the driver's playback - callback
 ---@field total? synth.ConfigBudget ms, input + render + output per key
 
+---@class synth.ConfigSource
+---@field stream? string the stream the scope reads at start: "output"
+---@field channel? integer the channel it reads at start, from 1 (0: the mix of all)
+---@field tee? number ms of each stream its tee holds for the view to drain
+
+---@class synth.ConfigScope
+---@field history? number ms of the source kept to find a trigger in
+---@field cycles? number cycles of the sounding pitch the window spans
+
 ---@class synth.ConfigTui
 ---@field poll? number ms between redraws and key reads
 ---@field meter_hold? number ms a peak holds before it falls
@@ -22,6 +31,8 @@
 ---@field meter_latency? synth.ConfigLatency
 ---@field meter_fps? synth.ConfigBudget frames per second; the view warns below these
 ---@field faults? integer faults each thread queues for the view, allocated once at start
+---@field source? synth.ConfigSource
+---@field scope? synth.ConfigScope
 
 ---@class synth.ConfigLog
 ---@field trim_size_kb? integer KiB; at start, a larger log.jsonl keeps only its newest lines up to this (0: never trim)
@@ -53,6 +64,15 @@ local config = {
 		},
 		meter_fps = { warn = 30, danger = 24 },
 		faults = 64, -- faults each thread queues for the view, allocated once at start
+		source = {
+			stream = "output", -- the stream the scope reads at start: "output"
+			channel = 0, -- the channel it reads at start, from 1 (0: the mix of all)
+			tee = 100, -- ms of each stream its tee holds for the view to drain
+		},
+		scope = {
+			history = 250, -- ms of the source kept to find a trigger in
+			cycles = 2, -- cycles of the sounding pitch the window spans
+		},
 	},
 	log = {
 		trim_size_kb = 1024, -- KiB; at start, a larger log.jsonl keeps only its newest lines up to this (0: never trim)

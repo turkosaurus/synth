@@ -50,6 +50,8 @@ pub(crate) enum Outcome {
     Continue,
     Quit,
     Help,
+    /// move the scope to its next source
+    Scope,
 }
 
 pub(crate) struct Keyboard {
@@ -153,6 +155,9 @@ impl Keyboard {
                 // somewhere in the note grid cannot also sound it
                 if self.keymap.help.contains(&stroke.key) {
                     return Outcome::Help;
+                }
+                if self.keymap.scope.contains(&stroke.key) {
+                    return Outcome::Scope;
                 }
                 self.press(stroke.key, out)
             }
@@ -313,6 +318,7 @@ mod tests {
             octave_up: vec![],
             octave_down: vec![],
             stop: vec![Key::Backspace],
+            scope: vec![Key::Tab],
             help: vec![],
             gate,
             autorepeat: REPEAT,
@@ -348,6 +354,14 @@ mod tests {
         keyboard.keymap.octave_up = vec![Key::Char('=')];
         keyboard.octave = octave;
         (keyboard, out)
+    }
+
+    #[test]
+    fn the_scope_key_moves_the_scope_and_plays_nothing() {
+        let (mut keyboard, mut out) = keyboard(Gating::Held, Duration::from_millis(200));
+        let outcome = keyboard.handle(stroke(Key::Tab, Kind::Press), &mut out);
+        assert_eq!(outcome, Outcome::Scope);
+        assert!(out.is_empty());
     }
 
     #[test]

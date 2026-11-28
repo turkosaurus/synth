@@ -8,7 +8,7 @@ use std::time::Duration;
 use super::Error;
 
 use super::field;
-use crate::spec::{Budget, Config, LogConfig, TuiConfig};
+use crate::spec::{Budget, Config, LogConfig, StreamName, TuiConfig};
 
 /// `config.lua` under the config directory.
 const FILE: [&str; 2] = ["synth", "config.lua"];
@@ -226,6 +226,12 @@ fn table(lua: &mlua::Lua, source: &str, name: &str) -> Result<mlua::Table, Error
         if let Some(fps) = tui.get::<Option<mlua::Table>>(field::METER_FPS)? {
             super::schema::CONFIG_BUDGET.check(&fps, Some(FPS))?;
         }
+        if let Some(source) = tui.get::<Option<mlua::Table>>(field::SOURCE)? {
+            super::schema::CONFIG_SOURCE.check(&source, None)?;
+        }
+        if let Some(scope) = tui.get::<Option<mlua::Table>>(field::SCOPE)? {
+            super::schema::CONFIG_SCOPE.check(&scope, None)?;
+        }
     }
     Ok(table)
 }
@@ -304,6 +310,16 @@ fn budget(latency: &mlua::Table, stage: &str) -> Result<Budget, Error> {
     })
 }
 
+fn stream(name: &str) -> Result<StreamName, Error> {
+    StreamName::ALL
+        .into_iter()
+        .find(|stream| stream.name() == name)
+        .ok_or_else(|| Error::UnknownStream {
+            stream: name.to_string(),
+            expected: StreamName::ALL.map(StreamName::name).join(", "),
+        })
+}
+
 fn settings(table: &mlua::Table) -> Result<Config, Error> {
     let tui: mlua::Table = table.get(field::TUI)?;
     let ms = |key: &str| -> mlua::Result<Duration> {
@@ -314,6 +330,11 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
     // a frame rate is better higher, so its danger comes below its warn
     let fps: mlua::Table = tui.get(field::METER_FPS)?;
     let log: mlua::Table = table.get(field::LOG)?;
+    let source: mlua::Table = tui.get(field::SOURCE)?;
+    let scope: mlua::Table = tui.get(field::SCOPE)?;
+    let within = |table: &mlua::Table, key: &str| -> mlua::Result<Duration> {
+        Ok(Duration::from_secs_f64(table.get::<f64>(key)? / 1000.0))
+    };
     let (fps_danger, fps_warn) = ordered(&fps, FPS, field::DANGER, field::WARN)?;
     Ok(Config {
         // 0 asks for nothing, the same as leaving it out
@@ -346,6 +367,11 @@ fn settings(table: &mlua::Table) -> Result<Config, Error> {
                 danger: fps_danger as f32,
             },
             faults: tui.get(field::FAULTS)?,
+            source_stream: stream(&source.get::<String>(field::STREAM)?)?,
+            source_channel: source.get(field::CHANNEL)?,
+            source_tee: within(&source, field::TEE)?,
+            scope_history: within(&scope, field::HISTORY)?,
+            scope_cycles: scope.get(field::CYCLES)?,
         },
         log: LogConfig {
             trim_size_kb: log.get(field::TRIM_SIZE_KB)?,
@@ -481,6 +507,11 @@ mod tests {
         assert_eq!(config.tui.latency_window, Duration::from_secs(5));
         assert_eq!(config.tui.latency_records, 1024);
         assert_eq!(config.tui.faults, 64);
+        assert_eq!(config.tui.source_stream, StreamName::Output);
+        assert_eq!(config.tui.source_channel, 0);
+        assert_eq!(config.tui.source_tee, Duration::from_millis(100));
+        assert_eq!(config.tui.scope_history, Duration::from_millis(250));
+        assert_eq!(config.tui.scope_cycles, 2.0);
         assert_eq!(config.log.trim_size_kb, 1024);
         assert_eq!(config.tui.latency_floor_ms, 0.01);
         assert_eq!(config.tui.latency_ceil_ms, 100.0);
@@ -680,6 +711,26 @@ mod tests {
             (
                 "return { tui = { faults = 0 } }",
                 "config.lua tui: `faults` is 0; must be 1 to 65536",
+            ),
+            (
+                "return { tui = { source = { stream = 'input' } } }",
+                "config.lua tui source: `stream` is \"input\"; must be one of output",
+            ),
+            (
+                "return { tui = { source = { channel = -1 } } }",
+                "config.lua tui source: `channel` is -1; must be 0 to 64",
+            ),
+            (
+                "return { tui = { source = { tee = 0 } } }",
+                "config.lua tui source: `tee` is 0; must be 1 to 10000",
+            ),
+            (
+                "return { tui = { scope = { cycles = 0 } } }",
+                "config.lua tui scope: `cycles` is 0; must be 0.25 to 64",
+            ),
+            (
+                "return { tui = { scope = { history = 0 } } }",
+                "config.lua tui scope: `history` is 0; must be 1 to 10000",
             ),
             (
                 "return { tui = { meter_latency = { records = 1.5 } } }",

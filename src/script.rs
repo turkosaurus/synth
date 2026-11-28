@@ -256,6 +256,13 @@ mod field {
     pub(super) const METER_LATENCY: &str = "meter_latency";
     pub(super) const METER_FPS: &str = "meter_fps";
     pub(super) const FAULTS: &str = "faults";
+    pub(super) const SOURCE: &str = "source";
+    pub(super) const STREAM: &str = "stream";
+    pub(super) const CHANNEL: &str = "channel";
+    pub(super) const TEE: &str = "tee";
+    pub(super) const SCOPE: &str = "scope";
+    pub(super) const HISTORY: &str = "history";
+    pub(super) const CYCLES: &str = "cycles";
     pub(super) const WINDOW: &str = "window";
     pub(super) const RECORDS: &str = "records";
     pub(super) const FLOOR: &str = "floor";

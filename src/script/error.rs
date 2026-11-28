@@ -223,6 +223,9 @@ pub enum Error {
         high_value: f64,
     },
 
+    #[error("config.lua tui source: `stream` is {stream:?}; must be one of {expected}")]
+    UnknownStream { stream: String, expected: String },
+
     #[error("{what} is not callable")]
     NotCallable { what: &'static str },
 

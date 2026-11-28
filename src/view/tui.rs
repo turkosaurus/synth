@@ -19,10 +19,13 @@ use ratatui::{Frame, Terminal};
 
 use crate::audio::{Fault, Faults, Snapshot, Stats};
 use crate::input::keyboard::{Gating, Kind, Stroke};
-use crate::session::{Glance, Input, Latency, Msg, Session, Spread, Timing, Window};
+use crate::session::{
+    Glance, Input, Latency, Msg, Session, Sources, Split, Spread, Timing, Window,
+};
 use crate::spec::{Budget, Freqs, Key, Keymap, TuiConfig};
 
 use super::meter::{self, Activity, Meter};
+use super::scope::{Oscilloscope, Scope};
 
 const POPUP_FILL: Color = Color::Yellow;
 const POPUP_INK: Color = Color::Black;
@@ -69,7 +72,19 @@ pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
         gating,
         glance: model.glance(),
     };
-    let (input, timing, stats, faults) = session.split();
+    let Split {
+        input,
+        timing,
+        stats,
+        faults,
+        sources,
+    } = session.split();
+    let lent = Lent {
+        stats,
+        timing,
+        faults,
+        sources,
+    };
 
     // a ring rather than a lock on the keyboard: a push never waits, so a
     // key is never held up behind a draw, and the view only ever needs the
@@ -86,7 +101,7 @@ pub fn run(session: &mut Session, config: &TuiConfig) -> anyhow::Result<()> {
                 read
             })
             .context("spawning input thread")?;
-        let drawn = drive(&mut terminal, stats, timing, faults, &still, rx, config);
+        let drawn = drive(&mut terminal, lent, &still, rx, config);
         done.store(true, Ordering::Relaxed);
         let read = reader
             .join()
@@ -188,21 +203,36 @@ struct Still {
     glance: Glance,
 }
 
+/// The parts of a session the view reads while the input thread has the
+/// rest.
+struct Lent<'a> {
+    stats: &'a Stats,
+    timing: &'a mut Timing,
+    faults: &'a mut Faults,
+    sources: &'a mut Sources,
+}
+
 /// Redraw every `poll`, and at once when the input thread reports a change,
 /// until it stops.
 fn drive(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    stats: &Stats,
-    timing: &mut Timing,
-    faults: &mut Faults,
+    lent: Lent,
     still: &Still,
     mut rx: rtrb::Consumer<Glance>,
     config: &TuiConfig,
 ) -> anyhow::Result<()> {
+    let Lent {
+        stats,
+        timing,
+        faults,
+        sources,
+    } = lent;
     // ballistics are the view's, not the device's: the callback has no
     // business knowing the frame rate a bar falls at
     let mut peak = Meter::new(config.meter_hold, config.meter_fall);
     let mut activity = Activity::default();
+    let history = sources.sample_rate() * config.scope_history.as_secs_f32();
+    let mut scope = Scope::new(history.ceil() as usize, config.scope_cycles);
     let mut last = Instant::now();
     let mut glance = still.glance;
 
@@ -223,7 +253,18 @@ fn drive(
         faults.drain();
         let latency = stages(&timing.latency, config);
         let fps = timing.latency.view.per_second();
+
+        if glance.scope != sources.selection() {
+            sources.select(glance.scope);
+            scope.clear();
+        }
+        // all of it, every redraw: a full tee drops the newest frames
+        sources.read(|sample| scope.push(sample));
+        scope.tune(glance.sounding.and_then(|note| still.freqs.hz(note)));
+        let source = sources.to_string();
         let view = View {
+            wave: scope.window(sources.sample_rate()),
+            source: &source,
             keymap: &still.keymap,
             glance: &glance,
             snap: &snap,
@@ -317,6 +358,10 @@ fn code(key: Key) -> KeyCode {
 /// and whatever a second screen needs will land here too.
 #[derive(Clone, Copy)]
 struct View<'a> {
+    /// the scope's window, oldest first
+    wave: &'a [f32],
+    /// what the scope reads, for its title
+    source: &'a str,
     keymap: &'a Keymap,
     glance: &'a Glance,
     snap: &'a Snapshot,
@@ -432,6 +477,8 @@ fn status(
 
 fn draw(frame: &mut Frame, view: &View) {
     let View {
+        wave,
+        source,
         keymap,
         glance,
         snap,
@@ -467,13 +514,10 @@ fn draw(frame: &mut Frame, view: &View) {
             .spacing(Spacing::Overlap(1))
             .areas(input_area);
 
-    frame.render_widget(
-        Paragraph::new("TODO")
-            .centered()
-            .style(Style::new().fg(Color::DarkGray))
-            .block(pane().title(" scope ")),
-        scope_area,
-    );
+    let scope_block = pane().title(format!(" scope: {source} "));
+    let scope_inner = scope_block.inner(scope_area);
+    frame.render_widget(scope_block, scope_area);
+    frame.render_widget(Oscilloscope { wave }, scope_inner);
 
     let input_block = pane().title(" input ");
     let input_inner = input_block.inner(input_area);
@@ -603,8 +647,8 @@ fn overlay(frame: &mut Frame, keymap: &Keymap) {
     let [area] = Layout::horizontal([Constraint::Length(34)])
         .flex(Flex::Center)
         .areas(frame.area());
-    // five bindings plus the two border rows
-    let [area] = Layout::vertical([Constraint::Length(7)])
+    // six bindings plus the two border rows
+    let [area] = Layout::vertical([Constraint::Length(8)])
         .flex(Flex::Center)
         .areas(area);
 
@@ -660,6 +704,7 @@ fn bindings(keymap: &Keymap) -> Table<'static> {
         ("octave up", keys(&keymap.octave_up)),
         ("octave down", keys(&keymap.octave_down)),
         ("silence", keys(&keymap.stop)),
+        ("scope source", keys(&keymap.scope)),
         ("help", keys(&keymap.help)),
         ("quit", "ctrl-c or ctrl-d".to_string()),
     ];

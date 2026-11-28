@@ -7,6 +7,7 @@
 //! so a second view can reuse this wiring unchanged.
 
 mod latency;
+mod source;
 
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -16,9 +17,10 @@ use std::time::Instant;
 use crate::audio::{self, Fault, Faults, Feed, Origin, Player, Record, Reporter, Stamp, Stats};
 use crate::input::keyboard::{Gating, Keyboard, Outcome, Stroke, PITCHES};
 use crate::script;
-use crate::spec::{Config, Event};
+use crate::spec::{Config, Event, StreamName};
 
 pub(crate) use latency::{Latency, Spread, Window};
+pub(crate) use source::{Pick, Selection, Sources, Stream};
 
 /// The most events one message makes: a tick can end every pitch at once.
 const EVENTS: usize = PITCHES;
@@ -49,6 +51,10 @@ pub(crate) struct Model {
     pub(crate) freqs: crate::spec::Freqs,
     /// Whether the help overlay is up.
     pub(crate) help: bool,
+    /// What the scope reads.
+    pub(crate) scope: Selection,
+    /// Each frame source's channel count, for moving `scope` through them.
+    pub(crate) streams: Vec<usize>,
 }
 
 impl Model {
@@ -76,6 +82,10 @@ impl Model {
                         self.help = !self.help;
                         ControlFlow::Continue(())
                     }
+                    Outcome::Scope => {
+                        self.scope = self.scope.next(&self.streams);
+                        ControlFlow::Continue(())
+                    }
                     Outcome::Continue => ControlFlow::Continue(()),
                 };
                 (flow, Origin::Key { read })
@@ -97,6 +107,7 @@ impl Model {
             octave: self.keyboard.octave(),
             reach: self.keyboard.reach(),
             help: self.help,
+            scope: self.scope,
         }
     }
 }
@@ -112,6 +123,7 @@ pub(crate) struct Glance {
     /// The lowest and highest shift the octave keys can reach.
     pub(crate) reach: (i32, i32),
     pub(crate) help: bool,
+    pub(crate) scope: Selection,
 }
 
 /// The model and the ring producers: everything a message touches.
@@ -249,6 +261,8 @@ pub struct Session {
     timing: Timing,
     pub(crate) stats: Arc<Stats>,
     faults: Faults,
+    /// The frames a view can read, off the audio thread.
+    sources: Sources,
     /// Kept only so the stream plays until the session drops.
     _stream: audio::Stream,
 }
@@ -270,15 +284,26 @@ impl Session {
 
         // the producer stays here; the consumer moves into the audio callback
         let (tx, rx) = rtrb::RingBuffer::<Event>::new(config.queue);
+        let sample_rate = output.sample_rate as f32;
+        let tee_frames = (sample_rate * config.tui.source_tee.as_secs_f32()).ceil() as usize;
+        let (tee_tx, output_tee) = audio::output_tee(tee_frames.max(1), output.channels);
         let player = Player::new(
             Feed::Live {
                 instruments: patch.timeline.instruments,
                 events: rx,
             },
             patch.freqs,
-            output.sample_rate as f32,
+            sample_rate,
         )
-        .with_filter(patch.filter);
+        .with_filter(patch.filter)
+        .with_output_tee(tee_tx);
+        let streams = vec![Stream::new(
+            StreamName::Output.name(),
+            sample_rate,
+            output_tee,
+        )];
+        let channels: Vec<usize> = streams.iter().map(Stream::channels).collect();
+        let selection = selection(config, &streams)?;
 
         let (stamps, recorder, records) = audio::timing(config.queue, config.tui.latency_records);
         let stats = Arc::new(Stats::default());
@@ -297,6 +322,8 @@ impl Session {
                     keyboard: Keyboard::new(patch.keymap, gating),
                     freqs,
                     help: false,
+                    scope: selection,
+                    streams: channels,
                 },
                 tx,
                 stamps,
@@ -310,6 +337,7 @@ impl Session {
             },
             stats,
             faults,
+            sources: Sources::new(streams, selection),
             _stream: stream,
         })
     }
@@ -320,14 +348,42 @@ impl Session {
 
     /// The input side, lent to the thread that reads keys, beside the timing,
     /// stats, and faults the view keeps.
-    pub(crate) fn split(&mut self) -> (&mut Input, &mut Timing, &Stats, &mut Faults) {
-        (
-            &mut self.input,
-            &mut self.timing,
-            &self.stats,
-            &mut self.faults,
-        )
+    pub(crate) fn split(&mut self) -> Split<'_> {
+        Split {
+            input: &mut self.input,
+            timing: &mut self.timing,
+            stats: &self.stats,
+            faults: &mut self.faults,
+            sources: &mut self.sources,
+        }
     }
+}
+
+/// A session lent out in parts: the input to the thread that reads keys,
+/// the rest to the view.
+pub(crate) struct Split<'a> {
+    pub(crate) input: &'a mut Input,
+    pub(crate) timing: &'a mut Timing,
+    pub(crate) stats: &'a Stats,
+    pub(crate) faults: &'a mut Faults,
+    pub(crate) sources: &'a mut Sources,
+}
+
+/// The source `config.lua` starts the scope on, which must be one of
+/// `streams`.
+fn selection(config: &Config, streams: &[Stream]) -> anyhow::Result<Selection> {
+    let name = config.tui.source_stream.name();
+    let stream = streams
+        .iter()
+        .position(|stream| stream.name == name)
+        .ok_or_else(|| anyhow::anyhow!("config.lua tui source: stream {name:?} is not open"))?;
+    let channels = streams[stream].channels();
+    let pick = match config.tui.source_channel {
+        0 => Pick::Mix,
+        n if n <= channels => Pick::Channel(n - 1),
+        n => anyhow::bail!("config.lua tui source: channel {n}, but {name} has {channels}"),
+    };
+    Ok(Selection { stream, pick })
 }
 
 #[cfg(test)]
@@ -346,6 +402,7 @@ pub(crate) mod tests {
             octave_up: vec![],
             octave_down: vec![],
             stop: vec![],
+            scope: vec![Key::Tab],
             help: vec![Key::Char('?')],
             gate: Duration::ZERO,
             autorepeat: Duration::ZERO,
@@ -359,6 +416,11 @@ pub(crate) mod tests {
             keyboard: Keyboard::new(keymap, Gating::Held),
             freqs: crate::spec::Freqs::unchecked([0.0; 128]),
             help: false,
+            scope: Selection {
+                stream: 0,
+                pick: Pick::Mix,
+            },
+            streams: vec![2],
         }
     }
 
@@ -389,6 +451,22 @@ pub(crate) mod tests {
         model
             .update(msg, &mut Vec::new(), &mut Vec::new())
             .is_break()
+    }
+
+    #[test]
+    fn the_scope_key_moves_the_scope() {
+        let mut model = model();
+        let tab = Msg::Key(
+            Stroke {
+                key: Key::Tab,
+                kind: Kind::Press,
+                ctrl: false,
+            },
+            read(),
+        );
+        assert!(send(&mut model, tab).is_empty());
+        assert_eq!(model.scope.pick, Pick::Channel(0));
+        assert_eq!(model.glance().scope, model.scope);
     }
 
     #[test]

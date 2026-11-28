@@ -171,6 +171,31 @@ pub(super) const CONFIG_TUI: Schema = Schema {
         // one ring per producing thread, allocated when the stream opens;
         // a full ring loses the record, never the count
         optional(field::FAULTS, Ty::Integer, Bound::Between(1.0, 65536.0)),
+        optional(field::SOURCE, Ty::Table, Bound::Any),
+        optional(field::SCOPE, Ty::Table, Bound::Any),
+    ],
+};
+
+pub(super) const CONFIG_SOURCE: Schema = Schema {
+    what: "config.lua tui source",
+    fields: &[
+        // a name, checked against the streams once read
+        optional(field::STREAM, Ty::Text, Bound::Any),
+        // 0 is the mix; the device's channel count is checked when it opens
+        optional(field::CHANNEL, Ty::Integer, Bound::Between(0.0, 64.0)),
+        // ms; one ring per stream, allocated when the session opens and
+        // drained every redraw, so it needs only outlast a slow frame
+        optional(field::TEE, Ty::Number, Bound::Between(1.0, 10_000.0)),
+    ],
+};
+
+pub(super) const CONFIG_SCOPE: Schema = Schema {
+    what: "config.lua tui scope",
+    fields: &[
+        // ms; allocated once, and searched for a trigger every redraw
+        optional(field::HISTORY, Ty::Number, Bound::Between(1.0, 10_000.0)),
+        // a window shorter than a quarter cycle shows no shape
+        optional(field::CYCLES, Ty::Number, Bound::Between(0.25, 64.0)),
     ],
 };
 
@@ -208,6 +233,8 @@ pub(super) const KEYBOARD: Schema = Schema {
         // its name and notes are checked by keymap
         field(field::LAYOUT, Ty::Table, Bound::Any),
         field(field::STOP, Ty::Table, Bound::Any),
+        // optional, so a keyboard table written before it still loads
+        optional(field::SCOPE, Ty::Table, Bound::Any),
         // a zero gate would end each note on the poll after it starts
         field(field::GATE, Ty::Number, Bound::Above(0.0)),
         // zero turns autorepeat detection off

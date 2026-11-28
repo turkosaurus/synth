@@ -8,6 +8,8 @@
 //! `mlua` stays in `script`, `cpal` in `audio`'s device, `crossterm` in
 //! `view` and [`terminal`], and `spec` names none of them.
 
+extern crate alloc;
+
 pub mod audio;
 pub mod input;
 pub mod install;

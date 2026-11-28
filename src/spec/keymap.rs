@@ -30,6 +30,8 @@ pub(crate) struct Keymap {
     pub octave_up: Vec<Key>,
     pub octave_down: Vec<Key>,
     pub stop: Vec<Key>,
+    /// Moves the scope to its next source.
+    pub scope: Vec<Key>,
     pub help: Vec<Key>,
     /// How long a note lasts in `Fixed` gating, from the keyboard's `gate`.
     pub gate: Duration,

@@ -193,6 +193,7 @@ keyboard.colemak = keyboard.grid({ template = keyboard.templates.colemak })
 ---@class synth.Keyboard
 ---@field layout? synth.Layout
 ---@field stop? string[] silence everything; must not be empty
+---@field scope? string[] move the scope to the next channel, mix, or stream; may be empty
 ---@field gate? number ms; note length when key release is unreported
 ---@field autorepeat_threshold? number ms; a press this soon is autorepeat; 0 off
 ---@field doubletap_threshold? number ms; a second press this soon is a double tap; 0 off
@@ -210,6 +211,7 @@ defaults = {
 	-- `help` given on the keyboard itself replace the layout's.
 	layout = keyboard.qwerty,
 	stop = { "escape" }, -- silence everything; must not be empty
+	scope = { "tab" }, -- move the scope to the next channel, mix, or stream; may be empty
 	-- note length when the terminal cannot report key release
 	gate = 200, -- ms
 	-- when the terminal cannot report key release, a press of a key this

@@ -59,6 +59,34 @@ pub struct TuiConfig {
     /// Faults each producing thread can push before the view drains them;
     /// each ring is allocated once, when the stream opens.
     pub faults: usize,
+    /// The stream the scope reads at start.
+    pub source_stream: StreamName,
+    /// The channel the scope reads at start, from 1; 0 is the mix of all.
+    pub source_channel: usize,
+    /// How much of each stream its tee holds for the view to drain.
+    pub source_tee: Duration,
+    /// How much of its source the scope keeps to find a trigger in.
+    pub scope_history: Duration,
+    /// Cycles of the sounding pitch the scope's window spans.
+    pub scope_cycles: f32,
+}
+
+/// A stream of frames a view can read, by the name `config.lua` gives it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StreamName {
+    /// what the device plays, after the clamp
+    Output,
+}
+
+impl StreamName {
+    pub const ALL: [Self; 1] = [Self::Output];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Output => "output",
+        }
+    }
 }
 
 /// Where a reading turns yellow, then red: ms for a latency stage, where

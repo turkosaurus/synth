@@ -7,7 +7,7 @@
 | [`spec`](./spec) | plain data every module shares; names nothing else in the crate |
 | [`audio`](./audio) | the realtime path: render and device |
 | [`input`](./input) | character keyboard to note events |
-| [`session.rs`](./session.rs) | model, msg, and cmd for a live view; wires device, patch, and ring |
+| [`session.rs`](./session.rs) | model, msg, and cmd for a live view; wires device, patch, and ring; `source.rs`: the frame sources a view reads |
 | [`view`](./view) | tui, reports, prompts |
 | [`terminal.rs`](./terminal.rs) | raw mode and key release detection |
 | [`install.rs`](./install.rs) | `install`, `uninstall` |
