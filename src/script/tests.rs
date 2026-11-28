@@ -431,7 +431,7 @@ pub(crate) fn with_keyboard(keyboard: &str) -> anyhow::Result<Patch> {
         return synth.instrument({{
             oscillator = synth.osc({{ waveforms = {{ synth.wave.triangle }} }}),
             envelope = synth.envelope({{}}),
-            keyboard = {keyboard},
+            input = {{ keyboard = {keyboard} }},
         }})
         "#
     );
@@ -441,7 +441,7 @@ pub(crate) fn with_keyboard(keyboard: &str) -> anyhow::Result<Patch> {
 #[test]
 fn a_patch_can_write_its_own_notes() {
     let patch = with_keyboard(
-        r#"synth.keyboard({ layout = {
+        r#"synth.input.keyboard({ layout = {
             notes = { a = 60, ["é"] = 62 }, octave_up = {}, octave_down = {}, help = {},
         } })"#,
     )
@@ -455,7 +455,7 @@ fn a_patch_can_write_its_own_notes() {
 
 #[test]
 fn a_bare_instrument_has_no_events() {
-    let patch = with_keyboard("synth.keyboard({})").unwrap();
+    let patch = with_keyboard("synth.input.keyboard({})").unwrap();
     assert_eq!(patch.timeline.instruments.len(), 1);
     assert!(patch.timeline.events.is_empty());
     assert_eq!(patch.bpm, 0.0, "play refuses a patch with no bpm");
@@ -463,14 +463,14 @@ fn a_bare_instrument_has_no_events() {
 
 #[test]
 fn the_default_layout_is_named() {
-    let patch = with_keyboard("synth.keyboard({})").unwrap();
+    let patch = with_keyboard("synth.input.keyboard({})").unwrap();
     assert_eq!(patch.keymap.name.as_deref(), Some("qwerty"));
 }
 
 #[test]
 fn the_grid_reads_keys_outside_ascii() {
     let patch = with_keyboard(
-        r#"synth.keyboard({ layout = synth.keyboard.grid({
+        r#"synth.input.keyboard({ layout = synth.input.keyboard.grid({
             note = 60,
             template = {
                 anchor = "ö", rows = { "äöü" }, shifted = { "ÄÖÜ" },
@@ -496,7 +496,7 @@ fn every_built_in_layout_loads_with_a4_on_its_anchor() {
         ("colemak", 'a'),
     ] {
         let patch = with_keyboard(&format!(
-            "synth.keyboard({{ layout = synth.keyboard.{layout} }})"
+            "synth.input.keyboard({{ layout = synth.input.keyboard.{layout} }})"
         ))
         .unwrap_or_else(|error| panic!("{layout}: {error:#}"));
         let keymap = &patch.keymap;
@@ -515,7 +515,7 @@ fn a_position_plays_the_same_note_in_every_layout() {
         ("colemak", 'p'),
     ] {
         let patch = with_keyboard(&format!(
-            "synth.keyboard({{ layout = synth.keyboard.{layout} }})"
+            "synth.input.keyboard({{ layout = synth.input.keyboard.{layout} }})"
         ))
         .unwrap();
         assert_eq!(patch.keymap.notes.get(&key), Some(&77), "{layout}");
@@ -525,7 +525,8 @@ fn a_position_plays_the_same_note_in_every_layout() {
 #[test]
 fn a_layout_brings_its_own_control_keys() {
     // qwerty's octave and help characters are notes on qwertz
-    let patch = with_keyboard("synth.keyboard({ layout = synth.keyboard.qwertz })").unwrap();
+    let patch =
+        with_keyboard("synth.input.keyboard({ layout = synth.input.keyboard.qwertz })").unwrap();
     let keymap = &patch.keymap;
 
     assert!(keymap.notes.contains_key(&'='), "shift 0 plays");
@@ -551,7 +552,7 @@ fn a_keyboard_control_replaces_the_layouts() {
 
 #[test]
 fn the_keyboard_starts_an_octave_down_by_default() {
-    let keymap = with_keyboard("synth.keyboard({})").unwrap().keymap;
+    let keymap = with_keyboard("synth.input.keyboard({})").unwrap().keymap;
     assert_eq!(
         (keymap.octave, keymap.octave_low, keymap.octave_high),
         (-1, 2, 3)
@@ -560,9 +561,10 @@ fn the_keyboard_starts_an_octave_down_by_default() {
 
 #[test]
 fn octave_limits_are_set_separately() {
-    let keymap = with_keyboard("synth.keyboard({ octave = 0, octave_low = 3, octave_high = 4 })")
-        .unwrap()
-        .keymap;
+    let keymap =
+        with_keyboard("synth.input.keyboard({ octave = 0, octave_low = 3, octave_high = 4 })")
+            .unwrap()
+            .keymap;
     assert_eq!(
         (keymap.octave, keymap.octave_low, keymap.octave_high),
         (0, 3, 4)
@@ -577,7 +579,7 @@ fn an_octave_out_of_bounds_is_named() {
         ("octave_high = 1.5", "`octave_high` must be a whole number"),
         ("octave_range = 4", "unknown field `octave_range`"),
     ] {
-        let error = with_keyboard(&format!("synth.keyboard({{ {field} }})"))
+        let error = with_keyboard(&format!("synth.input.keyboard({{ {field} }})"))
             .err()
             .expect(field);
         assert!(
@@ -591,7 +593,7 @@ fn an_octave_out_of_bounds_is_named() {
 fn a_note_outside_midi_is_named() {
     for (note, shown) in [("128", "128"), ("-1", "-1"), ("60.5", "60.5")] {
         let error = with_keyboard(&format!(
-            "synth.keyboard({{ layout = {{
+            "synth.input.keyboard({{ layout = {{
                 notes = {{ a = {note} }}, octave_up = {{}}, octave_down = {{}}, help = {{}},
             }} }})"
         ))
@@ -1168,7 +1170,7 @@ fn every_lua_default_passes_rust_validation() {
     super::schema::ENVELOPE.check(&envelope, None).unwrap();
     let instrument = construct(&lua, "synth.instrument", empty());
     super::schema::INSTRUMENT.check(&instrument, None).unwrap();
-    let keyboard = construct(&lua, "synth.keyboard", empty());
+    let keyboard = construct(&lua, "synth.input.keyboard", empty());
     super::schema::KEYBOARD.check(&keyboard, None).unwrap();
 
     // a sequence needs one step to resolve, which takes every step default

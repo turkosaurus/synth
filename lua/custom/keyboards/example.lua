@@ -1,10 +1,10 @@
 -- A keyboard of your own. A patch uses it with
---   keyboard = require("keyboards.example")
+--   input = { keyboard = require("keyboards.example") }
 local synth = require("synth")
 
-return synth.keyboard({
+return synth.input.keyboard({
 	-- qwerty, qwertz, azerty, dvorak, colemak, or your own { name, notes, ... }
-	layout = synth.keyboard.qwerty,
+	layout = synth.input.keyboard.qwerty,
 	-- octave = 0, -- start shift
 	-- octave_low = 2, -- octaves down from the start
 	-- octave_high = 3, -- octaves up from the start

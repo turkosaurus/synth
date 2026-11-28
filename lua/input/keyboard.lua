@@ -5,7 +5,7 @@ local defaults, override -- defined below
 -- `file:line` of whoever called the constructor, read by Rust
 local site = require("synth.site")
 
----@class synth.keyboard
+---@class synth.input.keyboard
 ---@overload fun(opts?: synth.Keyboard): synth.Keyboard
 local keyboard = setmetatable({}, {
 	__call = function(_, opts)

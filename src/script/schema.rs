@@ -121,7 +121,7 @@ pub(super) const INSTRUMENT: Schema = Schema {
         // a pool of zero voices could never sound
         field(field::VOICE_COUNT, Ty::Integer, Bound::AtLeast(1.0)),
         // read by load_in, not by the instrument
-        optional(field::KEYBOARD, Ty::Table, Bound::Any),
+        optional(field::INPUT, Ty::Table, Bound::Any),
         optional(field::TUNING, Ty::Function, Bound::Any),
         optional(field::FILTER, Ty::Table, Bound::Any),
     ],
@@ -251,6 +251,12 @@ pub(super) const CONFIG_BUDGET: Schema = Schema {
     ],
 };
 
+/// A patch's `input`: the devices it plays from.
+pub(super) const INPUT: Schema = Schema {
+    what: "input",
+    fields: &[optional(field::KEYBOARD, Ty::Table, Bound::Any)],
+};
+
 pub(super) const KEYBOARD: Schema = Schema {
     what: "keyboard",
     fields: &[
@@ -293,7 +299,7 @@ pub(super) const SEQUENCE: Schema = Schema {
         field(field::PATTERNS, Ty::Integer, Bound::AtLeast(0.0)),
         field(field::CHAIN, Ty::Integer, Bound::AtLeast(0.0)),
         field(field::LOOP, Ty::Integer, Bound::AtLeast(1.0)),
-        optional(field::KEYBOARD, Ty::Table, Bound::Any),
+        optional(field::INPUT, Ty::Table, Bound::Any),
         optional(field::TUNING, Ty::Function, Bound::Any),
         optional(field::FILTER, Ty::Table, Bound::Any),
     ],

@@ -2,5 +2,5 @@
 local synth = require("synth")
 
 return synth.instrument({
-	keyboard = synth.keyboard({ stop = "escape" }),
+	input = { keyboard = synth.input.keyboard({ stop = "escape" }) },
 })
