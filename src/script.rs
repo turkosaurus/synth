@@ -25,7 +25,7 @@ use feed::{bare, sequence, SINGLE};
 use keymap::keymap;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 const LUA_SLOPE: &str = include_str!("../lua/slope.lua");
 const LUA_WAVE: &str = include_str!("../lua/wave.lua");
@@ -216,6 +216,8 @@ mod field {
 
     pub(super) const LAYOUT: &str = "layout";
     pub(super) const STOP: &str = "stop";
+    pub(super) const QUIT: &str = "quit";
+    pub(super) const QUIT_NOW: &str = "quit_now";
     pub(super) const GATE: &str = "gate";
     pub(super) const AUTOREPEAT_THRESHOLD: &str = "autorepeat_threshold";
     pub(super) const DOUBLETAP_THRESHOLD: &str = "doubletap_threshold";

@@ -259,6 +259,9 @@ pub(super) const KEYBOARD: Schema = Schema {
         field(field::STOP, Ty::Table, Bound::Any),
         // optional, so a keyboard table written before it still loads
         optional(field::SCOPE, Ty::Table, Bound::Any),
+        // at least one of them is checked by keymap
+        field(field::QUIT, Ty::Table, Bound::Any),
+        field(field::QUIT_NOW, Ty::Table, Bound::Any),
         // a zero gate would end each note on the poll after it starts
         field(field::GATE, Ty::Number, Bound::Above(0.0)),
         // zero turns autorepeat detection off

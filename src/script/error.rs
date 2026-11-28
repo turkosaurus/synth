@@ -96,6 +96,9 @@ pub enum Error {
     #[error("keyboard.stop must name at least one key to silence with")]
     NoStopKey,
 
+    #[error("keyboard.quit and keyboard.quit_now must name at least one key between them")]
+    NoQuitKey,
+
     #[error("keyboard.layout plays note {note} on '{key}', which keyboard.{what} also binds")]
     KeyConflict {
         what: &'static str,

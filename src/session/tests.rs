@@ -9,23 +9,26 @@ pub(crate) fn model() -> Model {
     let keymap = Keymap {
         notes: HashMap::from([('a', 60)]),
         name: None,
-        octave_up: vec![],
+        octave_up: vec![Key::Char('=')],
         octave_down: vec![],
         stop: vec![],
         scope: vec![Key::Tab],
         help: vec![Key::Char('?')],
+        quit: vec![Key::Char('q')],
+        quit_now: vec![Key::Ctrl('c'), Key::Ctrl('d')],
         gate: Duration::ZERO,
         autorepeat: Duration::ZERO,
         doubletap: Duration::ZERO,
         velocity: 100,
         octave: 0,
         octave_low: 0,
-        octave_high: 0,
+        octave_high: 1,
     };
     Model {
         keyboard: Keyboard::new(keymap, Gating::Held),
         freqs: crate::spec::Freqs::unchecked([0.0; 128]),
         help: false,
+        asking: false,
         scope: Selection {
             stream: 0,
             pick: Pick::Mix,
@@ -108,14 +111,70 @@ fn a_drawn_frame_is_counted() {
 }
 
 #[test]
-fn the_help_overlay_keeps_note_keys_silent() {
+fn a_key_closes_help_and_still_plays() {
     let mut model = model();
     send(&mut model, key('?', false));
     assert!(model.help);
-    assert_eq!(send(&mut model, key('a', false)), vec![]);
-    send(&mut model, key('?', false));
-    assert!(!model.help);
     assert_eq!(send(&mut model, key('a', false)).len(), 1);
+    assert!(!model.help);
+}
+
+#[test]
+fn a_key_closes_help_and_still_moves_the_octave() {
+    let mut model = model();
+    send(&mut model, key('?', false));
+    send(&mut model, key('=', false));
+    assert!(!model.help);
+    assert_eq!(model.keyboard.octave(), (1, false));
+}
+
+#[test]
+fn the_help_key_keeps_help_up() {
+    let mut model = model();
+    send(&mut model, key('?', false));
+    send(&mut model, key('?', false));
+    assert!(model.help);
+}
+
+#[test]
+fn a_release_leaves_help_up() {
+    let mut model = model();
+    send(&mut model, key('a', false));
+    send(&mut model, key('?', false));
+    let release = Msg::Key(
+        Stroke {
+            key: Key::Char('a'),
+            kind: Kind::Release,
+            ctrl: false,
+        },
+        read(),
+    );
+    assert_eq!(send(&mut model, release).len(), 1, "the note still ends");
+    assert!(model.help);
+}
+
+#[test]
+fn the_quit_key_asks_and_y_quits() {
+    let mut model = model();
+    assert!(!quits(&mut model, key('q', false)));
+    assert!(model.glance().asking);
+    assert!(quits(&mut model, key('y', false)));
+}
+
+#[test]
+fn any_other_key_cancels_the_quit_prompt_and_does_nothing_else() {
+    let mut model = model();
+    send(&mut model, key('q', false));
+    assert_eq!(send(&mut model, key('a', false)), vec![]);
+    assert!(!model.asking);
+    assert_eq!(send(&mut model, key('a', false)).len(), 1);
+}
+
+#[test]
+fn quit_now_quits_from_the_prompt() {
+    let mut model = model();
+    send(&mut model, key('q', false));
+    assert!(quits(&mut model, key('d', true)));
 }
 
 #[test]

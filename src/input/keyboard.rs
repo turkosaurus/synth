@@ -20,9 +20,13 @@ pub(crate) enum Kind {
 }
 
 impl Stroke {
-    /// Quit is ctrl-c/d only, hardcoded to survive an invalid keymap.
-    fn quits(self) -> bool {
-        self.ctrl && matches!(self.key, Key::Char('c' | 'd'))
+    /// Whether any of `keys` names this stroke. A plain binding ignores
+    /// ctrl, as every binding did before ctrl could be named.
+    fn bound(self, keys: &[Key]) -> bool {
+        keys.iter().any(|&key| match key {
+            Key::Ctrl(ch) => self.ctrl && self.key == Key::Char(ch),
+            key => key == self.key,
+        })
     }
 }
 
@@ -48,6 +52,8 @@ pub enum Gating {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Outcome {
     Continue,
+    /// quit after asking
+    Ask,
     Quit,
     Help,
     /// move the scope to its next source
@@ -125,41 +131,34 @@ impl Keyboard {
         &self.keymap
     }
 
-    /// Dispatch for a view that is showing something modal: only bindings
-    /// that must work everywhere are honoured, and nothing sounds. Releases
-    /// report `Continue`, so the press that opened an overlay is not undone
-    /// by its own key coming back up.
-    pub(crate) fn global(&self, stroke: Stroke) -> Outcome {
-        if stroke.kind != Kind::Press {
-            return Outcome::Continue;
-        }
-        if stroke.quits() {
+    /// Dispatch for a press answering the quit prompt: `Quit` for
+    /// `quit_now`, otherwise `Continue`, and nothing sounds.
+    pub(crate) fn answer(&self, stroke: Stroke) -> Outcome {
+        if stroke.bound(&self.keymap.quit_now) {
             return Outcome::Quit;
-        }
-        if self.keymap.help.contains(&stroke.key) {
-            return Outcome::Help;
         }
         Outcome::Continue
     }
 
     /// Read `stroke`, appending any note events it causes to `out`.
     pub(crate) fn handle(&mut self, stroke: Stroke, out: &mut Vec<Event>) -> Outcome {
-        // sound stop is configurable via the keymap's `stop` list
-        if stroke.quits() {
-            return Outcome::Quit;
-        }
-
         match stroke.kind {
             Kind::Press => {
-                // tested before press(), so a layout that puts the help key
-                // somewhere in the note grid cannot also sound it
-                if self.keymap.help.contains(&stroke.key) {
+                // tested before press(), so a layout that puts a control
+                // key somewhere in the note grid cannot also sound it
+                if stroke.bound(&self.keymap.quit_now) {
+                    return Outcome::Quit;
+                }
+                if stroke.bound(&self.keymap.quit) {
+                    return Outcome::Ask;
+                }
+                if stroke.bound(&self.keymap.help) {
                     return Outcome::Help;
                 }
-                if self.keymap.scope.contains(&stroke.key) {
+                if stroke.bound(&self.keymap.scope) {
                     return Outcome::Scope;
                 }
-                self.press(stroke.key, out)
+                self.press(stroke, out)
             }
             // release only arrives when gating is Held;
             // in Fixed mode, `tick` ends the note
@@ -173,23 +172,23 @@ impl Keyboard {
         Outcome::Continue
     }
 
-    fn press(&mut self, key: Key, out: &mut Vec<Event>) {
+    fn press(&mut self, stroke: Stroke, out: &mut Vec<Event>) {
         // control bindings are matched as keys,
         // so "backspace" works alongside "="
-        if self.keymap.stop.contains(&key) {
+        if stroke.bound(&self.keymap.stop) {
             self.stop(Instant::now(), out);
             return;
         }
-        if self.keymap.octave_up.contains(&key) {
+        if stroke.bound(&self.keymap.octave_up) {
             self.octave = (self.octave + 1).min(self.reach().1);
             return;
         }
-        if self.keymap.octave_down.contains(&key) {
+        if stroke.bound(&self.keymap.octave_down) {
             self.octave = (self.octave - 1).max(self.reach().0);
             return;
         }
 
-        let Key::Char(ch) = key else {
+        let Key::Char(ch) = stroke.key else {
             return;
         };
         let Some(&base) = self.keymap.notes.get(&ch) else {
