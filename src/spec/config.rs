@@ -15,8 +15,17 @@ pub struct Config {
     /// Where `require` looks after the patch's own folder. `None` when there
     /// is no home directory to put the default in.
     pub custom_dir: Option<PathBuf>,
+    pub capture: CaptureConfig,
     pub tui: TuiConfig,
     pub log: LogConfig,
+}
+
+/// What synth reads of the output device's capture.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct CaptureConfig {
+    /// The channel the capture meter reads, from 1; 0 is the loudest of all.
+    pub channel: usize,
 }
 
 /// How `log.jsonl` is kept between sessions.
@@ -83,14 +92,17 @@ pub struct TuiConfig {
 pub enum StreamName {
     /// what the device plays, after the clamp
     Output,
+    /// what the output device's capture hears
+    Capture,
 }
 
 impl StreamName {
-    pub const ALL: [Self; 1] = [Self::Output];
+    pub const ALL: [Self; 2] = [Self::Output, Self::Capture];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Output => "output",
+            Self::Capture => "capture",
         }
     }
 }

@@ -14,7 +14,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::audio::{self, Fault, Faults, Feed, Origin, Player, Record, Reporter, Stamp, Stats};
+use crate::audio::{
+    self, Channel, Fault, Faults, Feed, Origin, Player, Record, Reporter, Stamp, Stats,
+};
 use crate::input::keyboard::{Gating, Keyboard, Kind, Outcome, Stroke, PITCHES};
 use crate::script;
 use crate::spec::{Config, Event, Key, StreamName};
@@ -280,6 +282,8 @@ pub struct Session {
     sources: Sources,
     /// Kept only so the stream plays until the session drops.
     _stream: audio::Stream,
+    /// The same, for the capture stream when there is one.
+    _capture: Option<audio::Stream>,
 }
 
 impl Session {
@@ -300,8 +304,10 @@ impl Session {
         // the producer stays here; the consumer moves into the audio callback
         let (tx, rx) = rtrb::RingBuffer::<Event>::new(config.queue);
         let sample_rate = output.sample_rate as f32;
-        let tee_frames = (sample_rate * config.tui.source_tee.as_secs_f32()).ceil() as usize;
-        let (tee_tx, output_tee) = audio::output_tee(tee_frames.max(1), output.channels);
+        let tee_frames =
+            |rate: f32| ((rate * config.tui.source_tee.as_secs_f32()).ceil() as usize).max(1);
+        let (tee_tx, output_tee) = audio::tee(tee_frames(sample_rate), output.channels);
+        let meter = meter_channel(config, output.capture.as_ref().map(|c| c.channels))?;
         let player = Player::new(
             Feed::Live {
                 instruments: patch.timeline.instruments,
@@ -312,13 +318,6 @@ impl Session {
         )
         .with_filter(patch.filter)
         .with_output_tee(tee_tx);
-        let streams = vec![Stream::new(
-            StreamName::Output.name(),
-            sample_rate,
-            output_tee,
-        )];
-        let channels: Vec<usize> = streams.iter().map(Stream::channels).collect();
-        let selection = selection(config, &streams)?;
 
         let (stamps, recorder, records) = audio::timing(config.queue, config.tui.latency_records);
         let stats = Arc::new(Stats::default());
@@ -330,6 +329,26 @@ impl Session {
             Some(recorder),
             &mut faults,
         )?;
+
+        let mut capture = None;
+        let captured = match &output.capture {
+            Some(device) => {
+                let rate = device.sample_rate as f32;
+                let (tx, tee) = audio::tee(tee_frames(rate), device.channels);
+                capture = audio::capture(&output, tx, meter, Arc::clone(&stats), &mut faults);
+                match capture {
+                    Some(_) => Stream::new(StreamName::Capture.name(), rate, tee),
+                    None => Stream::missing(StreamName::Capture.name(), sample_rate),
+                }
+            }
+            None => Stream::missing(StreamName::Capture.name(), sample_rate),
+        };
+        let streams = vec![
+            Stream::new(StreamName::Output.name(), sample_rate, output_tee),
+            captured,
+        ];
+        let channels: Vec<usize> = streams.iter().map(Stream::channels).collect();
+        let selection = selection(config, &streams)?;
 
         Ok(Self {
             input: Input::new(
@@ -355,6 +374,7 @@ impl Session {
             faults,
             sources: Sources::new(streams, selection),
             _stream: stream,
+            _capture: capture,
         })
     }
 
@@ -386,7 +406,9 @@ pub(crate) struct Split<'a> {
 }
 
 /// The source `config.lua` starts the scope on, which must be one of
-/// `streams`.
+/// `streams`. Any channel of a stream that did not open reads as its mix,
+/// since there are no channels to check it against, and the view says the
+/// stream is missing.
 fn selection(config: &Config, streams: &[Stream]) -> anyhow::Result<Selection> {
     let name = config.tui.source_stream.name();
     let stream = streams
@@ -396,10 +418,24 @@ fn selection(config: &Config, streams: &[Stream]) -> anyhow::Result<Selection> {
     let channels = streams[stream].channels();
     let pick = match config.tui.source_channel {
         0 => Pick::Mix,
+        _ if channels == 0 => Pick::Mix,
         n if n <= channels => Pick::Channel(n - 1),
         n => anyhow::bail!("config.lua tui source: channel {n}, but {name} has {channels}"),
     };
     Ok(Selection { stream, pick })
+}
+
+/// The channel `config.lua` gives the capture meter, which must be one of
+/// the capture's `channels`. With no capture there is nothing to check, and
+/// the meter says so.
+fn meter_channel(config: &Config, channels: Option<usize>) -> anyhow::Result<Channel> {
+    match (config.capture.channel, channels) {
+        (0, _) | (_, None) => Ok(Channel::All),
+        (n, Some(channels)) if n <= channels => Ok(Channel::One(n - 1)),
+        (n, Some(channels)) => {
+            anyhow::bail!("config.lua capture: channel {n}, but the capture has {channels}")
+        }
+    }
 }
 
 #[cfg(test)]

@@ -20,6 +20,11 @@ pub enum Fault {
     Dropped,
     /// output frames found the output tee full
     TeeDropped { frames: u64 },
+    /// the driver reported an error on the capture stream, or could not
+    /// open it, which leaves the session without one
+    CaptureStream(StreamKind),
+    /// captured frames found the capture tee full
+    CaptureTeeDropped { frames: u64 },
     /// reading input failed, which ends the session
     Input(io::ErrorKind),
 }
@@ -41,23 +46,31 @@ pub enum StreamKind {
 impl fmt::Display for Fault {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Self::Stream(kind) => f.write_str(match kind {
-                StreamKind::Underrun => "underrun",
-                StreamKind::DeviceGone => "device gone",
-                StreamKind::DeviceChanged => "device changed",
-                StreamKind::DeviceBusy => "device busy",
-                StreamKind::Invalidated => "stream invalidated",
-                StreamKind::RealtimeDenied => "realtime denied",
-                StreamKind::Backend => "backend error",
-                StreamKind::Other => "stream error",
-            }),
+            Self::Stream(kind) => write!(f, "{kind}"),
             Self::Overrun { used_us, budget_us } => {
                 write!(f, "overrun {used_us} of {budget_us} µs")
             }
             Self::Dropped => f.write_str("event dropped, queue full"),
             Self::TeeDropped { frames } => write!(f, "output tee dropped {frames} frames"),
+            Self::CaptureStream(kind) => write!(f, "capture stream: {kind}"),
+            Self::CaptureTeeDropped { frames } => write!(f, "capture tee dropped {frames} frames"),
             Self::Input(kind) => write!(f, "reading input: {kind}"),
         }
+    }
+}
+
+impl fmt::Display for StreamKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Underrun => "underrun",
+            Self::DeviceGone => "device gone",
+            Self::DeviceChanged => "device changed",
+            Self::DeviceBusy => "device busy",
+            Self::Invalidated => "stream invalidated",
+            Self::RealtimeDenied => "realtime denied",
+            Self::Backend => "backend error",
+            Self::Other => "stream error",
+        })
     }
 }
 

@@ -3,7 +3,7 @@
 | file | purpose |
 | --- | --- |
 | [`render.rs`](./render.rs) | `Player`: what the callback runs; never allocates, locks, or blocks |
-| [`device.rs`](./device.rs) | the only place `cpal` appears; opens and streams, and `Error` for why either failed |
+| [`device.rs`](./device.rs) | the only place `cpal` appears; opens and streams the output, and the same device's input as the capture stream when it has one, and `Error` for why the output failed |
 | [`timing.rs`](./timing.rs) | stamps beside live events, paired in the callback into stage timing records for the UI |
 | [`fx`](./fx) | per-sample processors, `core` only |
 

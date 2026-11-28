@@ -150,6 +150,32 @@ fn a_key_no_binding_names_is_dropped() {
     assert_eq!(stroke(KeyEvent::from(KeyCode::F(1))), None);
 }
 
+#[test]
+fn a_level_meter_names_a_stream_that_is_not_open() {
+    let meter = Meter::new(Duration::ZERO, Duration::from_millis(1));
+    assert_eq!(level_label("capture", None, -60.0), "capture none");
+    assert_eq!(
+        level_label("capture", Some(&meter), -60.0),
+        "capture    -∞ dB  hold    -∞ dB"
+    );
+}
+
+#[test]
+fn capture_tee_drops_count_with_the_outputs() {
+    let config = crate::script::config_defaults().tui;
+    let snap = Snapshot {
+        output_tee_dropped: 1,
+        capture_tee_dropped: 2,
+        ..Snapshot::default()
+    };
+    let tee = Fault::CaptureTeeDropped { frames: 2 };
+    let line = status(&snap, Some(tee), None, 60, &config).to_string();
+    assert!(
+        line.contains("tee dropped 3 (last: capture tee dropped 2 frames)"),
+        "{line}"
+    );
+}
+
 fn keymap() -> Keymap {
     crate::session::tests::model().keyboard.keymap().clone()
 }

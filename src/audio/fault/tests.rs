@@ -18,6 +18,14 @@ fn each_fault_reads_as_text() {
             "output tee dropped 3 frames",
         ),
         (
+            Fault::CaptureStream(StreamKind::DeviceGone),
+            "capture stream: device gone",
+        ),
+        (
+            Fault::CaptureTeeDropped { frames: 2 },
+            "capture tee dropped 2 frames",
+        ),
+        (
             Fault::Input(io::ErrorKind::UnexpectedEof),
             "reading input: unexpected end of file",
         ),

@@ -9,9 +9,9 @@ mod fx;
 mod render;
 mod timing;
 
-pub use device::{open, stream, Error, Output, Snapshot, Stats, Stream};
+pub use device::{capture, open, stream, Capture, Channel, Error, Output, Snapshot, Stats, Stream};
 pub use fault::{Fault, Faults, Reporter, Stamped, StreamKind};
-pub use render::{output_tee, Feed, OutputTee, Player};
+pub use render::{tee, Feed, Player, Tee};
 pub use timing::{timing, Origin, Record, Recorder, Stamp};
 
 /// The callback's render step, for `benches/` only: a bench links the

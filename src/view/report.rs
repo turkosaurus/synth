@@ -71,6 +71,13 @@ pub fn config(path: Option<&std::path::Path>, config: &Config) {
                     None => "none (no HOME)".to_string(),
                 },
             ),
+            (
+                "capture meter",
+                match config.capture.channel {
+                    0 => "loudest channel".to_string(),
+                    n => format!("channel {n}"),
+                },
+            ),
             ("tui poll", ms(tui.poll)),
             ("meter hold", ms(tui.meter_hold)),
             ("meter fall", ms(tui.meter_fall)),
@@ -282,7 +289,9 @@ pub fn stats(snap: &Snapshot) -> String {
         output_tee_dropped: _,
         timing_dropped: _,
         input_errors: _,
+        capture_tee_dropped: _,
         peak,
+        capture_peak: _,
         budget_us,
         buffer_frames,
         output_us,
