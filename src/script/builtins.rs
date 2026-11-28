@@ -80,11 +80,12 @@ pub enum Wrote {
     KeptBehind,
 }
 
-/// The copy's file name for a module: `synth.wave` is `wave.lua`, and the
-/// root module `synth` is `init.lua`, as `require` would look for them.
+/// The copy's file name for a module: `synth.wave` is `wave.lua`,
+/// `synth.input.keyboard` is `input/keyboard.lua`, and the root module
+/// `synth` is `init.lua`, as `require` would look for them.
 fn file_name(name: &str) -> String {
     match name.strip_prefix("synth.") {
-        Some(rest) => format!("{rest}.lua"),
+        Some(rest) => format!("{}.lua", rest.replace('.', "/")),
         None => "init.lua".to_string(),
     }
 }
@@ -178,6 +179,9 @@ pub fn write(custom: &Path) -> Result<Vec<(&'static str, Wrote)>, Error> {
             (Some(_), None) => Wrote::Kept,
         };
         if matches!(outcome, Wrote::Written | Wrote::Refreshed) {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|error| Error::io("create", parent, error))?;
+            }
             fs::write(&path, entry.source).map_err(|error| Error::io("write", &path, error))?;
         }
         // a kept copy behind the built-in keeps its old base, so `doctor`

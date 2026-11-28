@@ -6,7 +6,7 @@ return synth.sequence({
 	instruments = { lead = require("instruments.example") },
 	instrument = "lead",
 	filter = require("effects.example"),
-	keyboard = require("keyboards.example"),
+	input = { keyboard = require("keyboards.example") },
 	tuning = require("tunings.example"),
 	patterns = { intro = require("patterns.example") },
 	chain = { "intro" },
