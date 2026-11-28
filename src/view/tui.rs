@@ -342,9 +342,17 @@ fn key(code: KeyCode) -> Option<Key> {
 }
 
 /// A binding the way the terminal names it, for the help overlay.
+fn label(key: Key) -> String {
+    match key {
+        Key::Ctrl(ch) => format!("ctrl-{ch}"),
+        key => code(key).to_string(),
+    }
+}
+
+/// The terminal's code for `key`, modifiers aside.
 fn code(key: Key) -> KeyCode {
     match key {
-        Key::Char(ch) => KeyCode::Char(ch),
+        Key::Char(ch) | Key::Ctrl(ch) => KeyCode::Char(ch),
         Key::Backspace => KeyCode::Backspace,
         Key::Delete => KeyCode::Delete,
         Key::Enter => KeyCode::Enter,
@@ -509,10 +517,15 @@ fn draw(frame: &mut Frame, view: &View) {
         config,
     } = *view;
 
-    let footer = match keymap.help.first() {
-        Some(&key) => format!("(ctrl-c) quit | ({}) help", code(key)),
-        None => "(ctrl-c) quit".to_string(),
-    };
+    let footer = [
+        ("quit", &keymap.quit),
+        ("quit now", &keymap.quit_now),
+        ("help", &keymap.help),
+    ]
+    .into_iter()
+    .filter_map(|(what, keys)| Some(format!("({}) {what}", label(*keys.first()?))))
+    .collect::<Vec<_>>()
+    .join(" | ");
 
     // stats is sized to exactly what it draws: the taller of the meters and
     // the latency table, and its own borders. input takes what is left, so
@@ -669,7 +682,10 @@ fn draw(frame: &mut Frame, view: &View) {
 
     // last, so it lands on top of everything already drawn
     if glance.help {
-        overlay(frame, keymap);
+        popup(frame, " keymap ", help(keymap), " any other key closes ");
+    }
+    if glance.asking {
+        popup(frame, " quit ", vec![Line::from("quit? (y/n)")], "");
     }
 }
 
@@ -685,21 +701,17 @@ fn pane() -> Block<'static> {
     Block::bordered().merge_borders(MergeStrategy::Exact)
 }
 
-/// The whole keymap, over the top of whatever is behind it, sized to what
-/// it lists and no larger than the frame.
-fn overlay(frame: &mut Frame, keymap: &Keymap) {
-    const CLOSE: &str = " any other key closes ";
-    let frame_area = frame.area();
-    // two borders, two cells of padding, and the shadow
-    let room = frame_area.width.saturating_sub(5);
-    let lines = help(keymap, room);
+/// `lines` in a box over the top of whatever is behind it, sized to them
+/// and no larger than the frame.
+fn popup(frame: &mut Frame, title: &str, lines: Vec<Line>, bottom: &str) {
     let widest = lines.iter().map(Line::width).max().unwrap_or(0);
-    let width = widest.max(CLOSE.len()) as u16 + 4;
+    // two borders and two cells of padding
+    let width = widest.max(title.len()).max(bottom.len()) as u16 + 4;
     let height = lines.len() as u16 + 2;
 
     let [area] = Layout::horizontal([Constraint::Length(width)])
         .flex(Flex::Center)
-        .areas(frame_area);
+        .areas(frame.area());
     let [area] = Layout::vertical([Constraint::Length(height)])
         .flex(Flex::Center)
         .areas(area);
@@ -715,8 +727,8 @@ fn overlay(frame: &mut Frame, keymap: &Keymap) {
     let block = pane()
         .style(Style::new().fg(POPUP_INK).bg(POPUP_FILL))
         .padding(Padding::horizontal(1))
-        .title(Line::from(" keymap ").style(Style::new().add_modifier(Modifier::BOLD)))
-        .title_bottom(CLOSE);
+        .title(Line::from(title).style(Style::new().add_modifier(Modifier::BOLD)))
+        .title_bottom(bottom);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -739,15 +751,15 @@ fn shadow(frame: &mut Frame, area: Rect) {
 }
 
 /// Read the bindings off the resolved keymap, so this screen cannot drift
-/// from what the keys actually do: the controls, then each pitch the notes
-/// play with every key that plays it, as written before any octave shift,
-/// packed into as many columns as `width` holds.
-fn help(keymap: &Keymap, width: u16) -> Vec<Line<'static>> {
-    let keys = |keys: &[Key]| {
-        keys.iter()
-            .map(|&key| code(key).to_string())
+/// from what the keys actually do.
+fn help(keymap: &Keymap) -> Vec<Line<'static>> {
+    let keys = |keys: &[Key]| match keys {
+        [] => "—".to_string(),
+        keys => keys
+            .iter()
+            .map(|&key| label(key))
             .collect::<Vec<_>>()
-            .join(" or ")
+            .join(" or "),
     };
     let controls = [
         ("octave up", keys(&keymap.octave_up)),
@@ -755,47 +767,18 @@ fn help(keymap: &Keymap, width: u16) -> Vec<Line<'static>> {
         ("silence", keys(&keymap.stop)),
         ("scope source", keys(&keymap.scope)),
         ("help", keys(&keymap.help)),
-        ("quit", "ctrl-c or ctrl-d".to_string()),
+        ("quit", keys(&keymap.quit)),
+        ("quit now", keys(&keymap.quit_now)),
     ];
-    let label = controls
+    let width = controls
         .iter()
-        .map(|(label, _)| label.len())
+        .map(|(what, _)| what.len())
         .max()
         .unwrap_or(0);
-    let mut lines: Vec<Line> = controls
+    controls
         .iter()
-        .map(|(what, keys)| Line::from(format!("{what:<label$}  {keys}")))
-        .collect();
-
-    let mut pitches = std::collections::BTreeMap::<u8, Vec<char>>::new();
-    for (&ch, &note) in &keymap.notes {
-        pitches.entry(note).or_default().push(ch);
-    }
-    let cells: Vec<String> = pitches
-        .into_iter()
-        .map(|(note, mut chars)| {
-            chars.sort_unstable();
-            let chars: Vec<String> = chars.iter().map(char::to_string).collect();
-            format!("{:<4} {}", name(note), chars.join(" "))
-        })
-        .collect();
-    if cells.is_empty() {
-        return lines;
-    }
-
-    let cell = cells.iter().map(|c| c.chars().count()).max().unwrap_or(0);
-    let gap = COLUMN_GAP as usize;
-    let columns = ((width as usize + gap) / (cell + gap)).max(1);
-    lines.push(Line::default());
-    for row in cells.chunks(columns) {
-        let text = row
-            .iter()
-            .map(|c| format!("{c:<cell$}"))
-            .collect::<Vec<_>>()
-            .join(&" ".repeat(gap));
-        lines.push(Line::from(text.trim_end().to_string()));
-    }
-    lines
+        .map(|(what, keys)| Line::from(format!("{what:<width$}  {keys}")))
+        .collect()
 }
 
 /// One labelled bar, turning yellow at `warn` and red at `danger`.

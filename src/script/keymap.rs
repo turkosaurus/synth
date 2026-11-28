@@ -12,6 +12,8 @@ struct KeyboardConfig {
     stop: Vec<String>,
     #[serde(default)]
     scope: Vec<String>,
+    quit: Vec<String>,
+    quit_now: Vec<String>,
     // ms, implied rather than spelled in the Lua name
     #[serde(rename = "gate")]
     gate_ms: f64,
@@ -74,6 +76,13 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> Result<Keymap, Err
         return Err(Error::NoStopKey);
     }
 
+    let quit = bindings(config.quit, "quit")?;
+    let quit_now = bindings(config.quit_now, "quit_now")?;
+    // signals aside, a key is the only way out of the TUI
+    if quit.is_empty() && quit_now.is_empty() {
+        return Err(Error::NoQuitKey);
+    }
+
     // may be empty, like help
     let scope = bindings(config.scope, "scope")?;
 
@@ -91,6 +100,8 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> Result<Keymap, Err
         ("stop", &stop),
         ("scope", &scope),
         ("layout.help", &help),
+        ("quit", &quit),
+        ("quit_now", &quit_now),
     ] {
         for key in keys {
             if let Key::Char(ch) = key {
@@ -115,6 +126,8 @@ pub(super) fn keymap(lua: &mlua::Lua, table: &mlua::Table) -> Result<Keymap, Err
         stop,
         scope,
         help,
+        quit,
+        quit_now,
         gate: std::time::Duration::from_secs_f64(config.gate_ms / 1000.0),
         autorepeat: std::time::Duration::from_secs_f64(config.autorepeat_ms / 1000.0),
         doubletap: std::time::Duration::from_secs_f64(config.doubletap_ms / 1000.0),
@@ -150,7 +163,15 @@ fn binding(name: &str) -> Option<Key> {
     if let (Some(ch), None) = (chars.next(), chars.next()) {
         return Some(Key::Char(ch));
     }
-    Some(match name.to_ascii_lowercase().as_str() {
+    let lower = name.to_ascii_lowercase();
+    if let Some(rest) = lower.strip_prefix("ctrl-") {
+        let mut chars = rest.chars();
+        if let (Some(ch), None) = (chars.next(), chars.next()) {
+            return Some(Key::Ctrl(ch));
+        }
+        return None;
+    }
+    Some(match lower.as_str() {
         "backspace" => Key::Backspace,
         "delete" => Key::Delete,
         "enter" | "return" => Key::Enter,

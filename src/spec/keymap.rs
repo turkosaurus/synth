@@ -6,6 +6,8 @@ use std::time::Duration;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Key {
     Char(char),
+    /// a character pressed with ctrl
+    Ctrl(char),
     Backspace,
     Delete,
     Enter,
@@ -33,6 +35,10 @@ pub(crate) struct Keymap {
     /// Moves the scope to its next source.
     pub scope: Vec<Key>,
     pub help: Vec<Key>,
+    /// Asks before quitting.
+    pub quit: Vec<Key>,
+    /// Quits without asking.
+    pub quit_now: Vec<Key>,
     /// How long a note lasts in `Fixed` gating, from the keyboard's `gate`.
     pub gate: Duration,
     /// In `Fixed` gating, a press of a key this soon after its last press

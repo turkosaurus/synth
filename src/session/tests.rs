@@ -14,6 +14,8 @@ pub(crate) fn model() -> Model {
         stop: vec![],
         scope: vec![Key::Tab],
         help: vec![Key::Char('?')],
+        quit: vec![Key::Char('q')],
+        quit_now: vec![Key::Ctrl('c'), Key::Ctrl('d')],
         gate: Duration::ZERO,
         autorepeat: Duration::ZERO,
         doubletap: Duration::ZERO,
@@ -26,6 +28,7 @@ pub(crate) fn model() -> Model {
         keyboard: Keyboard::new(keymap, Gating::Held),
         freqs: crate::spec::Freqs::unchecked([0.0; 128]),
         help: false,
+        asking: false,
         scope: Selection {
             stream: 0,
             pick: Pick::Mix,
@@ -148,6 +151,30 @@ fn a_release_leaves_help_up() {
     );
     assert_eq!(send(&mut model, release).len(), 1, "the note still ends");
     assert!(model.help);
+}
+
+#[test]
+fn the_quit_key_asks_and_y_quits() {
+    let mut model = model();
+    assert!(!quits(&mut model, key('q', false)));
+    assert!(model.glance().asking);
+    assert!(quits(&mut model, key('y', false)));
+}
+
+#[test]
+fn any_other_key_cancels_the_quit_prompt_and_does_nothing_else() {
+    let mut model = model();
+    send(&mut model, key('q', false));
+    assert_eq!(send(&mut model, key('a', false)), vec![]);
+    assert!(!model.asking);
+    assert_eq!(send(&mut model, key('a', false)).len(), 1);
+}
+
+#[test]
+fn quit_now_quits_from_the_prompt() {
+    let mut model = model();
+    send(&mut model, key('q', false));
+    assert!(quits(&mut model, key('d', true)));
 }
 
 #[test]

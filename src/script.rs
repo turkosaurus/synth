@@ -216,6 +216,8 @@ mod field {
 
     pub(super) const LAYOUT: &str = "layout";
     pub(super) const STOP: &str = "stop";
+    pub(super) const QUIT: &str = "quit";
+    pub(super) const QUIT_NOW: &str = "quit_now";
     pub(super) const GATE: &str = "gate";
     pub(super) const AUTOREPEAT_THRESHOLD: &str = "autorepeat_threshold";
     pub(super) const DOUBLETAP_THRESHOLD: &str = "doubletap_threshold";
