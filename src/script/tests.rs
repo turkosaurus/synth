@@ -1259,19 +1259,71 @@ fn case(name: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
-/// `Error::Variant`, the name of the variant `error` holds.
-fn variant(error: &Error) -> String {
-    let debug = format!("{error:?}");
+/// A Debug form, `Name { a: 1, b: "x" }`, as its name and its top-level
+/// `field: value` entries.
+fn debug_parts(debug: &str) -> (&str, Vec<&str>) {
     let end = debug
         .find(|c: char| !(c.is_alphanumeric() || c == '_'))
         .unwrap_or(debug.len());
-    format!("Error::{}", &debug[..end])
+    let (name, rest) = debug.split_at(end);
+    let Some(body) = rest
+        .trim()
+        .strip_prefix('{')
+        .and_then(|body| body.strip_suffix('}'))
+    else {
+        return (name, Vec::new());
+    };
+    let mut parts = Vec::new();
+    let (mut depth, mut quote, mut escaped, mut start) = (0, None, false, 0);
+    for (i, c) in body.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => quote = Some(c),
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(body[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(body[start..].trim());
+    parts.retain(|part| !part.is_empty());
+    (name, parts)
+}
+
+/// Whether `error` matches `pattern`, `Error::Variant { field: value, .. }`:
+/// each listed field equals that field's Debug text, and without `..` the
+/// listed fields are all of them.
+fn matches_variant(error: &Error, pattern: &str) -> bool {
+    let Some(pattern) = pattern.strip_prefix("Error::") else {
+        return false;
+    };
+    let debug = format!("{error:?}");
+    let (name, fields) = debug_parts(&debug);
+    let (want, mut wanted) = debug_parts(pattern);
+    let open = wanted.contains(&"..");
+    wanted.retain(|field| *field != "..");
+    name == want
+        && wanted.iter().all(|field| fields.contains(field))
+        && (open || wanted.len() == fields.len())
 }
 
 /// Every patch in `tests/lua/reject/` fails to load with the error on its
 /// first line, `-- expect: …`, where `{file}` stands for the file's name.
-/// A second line, `-- expect-variant: Error::…`, also names the variant the
-/// error downcasts to. Each file is loaded under its bare name, so an
+/// A second line, `-- expect-variant: Error::Variant { field: value, .. }`,
+/// also matches the typed error it downcasts to, field by field in Debug
+/// form; see [`matches_variant`]. Each file is loaded under its bare name, so an
 /// expected error never holds a path that differs between machines.
 #[test]
 fn every_rejected_patch_fails_with_its_expected_error() {
@@ -1303,11 +1355,12 @@ fn every_rejected_patch_fails_with_its_expected_error() {
             failures.push(format!("{name}: expected `{expected}`\n    got {message}"));
         }
         if let Some(want) = want {
-            let got = error
-                .downcast_ref::<Error>()
-                .map_or_else(|| "no typed error".to_string(), variant);
-            if got != want {
-                failures.push(format!("{name}: expected {want}, got {got}: {message}"));
+            match error.downcast_ref::<Error>() {
+                Some(typed) if matches_variant(typed, want) => {}
+                Some(typed) => {
+                    failures.push(format!("{name}: expected {want}\n    got Error::{typed:?}"));
+                }
+                None => failures.push(format!("{name}: expected {want}, got no typed error")),
             }
         }
     }
